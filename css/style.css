@@ -513,3 +513,12 @@ label.check { display: flex; align-items: center; gap: 7px; color: var(--text); 
 .pick-row.new { color: var(--accent-2); }
 .pick-hint { font-size: .85em; margin-bottom: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .pick-new { padding: 6px; }
+
+/* map icon palette */
+.icon-pick { max-height: 340px; overflow-y: auto; margin-top: 4px; padding-right: 2px; }
+.icon-pick .tg-label { margin-top: 6px; }
+.icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 4px; }
+.icon-btn { padding: 2px; min-height: 0; height: 46px; border-radius: 8px; display: flex; align-items: center; justify-content: center; background: #e8dcc0; border-color: transparent; }
+.icon-btn:hover { background: #f4ead4; }
+.icon-btn img { width: 40px; height: 40px; pointer-events: none; }
+.icon-btn.on { outline: 3px solid var(--accent); background: #fff4dc; }

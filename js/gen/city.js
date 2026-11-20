@@ -2,6 +2,7 @@
 import { rng, makeNoise, chaikin, tracePath, polyArea, centroid, clipHalf, inset, pointInPoly, distToSeg, distToPolyline, segIntersect, voronoi,
   Labeler, haloText, spaced, mix, rgba, hexToRgb, drawCompass, drawScaleBar, drawFrame, drawCartouche, paperGrain } from './core.js';
 import { districtName, templeName } from './names.js';
+import { drawIcon } from './icons.js';
 
 export const CITY_DEFAULTS = { seed: 'saltmere', name: '', size: 'town', extent: 'standard', mapW: 1.5, mapH: 1.2, walls: true, river: true, coast: false, castle: true, temple: true, style: 'parchment' };
 // how much ground the map covers (km)
@@ -369,6 +370,18 @@ export function renderCity(data, canvas, styleName = 'parchment', ropts = {}) {
     ctx.strokeStyle = rgba(S.water); ctx.lineWidth = data.riverW; ctx.stroke();
     ctx.setLineDash([14, 18]); ctx.strokeStyle = rgba(styleName === 'atlas' ? [255, 255, 255] : S.ink, 0.25); ctx.lineWidth = 1; ctx.stroke(); ctx.setLineDash([]);
   }
+  // hand-drawn lakes and rivers
+  for (const pd of data.ponds || []) {
+    ctx.beginPath(); tracePath(ctx, pd.poly, true); ctx.fillStyle = rgba(S.water); ctx.fill(); ctx.strokeStyle = ink; ctx.lineWidth = 2.2; ctx.stroke();
+    ctx.save(); ctx.clip();
+    for (const off of [7, 15]) { ctx.beginPath(); tracePath(ctx, inset(pd.poly, off), true); ctx.strokeStyle = rgba(styleName === 'atlas' ? [255, 255, 255] : S.ink, 0.22); ctx.lineWidth = 1; ctx.stroke(); }
+    ctx.restore();
+  }
+  for (const rv of data.rivers2 || []) {
+    ctx.beginPath(); tracePath(ctx, rv.pts);
+    ctx.strokeStyle = ink; ctx.lineWidth = rv.w + 4; ctx.stroke();
+    ctx.strokeStyle = rgba(S.water); ctx.lineWidth = rv.w; ctx.stroke();
+  }
 
   // main roads
   data.roads.forEach((rd, i) => {
@@ -423,7 +436,7 @@ export function renderCity(data, canvas, styleName = 'parchment', ropts = {}) {
   // bridges
   for (const br of data.bridges) {
     ctx.save(); ctx.translate(br.p[0], br.p[1]); ctx.rotate(br.angle);
-    const L = data.riverW + 18, Wd = data.roadW + 2;
+    const L = (br.w || data.riverW) + 18, Wd = data.roadW + 2;
     ctx.fillStyle = rgba(S.road); ctx.fillRect(-L / 2, -Wd / 2, L, Wd);
     ctx.strokeStyle = ink; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(-L / 2, -Wd / 2); ctx.lineTo(L / 2, -Wd / 2); ctx.moveTo(-L / 2, Wd / 2); ctx.lineTo(L / 2, Wd / 2); ctx.stroke();
@@ -444,32 +457,16 @@ export function renderCity(data, canvas, styleName = 'parchment', ropts = {}) {
   }
 
   // walls, towers, gates
-  if (data.wall) {
-    const gateIdx = new Set(data.gates.map(g => g.wi));
-    const wl = data.wall;
-    const inS = p => data.shore && p[1] > (() => { for (let i = 1; i < data.shore.length; i++) if (data.shore[i][0] >= p[0]) return data.shore[i][1]; return Infinity; })() - 4;
+  const inSP = p => data.shore && p[1] > (() => { for (let i = 1; i < data.shore.length; i++) if (data.shore[i][0] >= p[0]) return data.shore[i][1]; return Infinity; })() - 4;
+  for (const wa of allWalls(data)) {
+    const segs = wallSegs(wa, inSP), wl = wa.pts;
     ctx.strokeStyle = ink; ctx.lineCap = 'butt';
-    for (let i = 0; i < wl.length; i++) {
-      const a = wl[i], b = wl[(i + 1) % wl.length];
-      if (inS(a) && inS(b)) continue;
-      let pa = a, pb = b;
-      if (gateIdx.has(i)) pa = [a[0] + (b[0] - a[0]) * 0.45, a[1] + (b[1] - a[1]) * 0.45];
-      if (gateIdx.has((i + 1) % wl.length)) pb = [a[0] + (b[0] - a[0]) * 0.55, a[1] + (b[1] - a[1]) * 0.55];
-      ctx.beginPath(); ctx.moveTo(...pa); ctx.lineTo(...pb); ctx.lineWidth = 8; ctx.stroke();
-    }
+    ctx.beginPath(); for (const [pa, pb] of segs) { ctx.moveTo(...pa); ctx.lineTo(...pb); } ctx.lineWidth = 8; ctx.stroke();
     ctx.lineCap = 'round';
-    for (let i = 0; i < wl.length; i += 3) {
-      if (gateIdx.has(i) || inS(wl[i])) continue;
-      ctx.beginPath(); ctx.arc(wl[i][0], wl[i][1], 8, 0, Math.PI * 2); ctx.fillStyle = paper; ctx.fill(); ctx.lineWidth = 3; ctx.stroke();
-    }
-    for (const g of data.gates) {
-      const a = wl[(g.wi - 1 + wl.length) % wl.length], b = wl[(g.wi + 1) % wl.length];
-      for (const t of [0.72, 1.28]) {
-        const p = [a[0] + (b[0] - a[0]) * t / 2, a[1] + (b[1] - a[1]) * t / 2];
-        ctx.beginPath(); ctx.rect(p[0] - 8, p[1] - 8, 16, 16); ctx.fillStyle = paper; ctx.fill(); ctx.lineWidth = 3; ctx.stroke();
-      }
-    }
+    for (const p of wallTowers(wa, inSP)) { ctx.beginPath(); ctx.arc(p[0], p[1], 8, 0, Math.PI * 2); ctx.fillStyle = paper; ctx.fill(); ctx.lineWidth = 3; ctx.stroke(); }
+    for (const p of gateTowers(wa)) { ctx.beginPath(); ctx.rect(p[0] - 8, p[1] - 8, 16, 16); ctx.fillStyle = paper; ctx.fill(); ctx.lineWidth = 3; ctx.stroke(); }
   }
+  drawCityIcons(ctx, data, styleName);
 
   return finishCity(ctx, data, S, ink, paper, ropts);
 }
@@ -487,6 +484,7 @@ function finishCity(ctx, data, S, ink, paper, opts = {}) {
     L.add([W - 240 * iu, H - 260 * iu, W - 20 * iu, H - 20 * iu]);
     L.add([30 * iu, H - 100 * iu, 360 * iu, H - 20 * iu]);
   }
+  for (const ic of data.icons || []) L.add([ic.x - ic.s * 0.42, ic.y - ic.s * 0.45, ic.x + ic.s * 0.42, ic.y + ic.s * 0.42]);
   const pins = [];
   for (const lb of data.labels) {
     const size = lb.kind === 'landmark' ? 20 : 18;
@@ -595,6 +593,18 @@ function renderCityStorybook(data, canvas, ropts = {}) {
     ctx.strokeStyle = 'rgb(76,146,168)'; ctx.lineWidth = data.riverW; ctx.stroke();
     ctx.strokeStyle = 'rgba(160,214,220,.55)'; ctx.lineWidth = data.riverW * 0.35; ctx.setLineDash([30, 22]); ctx.stroke(); ctx.setLineDash([]);
   }
+  for (const pd of data.ponds || []) {
+    ctx.beginPath(); tracePath(ctx, pd.poly, true); ctx.strokeStyle = 'rgb(150,132,92)'; ctx.lineWidth = 12; ctx.stroke();
+    ctx.fillStyle = 'rgb(76,146,168)'; ctx.fill(); ctx.strokeStyle = 'rgb(40,74,88)'; ctx.lineWidth = 3; ctx.stroke();
+    const ip = inset(pd.poly, 10); if (ip.length > 2) { ctx.beginPath(); tracePath(ctx, ip, true); ctx.strokeStyle = 'rgba(160,214,220,.55)'; ctx.lineWidth = 3; ctx.setLineDash([24, 18]); ctx.stroke(); ctx.setLineDash([]); }
+  }
+  for (const rv of data.rivers2 || []) {
+    ctx.beginPath(); tracePath(ctx, rv.pts);
+    ctx.strokeStyle = 'rgb(150,132,92)'; ctx.lineWidth = rv.w + 14; ctx.stroke();
+    ctx.strokeStyle = 'rgb(40,74,88)'; ctx.lineWidth = rv.w + 4; ctx.stroke();
+    ctx.strokeStyle = 'rgb(76,146,168)'; ctx.lineWidth = rv.w; ctx.stroke();
+    ctx.strokeStyle = 'rgba(160,214,220,.55)'; ctx.lineWidth = rv.w * 0.35; ctx.setLineDash([30, 22]); ctx.stroke(); ctx.setLineDash([]);
+  }
 
   // cobbled roads
   const cobble = (poly, closed) => {
@@ -683,7 +693,7 @@ function renderCityStorybook(data, canvas, ropts = {}) {
   // bridges
   for (const br of data.bridges) {
     ctx.save(); ctx.translate(br.p[0], br.p[1]); ctx.rotate(br.angle);
-    const L = data.riverW + 24, Wd = data.roadW + 6;
+    const L = (br.w || data.riverW) + 24, Wd = data.roadW + 6;
     ctx.fillStyle = shadow; ctx.fillRect(-L / 2 + 3, -Wd / 2 + 3, L, Wd);
     ctx.fillStyle = 'rgb(178,172,164)'; ctx.fillRect(-L / 2, -Wd / 2, L, Wd);
     ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.strokeRect(-L / 2, -Wd / 2, L, Wd);
@@ -719,19 +729,18 @@ function renderCityStorybook(data, canvas, ropts = {}) {
   }
 
   // stone walls with round towers and red conical roofs
-  if (data.wall) {
-    const gateIdx = new Set(data.gates.map(g => g.wi));
-    const wl = data.wall;
-    const inS = p => data.shore && p[1] > (() => { for (let i = 1; i < data.shore.length; i++) if (data.shore[i][0] >= p[0]) return data.shore[i][1]; return Infinity; })() - 4;
-    const segs = [];
-    for (let i = 0; i < wl.length; i++) {
-      const a = wl[i], b = wl[(i + 1) % wl.length];
-      if (inS(a) && inS(b)) continue;
-      let pa = a, pb = b;
-      if (gateIdx.has(i)) pa = [a[0] + (b[0] - a[0]) * 0.45, a[1] + (b[1] - a[1]) * 0.45];
-      if (gateIdx.has((i + 1) % wl.length)) pb = [a[0] + (b[0] - a[0]) * 0.55, a[1] + (b[1] - a[1]) * 0.55];
-      segs.push([pa, pb]);
-    }
+  const inSS = p => data.shore && p[1] > (() => { for (let i = 1; i < data.shore.length; i++) if (data.shore[i][0] >= p[0]) return data.shore[i][1]; return Infinity; })() - 4;
+  const tower = (x, y, rad) => {
+    ctx.beginPath(); ctx.arc(x + 3, y + 3, rad, 0, Math.PI * 2); ctx.fillStyle = shadow; ctx.fill();
+    const g = ctx.createRadialGradient(x - rad * 0.3, y - rad * 0.3, 1, x, y, rad);
+    g.addColorStop(0, 'rgb(232,124,98)'); g.addColorStop(1, 'rgb(160,62,50)');
+    ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fillStyle = g; ctx.fill(); ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.stroke();
+    ctx.beginPath(); for (let a = 0; a < Math.PI * 2; a += Math.PI / 4) { ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a) * rad, y + Math.sin(a) * rad); }
+    ctx.strokeStyle = 'rgba(60,20,14,.45)'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2); ctx.fillStyle = ink; ctx.fill();
+  };
+  for (const wa of allWalls(data)) {
+    const segs = wallSegs(wa, inSS);
     ctx.lineCap = 'butt';
     for (const [w, col, dash] of [[16, 'rgb(46,42,48)', null], [11, 'rgb(158,154,158)', null], [11, 'rgb(118,114,120)', [5, 7]], [3, 'rgba(230,228,224,.6)', null]]) {
       ctx.setLineDash(dash || []);
@@ -739,20 +748,8 @@ function renderCityStorybook(data, canvas, ropts = {}) {
       ctx.strokeStyle = col; ctx.lineWidth = w; ctx.stroke();
     }
     ctx.setLineDash([]); ctx.lineCap = 'round';
-    const tower = (x, y, rad) => {
-      ctx.beginPath(); ctx.arc(x + 3, y + 3, rad, 0, Math.PI * 2); ctx.fillStyle = shadow; ctx.fill();
-      const g = ctx.createRadialGradient(x - rad * 0.3, y - rad * 0.3, 1, x, y, rad);
-      g.addColorStop(0, 'rgb(232,124,98)'); g.addColorStop(1, 'rgb(160,62,50)');
-      ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fillStyle = g; ctx.fill(); ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.stroke();
-      ctx.beginPath(); for (let a = 0; a < Math.PI * 2; a += Math.PI / 4) { ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a) * rad, y + Math.sin(a) * rad); }
-      ctx.strokeStyle = 'rgba(60,20,14,.45)'; ctx.lineWidth = 1; ctx.stroke();
-      ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2); ctx.fillStyle = ink; ctx.fill();
-    };
-    for (let i = 0; i < wl.length; i += 3) { if (gateIdx.has(i) || inS(wl[i])) continue; tower(wl[i][0], wl[i][1], 11); }
-    for (const g of data.gates) {
-      const a = wl[(g.wi - 1 + wl.length) % wl.length], b = wl[(g.wi + 1) % wl.length];
-      for (const t of [0.72, 1.28]) { const p = [a[0] + (b[0] - a[0]) * t / 2, a[1] + (b[1] - a[1]) * t / 2]; tower(p[0], p[1], 13); }
-    }
+    for (const p of wallTowers(wa, inSS)) tower(p[0], p[1], 11);
+    for (const p of gateTowers(wa)) tower(p[0], p[1], 13);
   }
   if (data.castle) for (const p of data.castle.wall) {
     ctx.beginPath(); ctx.arc(p[0], p[1], 7, 0, Math.PI * 2); ctx.fillStyle = 'rgb(112,118,140)'; ctx.fill(); ctx.strokeStyle = ink; ctx.lineWidth = 1.6; ctx.stroke();
@@ -761,9 +758,47 @@ function renderCityStorybook(data, canvas, ropts = {}) {
   // gentle vignette
   const vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.4, W / 2, H / 2, Math.max(W, H) * 0.72);
   vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(20,30,10,.28)');
+  drawCityIcons(ctx, data, 'storybook');
   if (ropts.furniture !== false) { ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H); }
 
   return finishCity(ctx, data, S, ink, rgba(S.paper), ropts);
+}
+
+// every wall on the map: the town's own loop plus any drawn by hand (open lines or closed loops)
+function allWalls(d) {
+  const out = [];
+  if (d.wall) out.push({ pts: d.wall, gates: d.gates || [], closed: true, main: true });
+  for (const w of d.walls2 || []) out.push(w);
+  return out;
+}
+function wallSegs(wa, inS) {
+  const wl = wa.pts, n = wl.length, gi = new Set(wa.gates.map(g => g.wi)), segs = [];
+  for (let i = 0; i < (wa.closed ? n : n - 1); i++) {
+    const a = wl[i], b = wl[(i + 1) % n];
+    if (inS(a) && inS(b)) continue;
+    let pa = a, pb = b;
+    if (gi.has(i)) pa = [a[0] + (b[0] - a[0]) * 0.45, a[1] + (b[1] - a[1]) * 0.45];
+    if (gi.has((i + 1) % n)) pb = [a[0] + (b[0] - a[0]) * 0.55, a[1] + (b[1] - a[1]) * 0.55];
+    segs.push([pa, pb]);
+  }
+  return segs;
+}
+function wallTowers(wa, inS) {
+  const wl = wa.pts, gi = new Set(wa.gates.map(g => g.wi)), out = [];
+  for (let i = 0; i < wl.length; i += 3) if (!gi.has(i) && !inS(wl[i])) out.push(wl[i]);
+  if (!wa.closed && wl.length > 1) { const e = wl[wl.length - 1]; if (!gi.has(wl.length - 1) && !out.includes(e)) out.push(e); }
+  return out;
+}
+function gateTowers(wa) {
+  const wl = wa.pts, n = wl.length, out = [];
+  for (const g of wa.gates) {
+    const a = wl[(g.wi - 1 + n) % n], b = wl[(g.wi + 1) % n];
+    for (const t of [0.72, 1.28]) out.push([a[0] + (b[0] - a[0]) * t / 2, a[1] + (b[1] - a[1]) * t / 2]);
+  }
+  return out;
+}
+function drawCityIcons(ctx, data, style) {
+  for (const ic of [...(data.icons || [])].sort((a, b) => a.y - b.y)) drawIcon(ctx, ic.t, ic.x, ic.y, ic.s, style, { flip: ic.flip });
 }
 
 // ---------------- City editing ----------------
@@ -773,6 +808,7 @@ export const ROAD_SWATCHES = ['#c2beb6', '#e8dcc0', '#b8946a', '#8c7a66', '#9a9a
 export function cloneCity(d) {
   const c = JSON.parse(JSON.stringify(d));
   c.roadColors = c.roadColors || [];
+  c.walls2 = c.walls2 || []; c.rivers2 = c.rivers2 || []; c.ponds = c.ponds || []; c.icons = c.icons || [];
   return c;
 }
 const cen = poly => centroid(poly);
@@ -787,12 +823,14 @@ const nearestRoadDir = (d, p) => {
 const onWater = (d, p) => {
   if (d.shore) { for (let i = 1; i < d.shore.length; i++) if (d.shore[i][0] >= p[0]) { const a = d.shore[i - 1], b = d.shore[i]; if (p[1] > a[1] + (b[1] - a[1]) * (p[0] - a[0]) / ((b[0] - a[0]) || 1)) return true; break; } }
   if (d.river && distToPolyline(p, d.river) < d.riverW / 2 + 4) return true;
+  for (const rv of d.rivers2 || []) if (distToPolyline(p, rv.pts) < rv.w / 2 + 4) return true;
+  for (const pd of d.ponds || []) if (pointInPoly(p, pd.poly) || distToPolyline(p, [...pd.poly, pd.poly[0]]) < 4) return true;
   return false;
 };
 const onRoad = (d, p, pad = 2) => d.roads.some(rd => distToPolyline(p, rd) < d.roadW / 2 + pad);
 
 // one dab of a city brush at (x, y) in map pixels
-export function cityBrush(d, tool, x, y, radius, value, rand = Math.random) {
+export function cityBrush(d, tool, x, y, radius, value, rand = Math.random, opts = {}) {
   const inR = p => Math.hypot(p[0] - x, p[1] - y) <= radius;
   if (tool === 'bld-del') { const n = d.buildings.length; d.buildings = d.buildings.filter(b => !inR(cen(b.poly))); return d.buildings.length !== n; }
   if (tool === 'bld-paint') { let ch = false; for (const b of d.buildings) if (inR(cen(b.poly))) { if (value) b.color = value; else delete b.color; ch = true; } return ch; }
@@ -808,6 +846,7 @@ export function cityBrush(d, tool, x, y, radius, value, rand = Math.random) {
     }
     return ch;
   }
+  if (tool === 'bld-add' && opts.uniform) return packBuildings(d, x, y, radius, value, rand, opts);
   if (tool === 'bld-add') {
     let ch = false;
     for (let k = 0; k < 4; k++) {
@@ -819,7 +858,7 @@ export function cityBrush(d, tool, x, y, radius, value, rand = Math.random) {
       if (poly.some(q => onWater(d, q) || onRoad(d, q, 1)) || onRoad(d, p, 3)) continue;
       const minGap = Math.min(w, h) * 0.75;
       if (d.buildings.some(b => { const c = cen(b.poly); return Math.hypot(c[0] - p[0], c[1] - p[1]) < minGap || pointInPoly(p, b.poly) || poly.some(q => pointInPoly(q, b.poly)); })) continue;
-      if (d.wall && d.wall.some((q, i) => distToSeg(p, q, d.wall[(i + 1) % d.wall.length]) < Math.max(w, h) * 0.6 + 6)) continue;
+      if (nearWall(d, p, Math.max(w, h) * 0.6 + 6)) continue;
       d.buildings.push({ poly, kind: 'house', v: rand(), ...(value ? { color: value } : {}) });
       ch = true;
     }
@@ -828,38 +867,159 @@ export function cityBrush(d, tool, x, y, radius, value, rand = Math.random) {
   return false;
 }
 
-// replace the town wall with a hand-drawn loop; gates open wherever a road crosses it
+const nearWall = (d, p, dist) => allWalls(d).some(wa => { const wl = wa.pts, n = wl.length; for (let i = 0; i < (wa.closed ? n : n - 1); i++) if (distToSeg(p, wl[i], wl[(i + 1) % n]) < dist) return true; return false; });
+
+// tight rows of houses lined up with the street, like the generated town blocks
+const hash3 = (a, b, c) => { const v = Math.sin(a * 127.1 + b * 311.7 + c * 74.7) * 43758.5453; return v - Math.floor(v); };
+function streetDirFar(d, p) {
+  let best = Infinity, dir = null;
+  for (const rd of d.roads) for (let i = 1; i < rd.length; i++) {
+    const dd = distToSeg(p, rd[i - 1], rd[i]);
+    if (dd < best) { best = dd; dir = [rd[i][0] - rd[i - 1][0], rd[i][1] - rd[i - 1][1]]; }
+  }
+  return dir && best < d.s * 8 ? Math.atan2(dir[1], dir[0]) : 0;
+}
+function packBuildings(d, x, y, radius, value, rand, opts) {
+  const ang = opts.angle ?? streetDirFar(d, [x, y]), ca = Math.cos(ang), sa = Math.sin(ang);
+  const fw = d.s * 0.34, dep = d.s * 0.42, gap = Math.max(1.2, d.s * 0.012), alley = d.s * 0.07;
+  const o = opts.origin || [x, y];
+  // local frame: u along the street, v across it
+  const toL = p => [(p[0] - o[0]) * ca + (p[1] - o[1]) * sa, -(p[0] - o[0]) * sa + (p[1] - o[1]) * ca];
+  const toW = (u, v) => [o[0] + u * ca - v * sa, o[1] + u * sa + v * ca];
+  const [lx, ly] = toL([x, y]);
+  const rowH = dep * 2 + alley; // two rows back to back, then a lane
+  // lot boundaries wobble so plots come in different widths, as in a real street
+  const edge = (k, row) => k * fw + (hash3(k, row, 1) - 0.5) * fw * 0.7;
+  let ch = false;
+  const i0 = Math.floor((lx - radius) / fw) - 1, i1 = Math.ceil((lx + radius) / fw) + 1;
+  const j0 = Math.floor((ly - radius) / rowH), j1 = Math.ceil((ly + radius) / rowH);
+  for (let j = j0; j <= j1; j++) for (const half of [0, 1]) {
+    const row = j * 2 + half;
+    for (let i = i0; i <= i1; i++) {
+      const ua = edge(i, row) + gap / 2, ub = edge(i + 1, row) - gap / 2;
+      if (ub - ua < fw * 0.3) continue;
+      const v0 = j * rowH + half * dep;
+      const dd = dep * (0.8 + hash3(i, row, 2) * 0.2), skew = (hash3(i, row, 3) - 0.5) * fw * 0.2;
+      // backs meet on the row's middle line; fronts face the lane and wobble a little
+      const vBack = half ? v0 + gap / 2 : v0 + dep - gap / 2, vFront = half ? vBack + dd - gap : vBack - dd + gap;
+      const poly = [toW(ua, vBack), toW(ub, vBack), toW(ub + skew, vFront), toW(ua + skew, vFront)];
+      const back = skew;
+      const c = toW((ua + ub) / 2 + back / 2, (vFront + vBack) / 2);
+      const cl = toL(c);
+      if (Math.hypot(cl[0] - lx, cl[1] - ly) > radius) continue;
+      if (poly.some(q => onWater(d, q) || onRoad(d, q, 1)) || onRoad(d, c, 3)) continue;
+      if (d.buildings.some(b => pointInPoly(c, b.poly) || poly.some(q => pointInPoly(q, b.poly)) || pointInPoly(cen(b.poly), poly))) continue;
+      if (nearWall(d, c, dep * 0.5 + 6)) continue;
+      d.buildings.push({ poly, kind: 'house', v: rand(), ...(value ? { color: value } : {}) });
+      ch = true;
+    }
+  }
+  return ch;
+}
+
+// a hand-drawn wall: an open line or a closed loop. It is added alongside any walls already there.
+export function addCityWall(d, pts, closed = true) {
+  if (!pts || pts.length < (closed ? 3 : 2)) return;
+  const line = chaikin(pts, 2, closed);
+  const dense = [];
+  const n = line.length;
+  for (let i = 0; i < (closed ? n : n - 1); i++) {
+    const a = line[i], b = line[(i + 1) % n], L = Math.hypot(b[0] - a[0], b[1] - a[1]), k = Math.max(1, Math.ceil(L / 42));
+    for (let j = 0; j < k; j++) dense.push([a[0] + (b[0] - a[0]) * j / k, a[1] + (b[1] - a[1]) * j / k]);
+  }
+  if (!closed) dense.push(line[n - 1]);
+  const w = { ...gateLine(d, dense, closed), closed };
+  d.walls2 = d.walls2 || [];
+  d.walls2.push(w);
+  clearAlongWall(d, w);
+}
+function clearAlongWall(d, wa) {
+  const wl = wa.pts, n = wl.length, near = p => { for (let i = 0; i < (wa.closed ? n : n - 1); i++) if (distToSeg(p, wl[i], wl[(i + 1) % n]) < 12) return true; return false; };
+  d.buildings = d.buildings.filter(b => !near(cen(b.poly)));
+  d.trees = d.trees.filter(t => !near(t.p));
+}
+// the wall (index -1 = the town's own) nearest to p, within maxD
+export function nearestWall(d, p, maxD) {
+  let best = null, bd = maxD;
+  allWalls(d).forEach((wa, k) => { const wl = wa.pts, n = wl.length; for (let i = 0; i < (wa.closed ? n : n - 1); i++) { const dd = distToSeg(p, wl[i], wl[(i + 1) % n]); if (dd < bd) { bd = dd; best = wa.main ? -1 : (d.wall ? k - 1 : k); } } });
+  return best;
+}
+export function removeCityWall(d, i) {
+  if (i === -1) { d.wall = null; d.gates = []; d.walls = false; }
+  else if (i != null) d.walls2.splice(i, 1);
+}
+// kept for older callers: replace the town's own wall with a closed loop
 export function setCityWall(d, pts) {
   if (!pts || pts.length < 3) { d.wall = null; d.gates = []; d.walls = false; return; }
-  const loop = chaikin(pts, 2, true);
-  const dense = [];
-  for (let i = 0; i < loop.length; i++) {
-    const a = loop[i], b = loop[(i + 1) % loop.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.max(1, Math.ceil(L / 42));
-    for (let j = 0; j < n; j++) dense.push([a[0] + (b[0] - a[0]) * j / n, a[1] + (b[1] - a[1]) * j / n]);
-  }
-  gateWall(d, dense);
-  d.walls = true;
-  // clear buildings the wall now runs through
-  const w = d.wall;
-  d.buildings = d.buildings.filter(b => !w.some((q, i) => distToSeg(cen(b.poly), q, w[(i + 1) % w.length]) < 12));
+  addCityWall(d, pts, true);
+  const w = d.walls2.pop();
+  d.wall = w.pts; d.gates = w.gates; d.walls = true;
 }
-function gateWall(d, dense) {
-  const out = [], gates = [];
-  for (let i = 0; i < dense.length; i++) {
-    const a = dense[i], b = dense[(i + 1) % dense.length];
+function gateLine(d, dense, closed) {
+  const out = [], gates = [], n = dense.length;
+  for (let i = 0; i < n; i++) {
+    const a = dense[i];
     out.push(a);
+    if (!closed && i === n - 1) break;
+    const b = dense[(i + 1) % n];
     const hits = [];
     for (const rd of d.roads) for (let j = 1; j < rd.length; j++) { const h = segIntersect(a, b, rd[j - 1], rd[j]); if (h) hits.push(h.p); }
     hits.sort((p, q) => Math.hypot(p[0] - a[0], p[1] - a[1]) - Math.hypot(q[0] - a[0], q[1] - a[1]));
     for (const h of hits) { if (gates.some(g => Math.hypot(g.p[0] - h[0], g.p[1] - h[1]) < 30)) continue; gates.push({ p: h, wi: out.length }); out.push(h); }
   }
-  d.wall = out; d.gates = gates;
+  return { pts: out, gates };
 }
+function gateWall(d, dense) { const g = gateLine(d, dense, true); d.wall = g.pts; d.gates = g.gates; }
 // re-open gates after roads change
 function regate(d) {
-  if (!d.wall) return;
-  const gi = new Set(d.gates.map(g => g.wi));
-  gateWall(d, d.wall.filter((_, i) => !gi.has(i)));
+  if (d.wall) { const gi = new Set(d.gates.map(g => g.wi)); gateWall(d, d.wall.filter((_, i) => !gi.has(i))); }
+  for (const w of d.walls2 || []) { const gi = new Set(w.gates.map(g => g.wi)); Object.assign(w, gateLine(d, w.pts.filter((_, i) => !gi.has(i)), w.closed)); }
+}
+
+// nearest point on any road (for roads that join up), or null
+export function snapToRoad(d, p, maxD) {
+  let best = null, bd = maxD;
+  for (const rd of d.roads) for (let i = 1; i < rd.length; i++) {
+    const a = rd[i - 1], b = rd[i], vx = b[0] - a[0], vy = b[1] - a[1], L = vx * vx + vy * vy || 1;
+    const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / L));
+    const q = [a[0] + vx * t, a[1] + vy * t], dd = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    if (dd < bd) { bd = dd; best = q; }
+  }
+  return best;
+}
+
+// hand-drawn water: a river (open line) or a lake (closed outline)
+export function addCityRiver(d, pts, w) {
+  if (!pts || pts.length < 2) return;
+  const line = chaikin(pts, 3);
+  d.rivers2 = d.rivers2 || [];
+  d.rivers2.push({ pts: line, w });
+  d.buildings = d.buildings.filter(b => !b.poly.some(q => distToPolyline(q, line) < w / 2 + 2));
+  d.trees = d.trees.filter(t => distToPolyline(t.p, line) > w / 2 + t.s * 0.4);
+  updateBridges(d);
+}
+export function addCityPond(d, pts) {
+  if (!pts || pts.length < 3) return;
+  const poly = chaikin(pts, 3, true);
+  d.ponds = d.ponds || [];
+  d.ponds.push({ poly });
+  d.buildings = d.buildings.filter(b => !b.poly.some(q => pointInPoly(q, poly)) && !pointInPoly(cen(b.poly), poly));
+  d.trees = d.trees.filter(t => !pointInPoly(t.p, poly));
+}
+// the water nearest p: { kind: 'main' | 'river' | 'pond', i }
+export function nearestWater(d, p, maxD) {
+  let best = null, bd = maxD;
+  if (d.river) { const dd = distToPolyline(p, d.river) - d.riverW / 2; if (dd < bd) { bd = dd; best = { kind: 'main' }; } }
+  (d.rivers2 || []).forEach((rv, i) => { const dd = distToPolyline(p, rv.pts) - rv.w / 2; if (dd < bd) { bd = dd; best = { kind: 'river', i }; } });
+  (d.ponds || []).forEach((pd, i) => { const dd = pointInPoly(p, pd.poly) ? 0 : distToPolyline(p, [...pd.poly, pd.poly[0]]); if (dd < bd) { bd = dd; best = { kind: 'pond', i }; } });
+  return best;
+}
+export function removeCityWater(d, w) {
+  if (!w) return;
+  if (w.kind === 'main') d.river = null;
+  else if (w.kind === 'river') d.rivers2.splice(w.i, 1);
+  else d.ponds.splice(w.i, 1);
+  updateBridges(d);
 }
 
 export function addCityRoad(d, pts) {
@@ -886,10 +1046,10 @@ export function removeCityRoad(d, i) {
 }
 export function updateBridges(d) {
   d.bridges = [];
-  if (!d.river) return;
-  for (const rd of d.roads) for (let i = 1; i < rd.length; i++) for (let j = 1; j < d.river.length; j++) {
-    const hit = segIntersect(rd[i - 1], rd[i], d.river[j - 1], d.river[j]);
-    if (hit && !d.bridges.some(b => Math.hypot(b.p[0] - hit.p[0], b.p[1] - hit.p[1]) < 30)) d.bridges.push(hit);
+  const rivers = [...(d.river ? [{ pts: d.river, w: d.riverW }] : []), ...(d.rivers2 || [])];
+  for (const rv of rivers) for (const rd of d.roads) for (let i = 1; i < rd.length; i++) for (let j = 1; j < rv.pts.length; j++) {
+    const hit = segIntersect(rd[i - 1], rd[i], rv.pts[j - 1], rv.pts[j]);
+    if (hit && !d.bridges.some(b => Math.hypot(b.p[0] - hit.p[0], b.p[1] - hit.p[1]) < 30)) d.bridges.push({ ...hit, w: rv.w });
   }
 }
 
@@ -905,3 +1065,5 @@ export async function cityFromBlob(blob) {
   const j = JSON.parse(new TextDecoder().decode(buf));
   return { o: j.o, data: cloneCity(j.data) };
 }
+// direction of the nearest street at p (radians), so new houses can line up with it
+export const streetAngle = (d, p) => streetDirFar(d, p);

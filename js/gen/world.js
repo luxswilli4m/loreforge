@@ -1,4 +1,5 @@
 // Procedural world/region map generator with a hand-drawn cartographic renderer.
+import { drawIcon } from './icons.js';
 import { rng, makeNoise, Heap, blur, contour, stitch, chaikin, tracePath, Labeler, haloText, spaced, hexToRgb, mix, rgba, voronoi,
   drawCompass, drawScaleBar, drawFrame, drawCartouche, paperGrain } from './core.js';
 import { placeName, realmBase, realmName, seaName, mountainName, forestName } from './names.js';
@@ -540,7 +541,7 @@ export function generateWorld(opts, edit = null) {
     }
   }
 
-  return { o, GW, GH, h, ridgeF, sea, hmax, eCurve, e, isOcean, lake, dLand, dWater, m, t, biome, owner, rivers, riverThr: thr, isRiver, roads, towns, realms, regionLabels };
+  return { o, GW, GH, h, ridgeF, sea, hmax, eCurve, e, isOcean, lake, dLand, dWater, m, t, biome, owner, rivers, riverThr: thr, isRiver, roads, towns, realms, regionLabels, icons: edit?.icons || [] };
 }
 
 // ---------------- Editing ----------------
@@ -556,7 +557,7 @@ export function makeEditState(data) {
     biome: new Uint8Array(data.GW * data.GH).fill(255), realmPaint: new Int16Array(data.GW * data.GH).fill(-2),
     towns: data.towns.map(t => ({ gx: t.gx, gy: t.gy, name: t.name, capital: !!t.capital, rid: t.capital ? t.rid : undefined })),
     realms: data.realms.map(rl => ({ id: rl.rid, name: rl.name, color: rl.color })),
-    rivers: [], roads: [], labels: [], labelNames: {}, nameSeed: '', noRoads: false, noRiver: new Uint8Array(data.GW * data.GH),
+    rivers: [], roads: [], labels: [], labelNames: {}, nameSeed: '', noRoads: false, noRiver: new Uint8Array(data.GW * data.GH), icons: [],
   };
 }
 // fill in anything an older or partial edit state is missing
@@ -569,6 +570,7 @@ export function completeEdit(ed, data) {
   if (!ed.realmPaint) ed.realmPaint = new Int16Array(ed.GW * ed.GH).fill(-2);
   if (!ed.towns) { ed.towns = data.towns.map(t => ({ gx: t.gx, gy: t.gy, name: t.name, capital: !!t.capital, rid: t.capital ? t.rid : undefined })); ed.realms = data.realms.map(rl => ({ id: rl.rid, name: rl.name, color: rl.color })); }
   ed.dry = ed.dry || [];
+  ed.icons = ed.icons || [];
   ed.rivers = ed.rivers || []; ed.roads = ed.roads || []; ed.labels = ed.labels || []; ed.labelNames = ed.labelNames || {}; ed.nameSeed = ed.nameSeed || '';
   if (!ed.noRiver) ed.noRiver = new Uint8Array(ed.GW * ed.GH);
   return ed;
@@ -577,7 +579,7 @@ export function cloneEdit(ed) {
   return { ...ed, h: Float32Array.from(ed.h), ridge: Float32Array.from(ed.ridge), eCurve: ed.eCurve.slice(), biome: Uint8Array.from(ed.biome),
     realmPaint: Int16Array.from(ed.realmPaint), towns: ed.towns.map(t => ({ ...t })), realms: ed.realms.map(rl => ({ ...rl })),
     rivers: (ed.rivers || []).map(r => ({ ...r, pts: r.pts.map(p => [...p]) })), roads: (ed.roads || []).map(r => ({ ...r, pts: r.pts.map(p => [...p]) })),
-    labels: (ed.labels || []).map(l => ({ ...l })), labelNames: { ...(ed.labelNames || {}) }, noRiver: ed.noRiver ? Uint8Array.from(ed.noRiver) : null, dry: (ed.dry || []).map(d => [...d]) };
+    labels: (ed.labels || []).map(l => ({ ...l })), labelNames: { ...(ed.labelNames || {}) }, noRiver: ed.noRiver ? Uint8Array.from(ed.noRiver) : null, dry: (ed.dry || []).map(d => [...d]), icons: (ed.icons || []).map(i => ({ ...i })) };
 }
 
 // one dab of a brush at grid position (gx, gy). radius in cells, strength 0..1
@@ -656,7 +658,7 @@ export async function editToBlob(ed, o) {
   const qh = new Uint16Array(N), qr = new Uint16Array(N);
   for (let i = 0; i < N; i++) { qh[i] = Math.round((ed.h[i] - lo) / span * 65535); qr[i] = Math.round(Math.max(0, ed.ridge[i]) / rspan * 65535); }
   const head = new TextEncoder().encode(JSON.stringify({ v: 3, GW, GH, o, lo, span, rspan, sea: ed.sea, hmax: ed.hmax, eCurve: ed.eCurve, towns: ed.towns, realms: ed.realms,
-    rivers: ed.rivers || [], roads: ed.roads || [], labels: ed.labels || [], labelNames: ed.labelNames || {}, nameSeed: ed.nameSeed || '', noRoads: !!ed.noRoads, dry: ed.dry || [], townSeed: ed.townSeed || '' }));
+    rivers: ed.rivers || [], roads: ed.roads || [], labels: ed.labels || [], labelNames: ed.labelNames || {}, nameSeed: ed.nameSeed || '', noRoads: !!ed.noRoads, dry: ed.dry || [], townSeed: ed.townSeed || '', icons: ed.icons || [] }));
   const pad = new Uint8Array((4 - (head.length % 4)) % 4);
   let blob = new Blob([new Uint32Array([head.length]), head, pad, qh, qr, ed.realmPaint, ed.biome, ed.noRiver || new Uint8Array(N)]);
   if (typeof CompressionStream !== 'undefined') blob = await new Response(blob.stream().pipeThrough(new CompressionStream('gzip'))).blob();
@@ -678,7 +680,7 @@ export async function editFromBlob(blob) {
   for (let i = 0; i < N; i++) { h[i] = head.lo + qh[i] / 65535 * head.span; ridge[i] = qr[i] / 65535 * head.rspan; }
   return { o: head.o, edit: { GW, GH, h, ridge, realmPaint, biome, noRiver, sea: head.sea, hmax: head.hmax, eCurve: head.eCurve, towns: head.towns, realms: head.realms,
     rivers: head.rivers || [], roads: head.roads || [], labels: head.labels || [], labelNames: head.labelNames || {}, nameSeed: head.nameSeed || '', noRoads: !!head.noRoads,
-    dry: head.dry || [], townSeed: head.townSeed || '' } };
+    dry: head.dry || [], townSeed: head.townSeed || '', icons: head.icons || [] } };
 }
 
 // ---------------- Rendering ----------------
@@ -745,7 +747,7 @@ STYLES.pastel = {
 export const STYLE_NAMES = { parchment: 'Parchment', atlas: 'Atlas', night: 'Night (gold ink)', quill: 'Ink & Quill', storybook: 'Storybook', painted: 'Painted', relief: 'Realistic', cells: 'Political cells', pastel: 'Pastel political' };
 // what can be switched on and off in the Layers panel
 export const LAYERS = [['realms', 'Realm colours'], ['borders', 'Borders'], ['relief', 'Mountains & hills'], ['forests', 'Forests & plants'], ['rivers', 'Rivers'],
-  ['roads', 'Roads'], ['towns', 'Towns'], ['townLabels', 'Town names'], ['realmLabels', 'Realm names'], ['regionLabels', 'Mountain, forest & custom labels'], ['seaLabels', 'Sea names'], ['ripples', 'Coastal ripples']];
+  ['roads', 'Roads'], ['towns', 'Towns'], ['townLabels', 'Town names'], ['realmLabels', 'Realm names'], ['regionLabels', 'Mountain, forest & custom labels'], ['seaLabels', 'Sea names'], ['ripples', 'Coastal ripples'], ['icons', 'Map icons']];
 
 // colours for a frame/compass drawn around the view, and the colour beyond the map's edge
 export function worldFrameStyle(styleName) {
@@ -1104,8 +1106,17 @@ export function renderWorld(data, canvas, styleName = 'parchment', ropts = {}) {
   // --- cloud banks around the edges (painted style) ---
   if (S.clouds && !ropts.noClouds) drawClouds(ctx, W, H, rng(data.o.seed + ':clouds'), k);
 
+  // --- map icons (stickers) ---
+  const iconBoxes = [];
+  if (LY.icons) for (const ic of [...(data.icons || [])].sort((a, b) => a.y - b.y)) {
+    const [px, py] = toPx([ic.x, ic.y]), sz = ic.s * cs;
+    drawIcon(ctx, ic.t, px, py, sz, styleName, { flip: ic.flip });
+    iconBoxes.push([px - sz * 0.42, py - sz * 0.45, px + sz * 0.42, py + sz * 0.42]);
+  }
+
   // --- furniture boxes so labels avoid them ---
   const L = new Labeler(W, H, 30 * k);
+  for (const b of iconBoxes) L.add(b);
   const title = data.o.name || 'Untitled Realm';
   const compass = [W - 150 * k, H - 160 * k, 78 * k];
   if (furniture) {
