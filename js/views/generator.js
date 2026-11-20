@@ -23,7 +23,7 @@ const STYLE_HINT = {
   quill: 'Pen-and-ink on sepia — the classic epic-fantasy look', storybook: 'Bright, friendly colours', painted: 'Painted terrain with cloud edges',
   relief: 'Realistic shaded elevation', cells: 'Coloured realm cells, like Azgaar',
 };
-const MODE_STYLES = { world: Object.keys(STYLE_SWATCH), city: ['parchment', 'atlas', 'night'] };
+const MODE_STYLES = { world: Object.keys(STYLE_SWATCH), city: ['parchment', 'atlas', 'night', 'storybook', 'quill'] };
 
 const TOOLS = [
   ['Terrain', [['raise', '⬆️', 'Raise'], ['lower', '⬇️', 'Lower'], ['mountain', '🏔️', 'Mountains'], ['smooth', '〰️', 'Smooth'], ['flatten', '▁', 'Flatten'], ['land', '🏝️', 'Add land'], ['sea', '🌊', 'Add sea']]],

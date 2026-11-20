@@ -1,3 +1,4 @@
+import { createArtTool, artSVG, STAMP_DEFS } from './mapart.js';
 import { W, getMap, getEntry, uid, save, TYPES } from '../store.js';
 import { esc, openModal, closeModal, confirmDialog, pickFile, imageToDataURL, toast, go, query, typeColor, promptDialog } from '../util.js';
 import { newEntryDialog } from './entries.js';
@@ -56,6 +57,8 @@ function fmtTime(days) {
   return `${days < 10 ? days.toFixed(1) : Math.round(days)} days`;
 }
 
+let keepDraw = null; // stay in Draw mode when the view re-renders after undo/redo
+
 export function renderMap(main, id) {
   const m = getMap(id);
   if (!m) { main.innerHTML = `<div class="empty">Map not found. <a href="#/maps">Back to maps</a></div>`; return; }
@@ -75,9 +78,10 @@ export function renderMap(main, id) {
           <button data-mode="pin" title="Click on the map to add a pin">📍 Add pin</button>
           <button data-mode="measure" title="Click points to measure distance & travel time">📏 Measure</button>
           <button data-mode="calibrate" title="Set the map scale">📐 Set scale</button>
+          <button data-mode="draw" title="Draw, write and place symbols on the map">🖌️ Draw</button>
           <button id="fit" title="Fit map to view">⤢</button>
         </div>
-        <svg id="svg"><g id="vp"><image ${A.href(m.image)} width="${m.w}" height="${m.h}"/><g id="overlay"></g><g id="pins"></g></g></svg>
+        <svg id="svg">${STAMP_DEFS}<g id="vp"><image ${A.href(m.image)} width="${m.w}" height="${m.h}"/><g id="art">${artSVG(m)}</g><g id="overlay"></g><g id="pins"></g></g></svg>
         <div class="map-info hidden" id="info"></div>
       </div>
       <div class="map-side" id="side"></div>
@@ -90,6 +94,9 @@ export function renderMap(main, id) {
   const overlay = main.querySelector('#overlay');
   const info = main.querySelector('#info');
   const side = main.querySelector('#side');
+  const artG = main.querySelector('#art');
+  let artTool = null;
+  const getArt = () => artTool || (artTool = createArtTool({ m, artG, overlay, getK: () => view.k, toMap }));
 
   const apply = () => { vp.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`); drawPins(); drawOverlay(); };
   const fit = () => {
@@ -133,6 +140,7 @@ export function renderMap(main, id) {
   }
 
   function drawOverlay() {
+    if (mode === 'draw') return;
     const s = 1 / view.k;
     const pts = mode === 'calibrate' ? calib : measure;
     if (!pts.length) { overlay.innerHTML = ''; return; }
@@ -156,17 +164,30 @@ export function renderMap(main, id) {
     } else if (mode === 'pin') {
       info.classList.remove('hidden');
       info.innerHTML = 'Click anywhere on the map to drop a pin.';
+    } else if (mode === 'draw') {
+      info.classList.add('hidden');
     } else info.classList.add('hidden');
   }
 
   function setMode(md) {
+    const was = mode;
     mode = md; measure = []; calib = [];
+    if (md === 'draw') { selected = null; drawPins(); getArt().redraw(); }
+    if (was === 'draw' && md !== 'draw') { artTool?.cancel(); overlay.innerHTML = ''; }
+    stage.classList.toggle('drawing', md === 'draw');
+    if (was === 'draw' || md === 'draw') drawSide();
     main.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === md));
     stage.classList.toggle('placing', md !== 'pan');
     drawOverlay(); updateInfo();
   }
 
   function drawSide() {
+    if (mode === 'draw') {
+      const t = getArt();
+      const paint = () => { side.innerHTML = t.panelHTML(); t.bindPanel(side.firstElementChild, paint); };
+      paint();
+      return;
+    }
     const p = m.pins.find(x => x.id === selected);
     const entries = [...W().entries].sort((a, b) => a.name.localeCompare(b.name));
     const others = W().maps.filter(x => x.id !== m.id);
@@ -242,14 +263,22 @@ export function renderMap(main, id) {
   }
 
   // ----- interaction -----
-  let drag = null;
+  let drag = null, drawing = false, spaceDown = false;
   svg.addEventListener('pointerdown', ev => {
+    if (mode === 'draw' && ev.button === 0 && !spaceDown) {
+      svg.setPointerCapture(ev.pointerId); drawing = true; getArt().down(ev); return;
+    }
+    if (mode === 'draw' && (ev.button === 1 || spaceDown)) {
+      ev.preventDefault(); svg.setPointerCapture(ev.pointerId);
+      drag = { sx: ev.clientX, sy: ev.clientY, vx: view.x, vy: view.y, moved: false, panOnly: true }; return;
+    }
     if (ev.button !== 0) return;
     const pinEl = ev.target.closest('.pin');
     svg.setPointerCapture(ev.pointerId);
     drag = { pinId: pinEl?.dataset.pin, sx: ev.clientX, sy: ev.clientY, vx: view.x, vy: view.y, moved: false, pin: mode === 'pan' && pinEl ? m.pins.find(p => p.id === pinEl.dataset.pin) : null };
   });
   svg.addEventListener('pointermove', ev => {
+    if (drawing) { getArt().move(ev); return; }
     if (!drag) return;
     const dx = ev.clientX - drag.sx, dy = ev.clientY - drag.sy;
     if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
@@ -258,9 +287,11 @@ export function renderMap(main, id) {
     else { stage.classList.add('dragging'); view.x = drag.vx + dx; view.y = drag.vy + dy; apply(); }
   });
   svg.addEventListener('pointerup', ev => {
+    if (drawing) { drawing = false; getArt().up(ev); return; }
     if (!drag) return;
     const d = drag; drag = null;
     stage.classList.remove('dragging');
+    if (d.panOnly) return;
     if (d.moved) { if (d.pin) save(); return; }
     const pt = toMap(ev);
     if (mode === 'pan') {
@@ -313,17 +344,24 @@ export function renderMap(main, id) {
 
   main.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(mode === b.dataset.mode ? 'pan' : b.dataset.mode));
   main.querySelector('#fit').onclick = fit;
+  const typing = () => /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  const onKeyUp = e => { if (e.code === 'Space') { spaceDown = false; stage.classList.remove('space-pan'); } };
   const onKey = e => {
+    if (mode === 'draw' && e.code === 'Space' && !typing()) { e.preventDefault(); spaceDown = true; stage.classList.add('space-pan'); return; }
+    if (mode === 'draw' && (e.key === 'Delete' || e.key === 'Backspace') && !typing()) { if (artTool?.deleteSelected()) drawSide(); return; }
     if (e.key === 'Escape' && !document.querySelector('.modal')) setMode('pan');
     if ((e.key === 'Delete' || e.key === 'Backspace') && selected && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
       m.pins = m.pins.filter(x => x.id !== selected); selected = null; save(); drawPins(); drawSide();
     }
   };
   document.addEventListener('keydown', onKey);
+  document.addEventListener('keyup', onKeyUp);
   const ro = new ResizeObserver(() => { if (!view.inited) { view.inited = true; fit(); const p = m.pins.find(x => x.id === selected); if (p) centerOn(p.x, p.y); } });
   ro.observe(stage);
 
-  setMode('pan');
-  drawSide();
-  return () => { document.removeEventListener('keydown', onKey); ro.disconnect(); };
+  setMode(keepDraw && keepDraw.id === id && Date.now() - keepDraw.t < 1500 ? 'draw' : 'pan');
+  keepDraw = null;
+  if (mode !== 'draw') drawSide();
+  return () => {
+    if (mode === 'draw') keepDraw = { id, t: Date.now() }; document.removeEventListener('keydown', onKey); document.removeEventListener('keyup', onKeyUp); ro.disconnect(); };
 }

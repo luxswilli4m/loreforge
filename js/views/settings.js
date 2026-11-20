@@ -1,3 +1,4 @@
+import { artSVG, STAMP_DEFS } from './mapart.js';
 import { W, save, saveNow, TYPES, exportWorld, exportBackup, deleteWorld, formatDate, dateKey, getEntry } from '../store.js';
 import { createMilestone, listMilestones, restoreMilestone, deleteMilestone, where, WHERE_LABEL } from '../milestones.js';
 import { resetHistory } from '../undo.js';
@@ -140,7 +141,7 @@ ${events.length ? '<h4>History</h4><a href="#timeline">Timeline</a>' : ''}${jour
 </nav><main>
 ${w.description ? `<p class="sum">${esc(w.description)}</p>` : ''}
 ${byType.map(g => `<div class="sec">${TYPES[g.t].plural}</div>${g.list.map(entryHTML).join('')}`).join('')}
-${w.maps.length ? `<div class="sec">Maps</div>${w.maps.map(m => `<article id="m-${m.id}"><h2>${esc(m.name)}</h2><div class="map"><img src="${pic(m.image)}" alt="">
+${w.maps.length ? `<div class="sec">Maps</div>${w.maps.map(m => `<article id="m-${m.id}"><h2>${esc(m.name)}</h2><div class="map"><img src="${pic(m.image)}" alt="">${artSVG(m) ? `<svg viewBox="0 0 ${m.w} ${m.h}" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none">${STAMP_DEFS}${artSVG(m)}</svg>` : ''}
   ${m.pins.map(p => { const e = getEntry(p.entryId); const t = esc(p.label || e?.name || ''); return `<a href="${e ? '#e-' + e.id : (p.submapId ? '#m-' + p.submapId : '#')}" title="${t}" style="position:absolute;left:${p.x / m.w * 100}%;top:${p.y / m.h * 100}%;transform:translate(-50%,-50%);width:14px;height:14px;border-radius:50%;background:${p.color || (e ? TYPES[e.type].hex : '#d4a24c')};border:2px solid #000"></a><span style="position:absolute;left:calc(${p.x / m.w * 100}% + 10px);top:${p.y / m.h * 100}%;transform:translateY(-50%);font-weight:600;font-size:13px;text-shadow:0 0 3px #000,0 0 3px #000;pointer-events:none">${t}</span>`; }).join('')}</div></article>`).join('')}` : ''}
 ${events.length ? `<div class="sec" id="timeline">Timeline</div>${events.map(ev => `<div class="ev"><div class="d">${esc(formatDate(ev.date))}</div><b>${esc(ev.title)}</b>${fix(md(ev.desc))}</div>`).join('')}` : ''}
 ${journals.map(j => `<article id="j-${j.id}"><div class="badge">${esc(j.category)}</div><h2>${esc(j.title)}</h2>${fix(md(j.body))}</article>`).join('')}

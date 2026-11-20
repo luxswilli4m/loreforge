@@ -107,3 +107,9 @@ Inspired by the ideas behind tools like World Anvil, vvd and ScribesBlade. This 
 World maps can be edited by hand after generating (✏️ **Edit this map**): terrain brushes (raise, lower, mountains, smooth, flatten, add land, add sea), biome and realm painting, and adding, moving, renaming and deleting towns and capitals. Rivers, lakes, forests, borders and roads recalculate after every stroke, with undo/redo. Saved world maps keep their editable terrain, so **✏️ Edit terrain, towns & style** on a map reopens it in the editor.
 
 Eight world styles: Parchment, Atlas, Night, **Ink & Quill** (pen-and-ink epic fantasy), **Storybook** (bright and colourful), **Painted** (painterly with cloud edges), **Realistic** (shaded elevation) and **Political** (coloured realm cells).
+
+City maps have five styles, including **Storybook** (coloured roofs, cobbled streets, lush trees, painted water) and **Ink & Quill**.
+
+### Drawing on maps
+Any map, generated or uploaded, has a 🖌️ **Draw** mode: pen, marker, line, box, circle, text (serif, calligraphy or plain), 18 map stamps (castle, tower, village, temple, ruins, camp, cave, peak, grove, ship, port, sea beast, danger, battle, X marks the spot, flag, magic, star), an eraser, a move tool and layers you can show or hide. Hidden layers are left out of the player wiki, so they're handy for GM-only notes. Hold Space or use the middle mouse button to pan while drawing.
+

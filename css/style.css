@@ -352,3 +352,24 @@ label.check { display: flex; align-items: center; gap: 7px; color: var(--text); 
 .realm-row { margin-top: 6px; gap: 6px; }
 .realm-row input[type=color] { flex: 0 0 38px; padding: 0; height: 34px; border-radius: 6px; }
 .sel-town { margin-top: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
+
+/* ---- map drawing layer ---- */
+.map-stage.drawing { cursor: crosshair; }
+.map-stage.drawing.space-pan { cursor: grab; }
+#art .art-sel { filter: drop-shadow(0 0 3px #fff) drop-shadow(0 0 2px var(--accent)); }
+.art-preview { opacity: .85; }
+.art-panel .tools { grid-template-columns: repeat(3, 1fr); }
+.art-panel .hint { display: block; margin-top: 4px; opacity: .8; }
+.color-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.swatch-dot { width: 26px; height: 26px; padding: 0; border-radius: 50%; border: 2px solid rgba(255,255,255,.25); flex: 0 0 26px; }
+.swatch-dot.on { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
+.color-row input[type=color] { width: 34px; height: 28px; padding: 0; border-radius: 6px; flex: 0 0 34px; }
+.stamp-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; margin-top: 10px; }
+.stamp-btn { padding: 3px; aspect-ratio: 1; background: #efe4cb; border-radius: 6px; }
+.stamp-btn svg { width: 100%; height: 100%; display: block; }
+.stamp-btn.on { box-shadow: 0 0 0 2px var(--accent); }
+.layers { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.layer-row { display: flex; align-items: center; gap: 6px; padding: 4px; border-radius: 8px; border: 1px solid transparent; cursor: pointer; }
+.layer-row.on { border-color: var(--accent); background: rgba(212,162,76,.08); }
+.layer-row input { flex: 1; min-width: 0; padding: 4px 8px; }
+.layer-row .icon { flex: 0 0 auto; padding: 2px 6px; }
