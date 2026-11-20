@@ -50,7 +50,16 @@ let lastWorldId = null;
 
 function renderNav(path) {
   const nav = $('#nav');
-  if (!W()) { nav.innerHTML = ''; $('#world-name').textContent = ''; return; }
+  if (!W()) {
+    $('#world-name').textContent = '';
+    const basic = [
+      { href: '#/worlds', icon: '🌍', label: 'Your worlds', match: /^(worlds|)$/ },
+      { href: '#/appearance', icon: '🎨', label: 'Appearance', match: /^appearance/ },
+      { href: '#/cloud', icon: '☁️', label: 'Cloud & devices', match: /^cloud/ },
+    ];
+    nav.innerHTML = basic.map(n => `<a href="${n.href}" class="${n.match.test(path) ? 'active' : ''}"><span>${n.icon}</span>${n.label}</a>`).join('');
+    return;
+  }
   $('#world-name').textContent = W().name;
   const favs = W().entries.filter(e => e.fav).sort((a, b) => a.name.localeCompare(b.name));
   nav.innerHTML = NAV.map(n => n ? `<a href="${n.href}" class="${n.match.test(path) ? 'active' : ''}"><span>${n.icon}</span>${n.label}</a>` : '<div class="nav-sep"></div>').join('')
