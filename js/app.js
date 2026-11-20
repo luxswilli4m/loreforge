@@ -15,6 +15,7 @@ import { applyTheme, applyBackground, getPrefs } from './theme.js';
 import * as gm from './views/gm.js';
 import * as quests from './views/quests.js';
 import * as library from './views/library.js';
+import * as forge from './views/forge.js';
 import { initTray } from './tools/tray.js';
 import { newEntryDialog } from './views/entries.js';
 
@@ -31,6 +32,7 @@ const NAV = [
   { href: '#/quests', icon: '🧭', label: 'Quests', match: /^(quests|quest)(\/|$)/ },
   { href: '#/journals', icon: '✒️', label: 'Journals', match: /^(journals|journal)/ },
   { href: '#/gm', icon: '🛡️', label: 'GM Screen', match: /^gm/ },
+  { href: '#/forge', icon: '🔮', label: 'Story Forge', match: /^forge/ },
   { href: '#/library', icon: '🏛️', label: 'Library', match: /^(library|doc)/ },
   null,
   { href: '#/settings', icon: '⚙️', label: 'World settings', match: /^settings/ },
@@ -90,6 +92,7 @@ export function route() {
     quest: () => quests.renderQuest(main, a),
     library: () => library.renderList(main),
     doc: () => library.renderDoc(main, a),
+    forge: () => forge.render(main),
   }[view];
   cleanup = r ? r() : home.render(main);
 }

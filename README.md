@@ -14,6 +14,10 @@ It combines a **world wiki** (entries, maps, relationship graphs, a shareable pl
 
 **GM Screen.** A dice roller that understands rolls like `2d6+3`, `4d6kh3`, `adv` and `dis`, and highlights natural 20s and 1s. An initiative tracker with HP bars, damage and healing, conditions and a round counter; you can add creatures from your World Bible or your whole party at once. A party sheet, quick generators (NPC, tavern, loot, weather, plot hook, names) that save to the World Bible in one click, and your own weighted random tables. Press **D** anywhere for a floating dice tray.
 
+**🔮 Story Forge.** Ask for a bounty, quest, rumours, NPC, encounter or anything else. Choose where it's set and which factions, religions or lore it should tie into, plus the tone and party level. It reads your world (the location's ruler, its districts, the locals and the factions present) and builds the story around them. Bounties come with a Wanted poster. One click saves the result as a quest, creates the target and quest giver as entries with relationships, and @links everything; you can also save the poster as a player handout. There are two engines:
+- *Built-in (free, offline):* a story engine that combines your world's own people, places and faiths with the keywords in your request.
+- *AI (optional, bring your own key):* Anthropic Claude, any OpenAI-compatible service, or a local model through Ollama. Your key is stored only in your browser and never included in backups. Requests (with the related parts of your world) go straight from your browser to the provider and are billed to your account.
+
 **Quests.** A drag-and-drop board (Rumoured / Active / Completed / Failed). Each quest has objectives, a quest giver, a reward and details, with @links throughout.
 
 **Library.** Drop in PDF rulebooks, adventures, handouts and images, then read them in the app or Ctrl+click to open them in the side panel next to your notes.
@@ -80,8 +84,8 @@ js/
   sample.js       demo world
   gen/            map generators (core helpers, world.js, city.js, names.js)
   theme.js        themes, torn edges, backgrounds
-  tools/          dice, generators, dice tray
-  views/          home, entries, codex, maps, generator, graph, campaign, quests, timeline, journals, gm, library, settings, appearance
+  tools/          dice, generators, dice tray, story forge, AI providers
+  views/          home, entries, codex, maps, generator, graph, campaign, quests, timeline, journals, gm, forge, library, settings, appearance
 ```
 
 Inspired by the ideas behind tools like World Anvil, vvd and ScribesBlade. This is an independent open-source project.

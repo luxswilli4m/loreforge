@@ -111,6 +111,7 @@ export function renderView(main, id) {
   main.innerHTML = `
     <div class="page-head"><div class="breadcrumbs" style="flex:1"><a href="#/entries">World Bible</a> › <a href="#/entries/${e.type}">${TYPES[e.type]?.plural}</a></div>
       <button id="fav" title="${e.fav ? 'Unpin from sidebar' : 'Pin to sidebar'}" class="${e.fav ? 'active' : ''}">${e.fav ? '⭐ Pinned' : '☆ Pin'}</button>
+      ${e.type === 'location' ? `<a class="btn" href="#/forge?loc=${e.id}&kind=bounty" title="Generate a bounty, quest or rumours set here">🔮 Forge a story here</a>` : ''}
       <a class="btn" href="#/graph?focus=${e.id}">🕸️ Web</a>
       <a class="btn primary" href="#/entry/${e.id}/edit" style="background:var(--accent);color:var(--on-accent)">✎ Edit</a>
       <button class="danger" id="del">Delete</button></div>

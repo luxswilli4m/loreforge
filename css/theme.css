@@ -159,3 +159,47 @@ body.torn .paper { border-radius: 0; }
 .party-table td:first-child input { min-width: 90px; }
 .party-table input.num { width: 100%; min-width: 40px; max-width: 58px; padding: 5px 4px; }
 .table-row [data-troll] { flex: 1; justify-content: flex-start; text-align: left; }
+
+/* ---------- Story Forge ---------- */
+.forge { display: grid; grid-template-columns: 360px 1fr; gap: 18px; align-items: start; }
+.forge-form { position: sticky; top: 0; }
+.forge-form > label:first-child { margin-top: 0; }
+.kind-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.kind { flex-direction: column; gap: 2px; padding: 8px 4px; justify-content: center; font-size: .82em; }
+.kind span { font-size: 1.5em; }
+.kind.on { border-color: var(--accent); color: var(--accent-2); background: var(--bg-3); box-shadow: 0 0 0 2px rgba(212,162,76,.2); }
+.tie-list { max-height: 150px; overflow-y: auto; gap: 5px; margin: 0; }
+.tie-list .chip { font-size: .8em; padding: 4px 9px; }
+.ctx-note { margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--accent); background: rgba(212,162,76,.07); border-radius: 0 6px 6px 0; }
+.forge-go { width: 100%; justify-content: center; margin-top: 16px; padding: 12px; font-size: 1.05em; }
+.forge-empty { padding: 80px 20px; }
+.forge-busy { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 90px 20px; color: var(--muted); }
+.forge-result h4 { margin: 14px 0 4px; font-size: .75em; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.forge-result ul { margin: 0; padding-left: 1.2em; }
+.forge-result li { margin-bottom: 4px; }
+.forge-result .link-list li { flex-wrap: wrap; }
+.forge-hook { font-size: 1.1em; border-left: 3px solid var(--accent); margin: 10px 0 14px; padding: 6px 14px; font-style: italic; color: var(--text); }
+.forge-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+.forge-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.forge-error { border-color: var(--danger); }
+.ai-note { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: rgba(212,162,76,.08); border: 1px solid var(--line); font-size: .85em; color: var(--muted); }
+.ok-text { color: var(--ok); margin-top: 8px; }
+.danger-text { color: var(--danger); margin-top: 8px; }
+.wanted {
+  position: relative; max-width: 380px; margin: 0 auto 18px; padding: 26px 30px 22px; text-align: center; color: #3b2a17;
+  background: radial-gradient(ellipse at 30% 20%, #f3e4bf, #e2c992 70%, #c9a66a); font-family: var(--display);
+  box-shadow: 0 14px 30px rgba(0,0,0,.45), inset 0 0 40px rgba(120,72,20,.45);
+  clip-path: polygon(2% 1%, 20% 0, 40% 2%, 62% 0, 85% 1.5%, 99% 0, 98% 22%, 100% 48%, 98.5% 74%, 100% 99%, 78% 98%, 55% 100%, 30% 98.5%, 8% 100%, 0 97%, 1.5% 70%, 0 45%, 1.8% 20%);
+  transform: rotate(-1.2deg);
+}
+.wanted-nail { position: absolute; top: 10px; width: 10px; height: 10px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #aaa, #333); }
+.wanted-nail.l { left: 14px; } .wanted-nail.r { right: 14px; }
+.wanted-head { font-size: 3.4em; font-weight: 700; letter-spacing: .12em; line-height: 1; }
+.wanted-sub { font-style: italic; font-size: 1.1em; margin-bottom: 10px; border-bottom: 2px solid #3b2a17; padding-bottom: 8px; }
+.wanted-portrait { width: 120px; height: 120px; margin: 6px auto 10px; border: 3px double #3b2a17; display: flex; align-items: center; justify-content: center; font-size: 3.4em; background: rgba(255,255,255,.18); filter: sepia(1) contrast(.9); }
+.wanted-name { font-size: 1.75em; font-weight: 700; line-height: 1.1; }
+.wanted-crime { font-family: var(--font); font-size: .9em; margin: 8px 0 12px; }
+.wanted-reward { font-size: 1.3em; font-weight: 700; letter-spacing: .1em; border-top: 2px solid #3b2a17; border-bottom: 2px solid #3b2a17; padding: 6px 0; }
+.wanted-reward span { font-size: .8em; letter-spacing: 0; font-weight: 600; }
+.wanted-foot { font-style: italic; font-size: .95em; margin-top: 8px; }
+@media (max-width: 1000px) { .forge { grid-template-columns: 1fr; } .forge-form { position: static; } .forge-cols { grid-template-columns: 1fr; } }
