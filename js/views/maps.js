@@ -3,6 +3,7 @@ import { W, getMap, getEntry, uid, save, TYPES } from '../store.js';
 import { esc, openModal, closeModal, confirmDialog, pickFile, imageToDataURL, toast, go, query, typeColor, promptDialog } from '../util.js';
 import { newEntryDialog } from './entries.js';
 import * as A from '../assets.js';
+import { placeOfMap } from '../hierarchy.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const PIN_COLORS = ['#d4a24c', '#e07a5f', '#5fa8d3', '#c77dff', '#81b29a', '#e9c46a', '#ffffff'];
@@ -229,6 +230,12 @@ export function renderMap(main, id) {
         <p class="small muted" style="margin:0">${m.scale.pxPerUnit ? `${esc(m.scale.unit)}: ${m.scale.pxPerUnit.toFixed(2)} px each. ` : 'Not set. '}Use 📐 Set scale to calibrate.</p>
         <label>Parent map</label>
         <select id="m-parent"><option value="">— none (top level) —</option>${others.filter(x => !chain(x).some(c => c.id === m.id)).map(x => `<option value="${x.id}" ${x.id === m.parentId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>
+        <label>This map shows</label>
+        <select id="m-place"><option value="">— not set —</option>${Object.entries(TYPES).filter(([k]) => k !== 'character').map(([k, t]) => {
+          const opts = W().entries.filter(x => x.type === k).sort((a, b) => a.name.localeCompare(b.name));
+          return opts.length ? `<optgroup label="${t.plural}">${opts.map(x => `<option value="${x.id}" ${x.id === m.placeId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>` : '';
+        }).join('')}</select>
+        <p class="small muted" style="margin:4px 0 0">${(() => { const pid = placeOfMap(m.id); return pid ? `Places pinned here become sub-places of <b>${esc(getEntry(pid).name)}</b> in the World Web.` : 'Pick the country, planet or town this map is of, and everything pinned on it nests under it in the World Web.'; })()}</p>
         ${m.gen?.edit ? `<button class="primary" id="m-edit" style="margin-top:12px;width:100%">✏️ Edit terrain, towns &amp; style</button>` : ''}
         <a class="btn" href="#/gallery/${m.id}" style="margin-top:8px;width:100%;justify-content:center">📁 Folder${(m.shots || []).length ? ` · ${m.shots.length} snapshot${m.shots.length > 1 ? 's' : ''}` : ''}</a>
         <div class="row" style="margin-top:12px"><button id="m-replace">Replace image</button><button class="danger" id="m-del">Delete map</button></div>
@@ -241,9 +248,9 @@ export function renderMap(main, id) {
     const $s = s => side.querySelector(s);
     if (p) {
       $s('#p-label').oninput = e => { p.label = e.target.value; save(); drawPins(); };
-      $s('#p-entry').onchange = e => { p.entryId = e.target.value; save(); drawPins(); drawSide(); };
+      $s('#p-entry').onchange = e => { p.entryId = e.target.value; const en = getEntry(p.entryId); if (en && !en.mapId) en.mapId = m.id; save(); drawPins(); drawSide(); };
       $s('#p-sub').onchange = e => { p.submapId = e.target.value; save(); drawPins(); drawSide(); };
-      $s('#p-newentry').onclick = () => newEntryDialog('location', ent => { p.entryId = ent.id; if (!p.label) p.label = ''; save(); drawPins(); drawSide(); toast(`Created ${ent.name}`); });
+      $s('#p-newentry').onclick = () => newEntryDialog('location', ent => { p.entryId = ent.id; ent.mapId = m.id; if (!p.label) p.label = ''; save(); drawPins(); drawSide(); toast(`Created ${ent.name}`); });
       if ($s('#p-unsub')) $s('#p-unsub').onclick = () => { p.submapId = ''; save(); drawPins(); drawSide(); };
       if ($s('#p-gencity')) $s('#p-gencity').onclick = () => go(`#/generate?mode=city&name=${encodeURIComponent(p.label || getEntry(p.entryId)?.name || '')}&parent=${m.id}&pin=${p.id}`);
       if ($s('#p-newsub')) $s('#p-newsub').onclick = async () => { const sub = await newMapDialog(m.id, p); if (sub) { drawPins(); drawSide(); toast('Deeper map added — click “Enter map”'); } };
@@ -253,6 +260,7 @@ export function renderMap(main, id) {
     } else {
       $s('#m-name').oninput = e => { m.name = e.target.value || 'Untitled map'; save(); };
       $s('#m-parent').onchange = e => { m.parentId = e.target.value; save(); };
+      $s('#m-place').onchange = e => { m.placeId = e.target.value; save(); drawSide(); };
       if ($s('#m-edit')) $s('#m-edit').onclick = () => go(`#/generate?edit=${m.id}`);
       $s('#m-replace').onclick = async () => {
         const f = await pickFile('image/*'); if (!f) return;

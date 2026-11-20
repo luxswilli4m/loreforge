@@ -13,6 +13,8 @@ export const TYPES = {
     fields: ['Habitat', 'Danger', 'Size'] },
   lore: { label: 'Lore', plural: 'Lore', icon: '📖', color: 'var(--c-lore)', hex: '#a5a5c7',
     fields: ['Category', 'Origin'] },
+  cosmos: { label: 'Cosmos', plural: 'Cosmos', icon: '🪐', color: 'var(--c-cosmos)', hex: '#6f8cf0',
+    fields: ['Kind', 'Inhabitants', 'Ruler', 'Reached by'] },
 };
 
 export const state = { world: null, worlds: [] };
@@ -77,7 +79,26 @@ export function normalizeWorld(w) {
   out.cosmos = { bodies: [], links: [], ...(w.cosmos || {}) };
   if (!Array.isArray(out.cosmos.bodies)) out.cosmos.bodies = [];
   if (!Array.isArray(out.cosmos.links)) out.cosmos.links = [];
+  if (!out.hierV) { migrateHierarchy(out); out.hierV = 1; }
   return out;
+}
+
+// One-time upgrade: places linked by "part of" / "located in" become real sub-places (entry.parentId),
+// and every place remembers the map it sits on (entry.mapId), so the World Web can nest them.
+function migrateHierarchy(w) {
+  const byId = Object.fromEntries(w.entries.map(e => [e.id, e]));
+  const PART = new Set(['part of', 'located in', 'lies in', 'inside', 'within', 'district of', 'province of', 'town in', 'city in', 'region of']);
+  for (const r of w.relations) {
+    const a = byId[r.from], b = byId[r.to], lab = (r.label || '').trim().toLowerCase();
+    if (!a || !b || a === b) continue;
+    if (PART.has(lab) && !a.parentId && a.type !== 'character') a.parentId = b.id;
+    if (lab === 'rules from' && !b.parentId && b.type === 'location') b.parentId = a.id;
+  }
+  for (const m of w.maps) for (const p of m.pins || []) { const e = byId[p.entryId]; if (e && !e.mapId) e.mapId = m.id; }
+  for (const e of w.entries) {
+    const mm = /^A realm of (.+)\.$/.exec(e.summary || '');
+    if (mm && !e.mapId) { const m = w.maps.find(x => x.name === mm[1]); if (m) e.mapId = m.id; }
+  }
 }
 
 export function blankWorld(name) {

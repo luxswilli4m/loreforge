@@ -1,4 +1,4 @@
-import { W, uid, save, getMap, getEntry, newEntry } from '../store.js';
+import { W, uid, save, getMap, getEntry, newEntry, TYPES } from '../store.js';
 import { esc, query, go, toast, openModal, closeModal, promptDialog, pickFile } from '../util.js';
 import { openGlobe } from './globe.js';
 import { randomSeed, ensureFonts, drawFrame, drawCompass, drawScaleBar, drawCartouche } from '../gen/core.js';
@@ -240,9 +240,10 @@ export function render(main) {
 
   const seg = (key, opts, val) => `<div class="seg small">${opts.map(([v, l, tip]) => `<button class="${val === v ? 'on' : ''}" data-seg="${key}" data-v="${v}" title="${esc(tip || '')}">${l}</button>`).join('')}</div>`;
   function iconPanelHTML(t, style) {
-    const sel = selIcon;
-    return `<div class="icon-pick">${ICON_GROUPS.map(g => `<div class="tg-label">${g}</div><div class="icon-grid">${Object.entries(ICONS).filter(([, ic]) => ic.group === g).map(([id, ic]) =>
-      `<button class="icon-btn ${t.icon === id ? 'on' : ''}" data-icon="${id}" title="${esc(ic.label)}"><img src="${iconThumb(id, style)}" alt=""></button>`).join('')}</div>`).join('')}</div>
+    const sel = selIcon, look = sel ? (sel.look || '') : (t.iconLook || '');
+    return `<label>Icon look</label><div class="seg small"><button class="${!look ? 'on' : ''}" data-ilook="" title="Coloured to match the map style">🎨 Match map</button><button class="${look === 'marker' ? 'on' : ''}" data-ilook="marker" title="Flat cream markers with a dark outline">◈ Marker</button></div>
+      <div class="icon-pick">${ICON_GROUPS.map(g => `<div class="tg-label">${g}</div><div class="icon-grid">${Object.entries(ICONS).filter(([, ic]) => ic.group === g).map(([id, ic]) =>
+      `<button class="icon-btn ${t.icon === id ? 'on' : ''}" data-icon="${id}" title="${esc(ic.label)}"><img src="${iconThumb(id, style, 44, look)}" alt=""></button>`).join('')}</div>`).join('')}</div>
       <label>${sel ? 'Selected icon size' : 'Icon size'} <span class="val">${(sel ? sel.s / iconBase() : t.iconSize).toFixed(1)}×</span></label>
       <input type="range" id="ic-size" min="0.3" max="4" step="0.1" value="${sel ? (sel.s / iconBase()).toFixed(1) : t.iconSize}">
       ${sel ? `<div class="row" style="margin-top:8px;gap:6px"><b class="small" style="flex:1">${esc(ICONS[sel.t]?.label || '')}</b><button class="small" id="ic-flip">⇋ Flip</button><button class="small danger" id="ic-del">Remove</button></div>` : ''}`;
@@ -558,7 +559,16 @@ export function render(main) {
   function drawIconDrag(ic) {
     clearCov();
     const c = cov.getContext('2d'), [x, y, sz] = iconCv(ic);
-    c.globalAlpha = 0.85; drawIcon(c, ic.t, x, y, sz, memo[memo.mode].style, { flip: ic.flip }); c.globalAlpha = 1;
+    c.globalAlpha = 0.85; drawIcon(c, ic.t, x, y, sz, memo[memo.mode].style, { flip: ic.flip, look: ic.look }); c.globalAlpha = 1;
+  }
+  // a faint preview of the icon you're about to drop, under the cursor
+  function drawIconGhost(ev) {
+    clearCov(); drawIconSel();
+    if (hitIcon(ev)) return;
+    const t = iconTool(), [mx, my] = iconPos(ev);
+    const ic = { t: t.icon || 'castle', x: mx, y: my, s: iconBase() * (+t.iconSize || 1), look: t.iconLook };
+    const c = cov.getContext('2d'), [x, y, sz] = iconCv(ic);
+    c.globalAlpha = 0.5; drawIcon(c, ic.t, x, y, sz, memo[memo.mode].style, { look: ic.look, halo: false }); c.globalAlpha = 1;
   }
   function iconDown(ev) {
     const t = iconTool(), hit = hitIcon(ev);
@@ -572,7 +582,7 @@ export function render(main) {
       return;
     }
     const [x, y] = iconPos(ev);
-    const ic = { id: uid(), t: t.icon || 'castle', x: +x.toFixed(2), y: +y.toFixed(2), s: +(iconBase() * (+t.iconSize || 1)).toFixed(2) };
+    const ic = { id: uid(), t: t.icon || 'castle', x: +x.toFixed(2), y: +y.toFixed(2), s: +(iconBase() * (+t.iconSize || 1)).toFixed(2), ...(t.iconLook ? { look: t.iconLook } : {}) };
     iconList().push(ic); selIcon = ic;
     iconsChanged(); drawControls();
   }
@@ -595,6 +605,7 @@ export function render(main) {
       const [mx, my] = iconPos(ev); stroke.ic.x = +(mx + stroke.dx).toFixed(2); stroke.ic.y = +(my + stroke.dy).toFixed(2);
       drawIconDrag(stroke.ic); return;
     }
+    if (!stroke && iconTool().tool === 'icon') { drawIconGhost(ev); return; }
     if (memo.mode === 'city') {
       if (poly) { const [hp, sn] = roadPoint(cityPos(ev)); drawPoly(hp, sn); }
       if (stroke?.kind === 'cbrush') {
@@ -624,7 +635,7 @@ export function render(main) {
       drawMark();
     }
   });
-  canvas.addEventListener('pointerleave', () => { cur.style.display = 'none'; });
+  canvas.addEventListener('pointerleave', () => { cur.style.display = 'none'; if (iconTool().tool === 'icon' && !stroke) { clearCov(); drawIconSel(); } });
   const dab = (gx, gy) => {
     const t = memo.tool;
     applyBrush(ed, t.tool, gx, gy, t.size, t.strength, t.tool === 'biome' ? +t.biome : t.tool === 'realm' ? +t.realm : 0);
@@ -810,8 +821,8 @@ export function render(main) {
     if (t.dataset.layer) return;
     if (t.id === 'ic-size') {
       const v = +t.value, val = t.previousElementSibling?.querySelector?.('.val'); if (val) val.textContent = v.toFixed(1) + '×';
+      iconTool().iconSize = v;
       if (selIcon) { if (sizeUndoArmed) { pushUndo(); sizeUndoArmed = false; } selIcon.s = +(iconBase() * v).toFixed(2); iconsChanged(); }
-      else iconTool().iconSize = v;
       return;
     }
     if (editing()) {
@@ -870,6 +881,7 @@ export function render(main) {
     if (b.dataset.tool) { selIcon = null; memo.tool.tool = b.dataset.tool; if (b.dataset.tool !== 'town') selTown = -1; if (b.dataset.tool === 'realm' && +memo.tool.realm === -2 && ed.realms[0]) memo.tool.realm = ed.realms[0].id; drawControls(); }
     else if (b.dataset.ctool) { selIcon = null; poly = null; memo.ctool.tool = b.dataset.ctool; drawPoly(); drawControls(); }
     else if (b.dataset.seg) { const k = b.dataset.seg, v = b.dataset.v; memo.ctool[k] = k === 'riverW' ? +v : v === '1'; if (poly && k === 'wallClosed') drawPoly(); drawControls(); }
+    else if (b.dataset.ilook != null) { const v = b.dataset.ilook; iconTool().iconLook = v; if (selIcon) { pushUndo(); if (v) selIcon.look = v; else delete selIcon.look; iconsChanged(); } drawControls(); }
     else if (b.dataset.icon) { iconTool().icon = b.dataset.icon; selIcon = null; drawPoly(); drawControls(); }
     else if (b.id === 'ic-flip' && selIcon) { pushUndo(); selIcon.flip = !selIcon.flip; iconsChanged(); }
     else if (b.id === 'ic-del' && selIcon) { pushUndo(); const l = iconList(), i = l.indexOf(selIcon); if (i >= 0) l.splice(i, 1); selIcon = null; drawControls(); iconsChanged(); }
@@ -1017,7 +1029,13 @@ export function render(main) {
       ${existing ? `<div class="seg" id="smode" style="margin-bottom:8px"><button data-sm="update" class="on">Update “${esc(existing.name)}”</button><button data-sm="new">Save as a new map</button></div>` : ''}
       <label>Map name</label><input id="sn" value="${esc(existing?.name || o.name || (isWorld ? 'World map' : 'City map'))}">
       <label class="check"><input type="checkbox" id="spins" checked> Add pins for ${isWorld ? 'every town and capital' : 'landmarks and districts'}</label>
-      <label class="check"><input type="checkbox" id="sent" ${isWorld ? 'checked' : ''}> Create World Bible entries ${isWorld ? '(towns as Locations, realms as Factions)' : '(landmarks & districts as Locations)'}</label>
+      <label class="check"><input type="checkbox" id="sent" ${isWorld ? 'checked' : ''}> Create World Bible entries ${isWorld ? '(realms and towns as Locations, towns inside their realm)' : '(landmarks & districts as Locations)'}</label>
+      ${isWorld ? `<label>This map is of</label>
+      <select id="splace"><option value="">— not set —</option><option value="__new">＋ A new planet entry (named after the map)</option>${['cosmos', 'location'].map(k => {
+        const list = W().entries.filter(x => x.type === k).sort((a, b) => a.name.localeCompare(b.name));
+        return list.length ? `<optgroup label="${TYPES[k].plural}">${list.map(x => `<option value="${x.id}" ${x.id === existing?.placeId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>` : '';
+      }).join('')}</select>
+      <p class="small muted" style="margin:4px 0 0">Its realms become sub-places of this in the World Web, with their towns inside them.</p>` : ''}
       <label>Opens from a pin on</label>
       <select id="sparent"><option value="">— nothing (top-level map) —</option>${maps.map(m => `<option value="${m.id}" ${link?.parent === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select>
       <div id="spinwrap"></div>
@@ -1043,7 +1061,7 @@ export function render(main) {
           name: m.querySelector('#sn').value.trim() || 'Generated map',
           pins: m.querySelector('#spins').checked, entries: m.querySelector('#sent').checked,
           parent: m.querySelector('#sparent').value, pin: m.querySelector('#spin')?.value || '',
-          update: smode === 'update' ? existing : null,
+          update: smode === 'update' ? existing : null, place: m.querySelector('#splace') ? m.querySelector('#splace').value : undefined,
         };
         closeModal();
         toast('Saving map…');
@@ -1068,21 +1086,43 @@ export function render(main) {
     } else {
       gen = { kind: 'city', edit: await A.storeBlob(await cityToBlob(ced || data.gen, { ...memo.city })), style: memo.city.style };
     }
+    // the planet / continent this map shows
+    const placeFor = () => {
+      if (opts.place === '__new') { const pe = newEntry('cosmos', opts.name); pe.summary = 'A world.'; const kf = pe.fields.find(f => f.k === 'Kind'); if (kf) kf.v = 'Planet'; return pe.id; }
+      return opts.place || '';
+    };
     if (opts.update) {
       const map = opts.update;
+      if (opts.place !== undefined && opts.place !== (map.placeId || '')) map.placeId = placeFor();
       map.name = opts.name; map.image = pic.ref; map.w = full.width; map.h = full.height; map.gen = gen;
       if (shots.length) map.shots = [...(map.shots || []), ...shots];
       map.scale = { pxPerUnit: res.pxPerUnit, unit: res.unit || (isWorld ? 'miles' : 'feet') };
       // move pins that match a town, add pins for new towns, leave everything else alone
       const pinName = p => (p.label || getEntry(p.entryId)?.name || '').toLowerCase();
+      // realms (countries) become places in the World Bible; towns sit inside their realm
+      const realmEnt = {};
+      if (isWorld) for (const rl of data.gen.realms) {
+        let re = w.entries.find(x => x.name.toLowerCase() === rl.name.toLowerCase());
+        if (!re && opts.entries) { re = newEntry('location', rl.name); re.summary = `A realm of ${opts.name}.`; re.tags = ['generated']; const kf = re.fields.find(f => f.k === 'Kind'); if (kf) kf.v = 'Realm'; re.fields.push({ k: 'Capital', v: rl.capital?.name || '' }); }
+        if (re) { if (!re.mapId) re.mapId = map.id; realmEnt[rl.name] = re; }
+      }
+      const autoParent = ent => !ent.parentId || getEntry(ent.parentId)?.mapId === map.id;
       for (const p of res.pins) {
         const pin = map.pins.find(x => pinName(x) === p.name.toLowerCase());
-        if (pin) { pin.x = p.x; pin.y = p.y; continue; }
+        if (pin) {
+          pin.x = p.x; pin.y = p.y;
+          const ent = getEntry(pin.entryId), re = realmEnt[p.realm];
+          if (ent && re && ent !== re && autoParent(ent)) ent.parentId = re.id;
+          continue;
+        }
         if (!opts.pins) continue;
         let ent = null;
         if (opts.entries) {
           ent = w.entries.find(x => x.name.toLowerCase() === p.name.toLowerCase());
           if (!ent) { ent = newEntry('location', p.name); ent.summary = isWorld ? `${p.capital ? 'Capital' : p.port ? 'Port town' : 'Town'}${p.realm ? ' in ' + p.realm : ''}.` : `${p.kind === 'district' ? 'A district' : 'A landmark'} of ${opts.name}.`; ent.tags = ['generated']; }
+          if (!ent.mapId) ent.mapId = map.id;
+          const re = realmEnt[p.realm];
+          if (re && re !== ent && autoParent(ent)) ent.parentId = re.id;
         }
         map.pins.push({ id: uid(), x: p.x, y: p.y, label: ent ? '' : p.name, entryId: ent?.id || '', submapId: '', color: isWorld ? (p.capital ? '#d4a24c' : '') : (p.kind === 'district' ? '#a5a5c7' : ''), quiet: true });
       }
@@ -1091,7 +1131,7 @@ export function render(main) {
     }
     const map = {
       id: uid(), name: opts.name, image: pic.ref, w: full.width, h: full.height, shots,
-      parentId: opts.parent || '', scale: { pxPerUnit: res.pxPerUnit, unit: res.unit || (isWorld ? 'miles' : 'feet') }, pins: [], ...(gen ? { gen } : {}),
+      parentId: opts.parent || '', placeId: isWorld && opts.place ? placeFor() : '', scale: { pxPerUnit: res.pxPerUnit, unit: res.unit || (isWorld ? 'miles' : 'feet') }, pins: [], ...(gen ? { gen } : {}),
     };
     const findOrCreate = (name, type, summary, fields) => {
       let e = w.entries.find(x => x.name.toLowerCase() === name.toLowerCase());
@@ -1103,7 +1143,6 @@ export function render(main) {
       }
       return e;
     };
-    const rel = (from, to, label) => { if (!w.relations.some(r => r.from === from && r.to === to)) w.relations.push({ id: uid(), from, to, label }); };
 
     // parent pin
     let parentEntry = null;
@@ -1120,15 +1159,17 @@ export function render(main) {
     if (isWorld) {
       const realmEntries = {};
       if (opts.entries) for (const rl of data.gen.realms) {
-        realmEntries[rl.name] = findOrCreate(rl.name, 'faction', `A realm of ${opts.name}.`, { Headquarters: rl.capital.name });
+        const re = realmEntries[rl.name] = findOrCreate(rl.name, 'location', `A realm of ${opts.name}.`, { Kind: 'Realm', Capital: rl.capital.name });
+        if (!re.mapId) re.mapId = map.id;
       }
       for (const p of res.pins) {
         let ent = null;
         if (opts.entries) {
           ent = findOrCreate(p.name, 'location', `${p.capital ? 'Capital' : p.port ? 'Port town' : 'Town'}${p.realm ? ' in ' + p.realm : ''}.`,
             { Kind: p.capital ? 'Capital city' : p.port ? 'Port town' : 'Town' });
+          if (!ent.mapId) ent.mapId = map.id;
           const re = realmEntries[p.realm];
-          if (re) { if (p.capital) rel(re.id, ent.id, 'rules from'); else rel(ent.id, re.id, 'part of'); }
+          if (re && re !== ent && !ent.parentId) ent.parentId = re.id;
         }
         if (opts.pins) map.pins.push({ id: uid(), x: p.x, y: p.y, label: ent ? '' : p.name, entryId: ent?.id || '', submapId: '', color: p.capital ? '#d4a24c' : '', quiet: true });
       }
@@ -1138,7 +1179,8 @@ export function render(main) {
         if (opts.entries) {
           ent = findOrCreate(p.name === 'Market Square' || p.name === 'Castle' || p.name === 'The Docks' || p.name === 'Royal Gardens' ? `${p.name} of ${opts.name}` : p.name,
             'location', `${p.kind === 'district' ? 'A district' : 'A landmark'} of ${opts.name}.`, { Kind: p.kind === 'district' ? 'District' : 'Landmark' });
-          if (parentEntry) rel(ent.id, parentEntry.id, 'located in');
+          if (!ent.mapId) ent.mapId = map.id;
+          if (parentEntry && parentEntry !== ent && !ent.parentId) ent.parentId = parentEntry.id;
         }
         if (opts.pins) map.pins.push({ id: uid(), x: p.x, y: p.y, label: ent ? '' : p.name, entryId: ent?.id || '', submapId: '', color: p.kind === 'district' ? '#a5a5c7' : '', quiet: true });
       }

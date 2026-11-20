@@ -345,7 +345,7 @@ export function render(main) {
       $('#esearch').addEventListener('input', searchEntries);
       const newEntryFlow = () => {
         const name = $('#esearch').value.trim() || $('#bn').value.trim() || 'New place';
-        const typeChoices = Object.entries(TYPES).map(([k, t]) => `<option value="${k}" ${k === 'location' ? 'selected' : ''}>${t.icon} ${t.label}</option>`).join('');
+        const typeChoices = Object.entries(TYPES).map(([k, t]) => `<option value="${k}" ${k === 'cosmos' ? 'selected' : ''}>${t.icon} ${t.label}</option>`).join('');
         // small inline form instead of another dialog, so nothing typed so far is lost
         $('#eres').innerHTML = `<div class="pick-new"><label>New entry name</label><input id="nen" value="${esc(name)}">
           <label>Entry type</label><select id="net">${typeChoices}</select>

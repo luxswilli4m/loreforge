@@ -12,6 +12,8 @@ const PAL = {
   relief: { mode: 'color', ink: '#2e2a26', soft: true },
   cells: { mode: 'color', ink: '#2e2a30' },
   pastel: { mode: 'color', ink: '#4a4250', soft: true },
+  // flat cream silhouettes with a dark red-brown outline, like a classic game map marker
+  marker: { mode: 'ink', ink: '#5a1e14', paper: '#efe2bf', shade: '#e2cf9e', accent: '#5a1e14', dark: '#5a1e14', marker: true },
 };
 const COL = {
   stone: '#bdb6a8', stoneD: '#8e877b', roof: '#c4553f', roofD: '#963a2c', wood: '#a06e40', woodD: '#6e4a2a', fire: '#f08a2c', flame: '#ffd25a',
@@ -241,6 +243,121 @@ export const ICONS = {
     k.circ(0, 8, 3, 'glowL', false);
     for (const [x, y] of [[-26, -18], [26, -18], [0, -36]]) k.circ(x, y, 3, 'glowL');
   } },
+  // ---- cities & crests ----
+  city: { label: 'City', group: 'Cities', draw(k) {
+    k.poly(k.crenel(-40, 40, 8, 6, 6), 'stone'); k.rect(-40, 14, 80, 24, 'stone');
+    for (const [x, h] of [[-26, 30], [-6, 44], [14, 34], [30, 24]]) { k.rect(x - 7, 14 - h, 14, h, 'stoneD'); k.poly([[x - 9, 14 - h], [x, 14 - h - 14], [x + 9, 14 - h]], 'roof'); }
+    k.path(c => { c.moveTo(-7, 38); c.lineTo(-7, 28); c.arc(0, 28, 7, Math.PI, 0); c.lineTo(7, 38); c.closePath(); }, 'dark');
+  } },
+  capital: { label: 'Capital', group: 'Cities', draw(k) {
+    k.path(c => { c.moveTo(-32, -26); c.lineTo(32, -26); c.lineTo(32, 6); c.quadraticCurveTo(30, 30, 0, 42); c.quadraticCurveTo(-30, 30, -32, 6); c.closePath(); }, 'cloth');
+    k.poly([[-20, 10], [-20, -12], [-10, -2], [0, -16], [10, -2], [20, -12], [20, 10]], 'gold');
+    k.rect(-20, 10, 40, 7, 'gold');
+    for (const x of [-20, 0, 20]) k.circ(x, x ? -14 : -18, 3, 'red');
+  } },
+  crest: { label: 'Town crest', group: 'Cities', draw(k) {
+    k.path(c => { c.moveTo(-30, -30); c.lineTo(30, -30); c.lineTo(30, 4); c.quadraticCurveTo(28, 28, 0, 40); c.quadraticCurveTo(-28, 28, -30, 4); c.closePath(); }, 'cloth');
+    k.poly([[-30, -4], [0, 14], [30, -4], [30, 8], [0, 26], [-30, 8]], 'red');
+    k.poly([[-8, -24], [0, -10], [8, -24]], 'red');
+  } },
+  keep: { label: 'Keep', group: 'Cities', draw(k) {
+    k.rect(-22, -12, 44, 50, 'stone'); k.poly(k.crenel(-26, 26, -22, 10, 4), 'stone');
+    k.rect(-6, -2, 12, 14, 'dark'); k.path(c => { c.moveTo(-9, 38); c.lineTo(-9, 26); c.arc(0, 26, 9, Math.PI, 0); c.lineTo(9, 38); c.closePath(); }, 'dark');
+  } },
+  // ---- dungeons ----
+  barrow: { label: 'Barrow tomb', group: 'Dungeons', draw(k) {
+    k.path(c => { c.moveTo(-44, 38); c.quadraticCurveTo(-40, -10, 0, -14); c.quadraticCurveTo(40, -10, 44, 38); c.closePath(); }, 'earth');
+    k.path(c => { c.moveTo(-22, 38); c.lineTo(-22, 4); c.lineTo(0, -22); c.lineTo(22, 4); c.lineTo(22, 38); c.closePath(); }, 'stone');
+    k.path(c => { c.moveTo(-12, 38); c.lineTo(-12, 8); c.lineTo(0, -6); c.lineTo(12, 8); c.lineTo(12, 38); c.closePath(); }, 'dark');
+    for (const x of [-17, 17]) k.path(c => { c.arc(x, 18, 3, 0, Math.PI * 1.6); }, null);
+  } },
+  dwarven: { label: 'Dwarven ruin', group: 'Dungeons', draw(k) {
+    const cog = (x, y, r) => { const pts = []; for (let i = 0; i < 16; i++) { const a = i / 16 * Math.PI * 2, rr = i % 2 ? r : r * 1.28; pts.push([x + Math.cos(a) * rr, y + Math.sin(a) * rr]); } k.poly(pts, 'gold'); k.circ(x, y, r * 0.45, 'dark'); };
+    k.poly([[-14, 38], [-10, -26], [10, -26], [14, 38]], 'stoneD'); k.poly([[-16, -26], [0, -42], [16, -26]], 'stone');
+    cog(-22, 20, 13); cog(20, 4, 11); k.rect(-4, 22, 8, 16, 'dark');
+  } },
+  tomb: { label: 'Tomb', group: 'Dungeons', draw(k) {
+    k.poly([[-26, 38], [-26, -8], [0, -34], [26, -8], [26, 38]], 'stone'); k.poly([[-32, -6], [0, -40], [32, -6], [26, -6], [0, -32], [-26, -6]], 'stoneD');
+    k.rect(-10, 4, 20, 34, 'dark'); k.line([[0, -22], [0, -12]], 3); k.line([[-5, -18], [5, -18]], 3);
+  } },
+  arch: { label: 'Broken arch', group: 'Dungeons', draw(k) {
+    k.path(c => { c.moveTo(-34, 38); c.lineTo(-34, -4); c.arc(0, -4, 34, Math.PI, Math.PI * 1.72); c.lineTo(12, -24); c.arc(0, -4, 22, Math.PI * 1.62, Math.PI, true); c.lineTo(-22, 38); c.closePath(); }, 'stone');
+    k.poly([[22, 38], [22, -2], [34, 4], [34, 38]], 'stoneD'); k.circ(10, 34, 4, 'stoneD'); k.circ(-2, 36, 3, 'stoneD');
+  } },
+  fort: { label: 'Fort', group: 'Dungeons', draw(k) {
+    k.rect(-34, 6, 68, 32, 'stone'); k.poly(k.crenel(-34, 34, -2, 8, 6), 'stone');
+    for (const x of [-30, 30]) { k.rect(x - 8, -16, 16, 54, 'stoneD'); k.poly(k.crenel(x - 10, x + 10, -24, 8, 2), 'stoneD'); }
+    k.rect(-8, 18, 16, 20, 'dark'); k.line([[0, -2], [0, -30]], 2); k.poly([[0, -30], [14, -26], [0, -22]], 'red');
+  } },
+  watchtower: { label: 'Watchtower', group: 'Dungeons', draw(k) {
+    k.line([[-16, 38], [-8, -14]], 4); k.line([[16, 38], [8, -14]], 4); k.line([[-13, 20], [13, 20]], 3); k.line([[-14, 24], [10, 2]], 2.4); k.line([[14, 24], [-10, 2]], 2.4);
+    k.rect(-16, -24, 32, 12, 'wood'); k.poly([[-20, -24], [0, -44], [20, -24]], 'roof');
+  } },
+  // ---- other ----
+  shrine: { label: 'Shrine', group: 'Mystic', draw(k) {
+    k.rect(-24, 30, 48, 8, 'stoneD'); k.poly([[-12, 30], [-8, -30], [0, -42], [8, -30], [12, 30]], 'stone');
+    k.ell(0, -4, 8, 5, 'glowL'); k.circ(0, -4, 3, 'dark', false);
+    k.line([[-4, 10], [4, 10]], 2); k.line([[-4, 18], [4, 18]], 2);
+  } },
+  lair: { label: 'Dragon lair', group: 'Mystic', draw(k) {
+    k.path(c => { c.moveTo(-46, 38); c.quadraticCurveTo(-30, 0, 0, -2); c.quadraticCurveTo(30, 0, 46, 38); c.closePath(); }, 'earth');
+    k.path(c => { c.moveTo(-26, 14); c.quadraticCurveTo(0, -34, 26, 14); c.lineTo(20, 14); c.quadraticCurveTo(0, -22, -20, 14); c.closePath(); }, 'stone');
+    for (const x of [-10, 0, 10]) k.line([[x - 2, 2 - Math.abs(x) * 0.4], [x + 2, -6 - Math.abs(x) * 0.4]], 1.6);
+    k.path(c => { c.moveTo(-6, 36); c.lineTo(-14, 22); c.lineTo(-4, 26); c.lineTo(0, 16); c.lineTo(4, 26); c.lineTo(14, 22); c.lineTo(6, 36); c.closePath(); }, 'bone');
+  } },
+  pass: { label: 'Mountain pass', group: 'Mystic', draw(k) {
+    k.poly([[-46, 38], [-20, -30], [-2, 38]], 'stone'); k.poly([[2, 38], [22, -22], [46, 38]], 'stoneD');
+    k.poly([[-20, -30], [-28, -10], [-20, -14], [-12, -8]], 'snow', false); k.poly([[-46, 38], [-20, -30], [-2, 38]], null);
+    k.path(c => { c.moveTo(-4, 38); c.quadraticCurveTo(0, 22, 4, 14); c.moveTo(4, 38); c.quadraticCurveTo(6, 26, 4, 14); }, null);
+  } },
+  clearing: { label: 'Clearing', group: 'Mystic', draw(k) {
+    k.ell(0, 28, 34, 10, 'leaf');
+    for (const [x, y, r] of [[-30, 14, 10], [30, 14, 10], [-18, 0, 9], [18, 0, 9], [0, -6, 8]]) { k.rect(x - 1.5, y + r * 0.6, 3, r * 0.8, 'wood'); k.poly([[x - r, y + r * 0.7], [x, y - r * 1.3], [x + r, y + r * 0.7]], 'leafD'); }
+  } },
+  // ---- camps ----
+  giantcamp: { label: 'Giant camp', group: 'Camps', draw(k) {
+    for (const s of [-1, 1]) k.path(c => { c.moveTo(s * 34, 38); c.quadraticCurveTo(s * 40, -10, s * 4, -30); c.quadraticCurveTo(s * 28, -6, s * 24, 38); c.closePath(); }, 'bone');
+    k.path(c => { c.moveTo(-10, 36); c.quadraticCurveTo(-8, 18, 0, 8); c.quadraticCurveTo(8, 18, 10, 36); c.closePath(); }, 'fire');
+    k.line([[-14, 38], [14, 38]], 4);
+  } },
+  warcamp: { label: 'War camp', group: 'Camps', draw(k) {
+    k.poly([[-42, 38], [-24, 4], [-6, 38]], 'cloth'); k.poly([[2, 38], [22, -2], [42, 38]], 'cloth');
+    k.poly([[-26, 38], [-24, 24], [-22, 38]], 'dark'); k.poly([[20, 38], [22, 22], [24, 38]], 'dark');
+    k.line([[-2, 38], [-2, -40]], 2.4); k.poly([[-2, -40], [18, -34], [-2, -26]], 'red');
+  } },
+  hideout: { label: 'Bandit hideout', group: 'Camps', draw(k) {
+    k.poly([[-36, 38], [-10, -6], [16, 38]], 'cloth'); k.poly([[-10, -6], [-4, 38], [16, 38]], 'sand');
+    k.line([[-10, -6], [-10, -36]], 2.2); k.poly([[-10, -36], [12, -30], [-10, -24]], 'dark');
+    k.circ(26, 28, 7, 'stoneD'); k.line([[22, 38], [30, 18]], 2); k.line([[30, 38], [22, 18]], 2);
+  } },
+  stronghold: { label: 'Stronghold', group: 'Camps', draw(k) {
+    const pts = []; for (let x = -40; x <= 40; x += 8) pts.push([x, 0], [x + 4, -12]);
+    k.poly([[-40, 38], ...pts.slice(0, -1), [40, 0], [40, 38]], 'wood');
+    for (let x = -36; x <= 36; x += 8) k.line([[x, 4], [x, 38]], 1);
+    k.path(c => { c.moveTo(-10, 38); c.lineTo(-10, 20); c.arc(0, 20, 10, Math.PI, 0); c.lineTo(10, 38); c.closePath(); }, 'dark');
+    k.poly([[-6, -12], [0, -30], [6, -12]], 'bone'); k.poly([[18, -10], [24, -24], [30, -10]], 'bone'); k.poly([[-30, -10], [-24, -24], [-18, -10]], 'bone');
+  } },
+  // ---- homesteads ----
+  shack: { label: 'Shack', group: 'Homesteads', draw(k) {
+    k.poly([[-22, 38], [-22, 4], [24, 0], [24, 38]], 'wood'); k.poly([[-28, 6], [-2, -22], [30, 2]], 'woodD');
+    k.rect(-6, 18, 12, 20, 'dark'); for (const y of [12, 22, 32]) k.line([[-22, y], [-10, y]], 1);
+  } },
+  stable: { label: 'Stable', group: 'Homesteads', draw(k, ctx) {
+    ctx.lineWidth *= 1.2;
+    k.path(c => { c.moveTo(-24, 34); c.lineTo(-24, -4); c.arc(0, -4, 24, Math.PI, 0); c.lineTo(24, 34); c.lineTo(12, 34); c.lineTo(12, -4); c.arc(0, -4, 12, 0, Math.PI, true); c.lineTo(-12, 34); c.closePath(); }, 'stoneD');
+    for (const [x, y] of [[-18, 26], [-18, 8], [-12, -14], [18, 26], [18, 8], [12, -14]]) k.circ(x, y, 2, 'dark', false);
+  } },
+  lumbermill: { label: 'Lumber mill', group: 'Homesteads', draw(k) {
+    const pts = []; for (let i = 0; i < 24; i++) { const a = i / 24 * Math.PI * 2, r = i % 2 ? 26 : 32; pts.push([Math.cos(a) * r, -6 + Math.sin(a) * r]); }
+    k.poly(pts, 'stone'); k.circ(0, -6, 6, 'dark');
+    for (const y of [26, 34]) k.path(c => { c.rect(-40, y - 4, 80, 8); }, 'wood');
+    k.ell(40, 26, 3, 4, 'woodD'); k.ell(40, 34, 3, 4, 'woodD');
+  } },
+  well: { label: 'Well', group: 'Homesteads', draw(k) {
+    k.rect(-22, 14, 44, 24, 'stone'); for (const x of [-11, 0, 11]) k.line([[x, 14], [x, 38]], 1); k.line([[-22, 26], [22, 26]], 1);
+    k.line([[-18, 14], [-18, -20]], 3.4); k.line([[18, 14], [18, -20]], 3.4); k.poly([[-26, -18], [0, -36], [26, -18]], 'roof');
+    k.line([[0, -18], [0, 4]], 1.4); k.rect(-5, 4, 10, 8, 'wood');
+  } },
   marker: { label: 'Point of interest', group: 'Travel', draw(k) {
     k.path(c => { c.moveTo(0, 38); c.quadraticCurveTo(-28, 0, -24, -14); c.arc(0, -14, 24, Math.PI, 0); c.quadraticCurveTo(28, 0, 0, 38); c.closePath(); }, 'red');
     const st = []; for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? 6 : 14; st.push([Math.cos(a) * r, -14 + Math.sin(a) * r]); }
@@ -252,16 +369,16 @@ export const ICON_GROUPS = [...new Set(Object.values(ICONS).map(i => i.group))];
 // draw one sticker centred at (x, y) and `size` pixels tall, in the colours of the given map style
 export function drawIcon(ctx, id, x, y, size, style, opts = {}) {
   const ic = ICONS[id]; if (!ic) return;
-  const P = iconPalette(style);
+  const P = iconPalette(opts.look === 'marker' ? 'marker' : style);
   ctx.save();
   ctx.translate(x, y); ctx.scale(size / 100, size / 100);
   if (opts.flip) ctx.scale(-1, 1);
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   // a soft paper halo keeps stickers readable over busy terrain
   if (opts.halo !== false) { ctx.beginPath(); ctx.ellipse(0, 4, 50, 46, 0, 0, Math.PI * 2); const g = ctx.createRadialGradient(0, 4, 10, 0, 4, 52);
-    const hc = P.mode === 'ink' ? P.paper : '#fff8e8'; g.addColorStop(0, hexA(hc, P.mode === 'ink' ? 0.55 : 0.28)); g.addColorStop(1, hexA(hc, 0)); ctx.fillStyle = g; ctx.fill(); }
+    const hc = P.marker ? '#fff6dc' : P.mode === 'ink' ? P.paper : '#fff8e8'; g.addColorStop(0, hexA(hc, P.mode === 'ink' ? 0.55 : 0.28)); g.addColorStop(1, hexA(hc, 0)); ctx.fillStyle = g; ctx.fill(); }
   shadow(ctx, 36, P);
-  ctx.lineWidth = P.mode === 'ink' ? 2.6 : 2.2;
+  ctx.lineWidth = P.marker ? 3.6 : P.mode === 'ink' ? 2.6 : 2.2;
   ic.draw(kit(ctx, P), ctx);
   ctx.restore();
 }
@@ -269,12 +386,12 @@ const hexA = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${
 
 // a small picture of an icon for the tool palette
 const thumbCache = new Map();
-export function iconThumb(id, style, px = 44) {
-  const key = id + style + px;
+export function iconThumb(id, style, px = 44, look = '') {
+  const key = id + style + px + look;
   if (!thumbCache.has(key)) {
     const c = document.createElement('canvas'); c.width = c.height = px * 2;
     const ctx = c.getContext('2d');
-    drawIcon(ctx, id, px, px * 1.05, px * 1.7, style, { halo: false });
+    drawIcon(ctx, id, px, px * 1.05, px * 1.7, style, { halo: false, look });
     thumbCache.set(key, c.toDataURL());
   }
   return thumbCache.get(key);

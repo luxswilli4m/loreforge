@@ -1,6 +1,7 @@
 import { W, TYPES, getEntry, newEntry, deleteEntry, backlinks, mentionsIn, save, uid, formatDate } from '../store.js';
 import { suggestName } from '../tools/generators.js';
 import * as A from '../assets.js';
+import { parentOf, childrenOf, ancestorsOf, isDescendant, mapsFor, placeOfMap, relColor, relKindPicker, wireRelKindPicker } from '../hierarchy.js';
 import { esc, md, typeBadge, typeColor, mentionLink, openModal, closeModal, confirmDialog, editorHTML, attachEditor, pickFile, imageToDataURL, toast, go, rerender } from '../util.js';
 
 let listFilter = { q: '', tag: '' };
@@ -82,6 +83,7 @@ export function readHTML(e, compact = false) {
     <div>
       ${e.image ? `<img class="entry-hero" ${A.src(e.image)} alt="">` : ''}
       ${typeBadge(e.type)}
+      ${ancestorsOf(e).length ? `<div class="place-trail">${ancestorsOf(e).map(a => `<a href="#/entry/${a.id}">${TYPES[a.type]?.icon || ''} ${esc(a.name)}</a>`).join(' <span>›</span> ')} <span>›</span></div>` : ''}
       <h1 style="margin-top:4px">${esc(e.name)}</h1>
       ${e.summary ? `<p class="muted" style="font-size:1.1em;font-style:italic">${md(e.summary).replace(/^<p>|<\/p>$/g, '')}</p>` : ''}
       <div class="prose">${md(e.body) || '<p class="muted">No description yet.</p>'}</div>
@@ -94,13 +96,15 @@ export function readHTML(e, compact = false) {
         ${rels.length ? `<ul class="link-list">${rels.map(r => {
           const other = r.from === e.id ? r.to : r.from;
           const label = r.from === e.id ? r.label : (r.label ? `${r.label} (of this)` : '');
-          return `<li style="align-items:flex-start"><span class="type-dot" style="--tc:${typeColor(getEntry(other)?.type)};margin-top:8px"></span><div style="flex:1">${label ? `<div class="rel-label">${esc(label)}</div>` : ''}${mentionLink(other, '?')}</div>
+          return `<li style="align-items:flex-start"><span class="type-dot" style="--tc:${typeColor(getEntry(other)?.type)};margin-top:8px"></span><div style="flex:1">${label ? `<div class="rel-label" style="color:${relColor(r)}">${esc(label)}</div>` : ''}${mentionLink(other, '?')}</div>
             ${compact ? '' : `<button class="icon small" data-delrel="${r.id}" title="Remove">✕</button>`}</li>`;
         }).join('')}</ul>` : '<p class="muted small" style="margin:0">None yet.</p>'}
         ${compact ? '' : '<button class="small" id="addrel" style="margin-top:8px">＋ Add relationship</button>'}
       </div>
       ${outs.length ? `<div class="card side-box"><h4>Links to</h4><ul class="link-list">${outs.map(id => `<li><span class="type-dot" style="--tc:${typeColor(getEntry(id).type)}"></span>${mentionLink(id)}</li>`).join('')}</ul></div>` : ''}
       ${back.length ? `<div class="card side-box"><h4>Mentioned in</h4><ul class="link-list">${back.map(b => `<li><a href="${kindHref[b.kind](b.item)}">${esc(kindName[b.kind](b.item))}</a><span class="muted small">${b.kind}</span></li>`).join('')}</ul></div>` : ''}
+      ${(() => { const kids = childrenOf(e.id).sort((a, b) => a.name.localeCompare(b.name)); return kids.length ? `<div class="card side-box"><h4>Places inside (${kids.length})</h4><ul class="link-list">${kids.slice(0, 40).map(k => `<li><span class="type-dot" style="--tc:${typeColor(k.type)}"></span><a href="#/entry/${k.id}">${esc(k.name)}</a>${childrenOf(k.id).length ? `<span class="muted small">${childrenOf(k.id).length} inside</span>` : ''}</li>`).join('')}</ul>${kids.length > 40 ? `<p class="small muted">…and ${kids.length - 40} more</p>` : ''}</div>` : ''; })()}
+      ${(() => { const own = mapsFor(e).own.map(id => W().maps.find(m => m.id === id)).filter(Boolean); return own.length ? `<div class="card side-box"><h4>Maps of ${esc(e.name)}</h4><ul class="link-list">${own.map(m => `<li><a href="#/map/${m.id}">🗺️ ${esc(m.name)}</a></li>`).join('')}</ul></div>` : ''; })()}
       ${pins.length ? `<div class="card side-box"><h4>On maps</h4><ul class="link-list">${pins.map(({ m, p }) => `<li><a href="#/map/${m.id}?pin=${p.id}">📍 ${esc(m.name)}</a></li>`).join('')}</ul></div>` : ''}
     </div>
   </div>`;
@@ -133,14 +137,17 @@ export function relationDialog(e, onDone) {
   openModal(`<h2>New relationship</h2>
     <p class="muted small">How is <b>${esc(e.name)}</b> connected to something else?</p>
     <div class="row"><div><label>${esc(e.name)} is…</label><input id="lab" list="rel-sugg" placeholder="e.g. ally of, rules, sister of" autofocus>
-      <datalist id="rel-sugg">${['ally of', 'enemy of', 'member of', 'leader of', 'rules', 'lives in', 'parent of', 'child of', 'sibling of', 'rival of', 'owns', 'serves', 'located in', 'worships', 'created'].map(s => `<option value="${s}">`).join('')}</datalist></div>
+      <datalist id="rel-sugg">${['ally of', 'enemy of', 'member of', 'leader of', 'rules', 'lives in', 'parent of', 'child of', 'sibling of', 'married to', 'in love with', 'hunts', 'rival of', 'owns', 'serves', 'worships', 'created'].map(s => `<option value="${s}">`).join('')}</datalist></div>
     <div><label>…this entry</label><select id="to">${others.map(o => `<option value="${o.id}">${esc(o.name)} (${TYPES[o.type]?.label})</option>`).join('')}</select></div></div>
+    <label>Kind (sets its colour in the World Web)</label>${relKindPicker('')}
     <div class="modal-actions"><button data-a="no">Cancel</button><button class="primary" data-a="yes">Add</button></div>`, m => {
+    let kind = '';
+    wireRelKindPicker(m, k => kind = k);
     m.addEventListener('click', ev => {
       const a = ev.target.dataset.a;
       if (a === 'no') closeModal();
       if (a === 'yes') {
-        W().relations.push({ id: uid(), from: e.id, to: m.querySelector('#to').value, label: m.querySelector('#lab').value.trim() });
+        W().relations.push({ id: uid(), from: e.id, to: m.querySelector('#to').value, label: m.querySelector('#lab').value.trim(), ...(kind ? { kind } : {}) });
         save(); closeModal(); (onDone || rerender)();
       }
     });
@@ -167,6 +174,15 @@ export function renderEdit(main, id) {
           <select id="type">${Object.entries(TYPES).map(([k, t]) => `<option value="${k}" ${k === e.type ? 'selected' : ''}>${t.icon} ${t.label}</option>`).join('')}</select>
         </div>
         <div class="card side-box">
+          <h4>Part of</h4>
+          <p class="small muted" style="margin:0 0 6px">The place (or planet, realm…) this sits inside. It becomes a sub-node of it in the World Web.</p>
+          <select id="parent"><option value="">— nothing —</option>${Object.entries(TYPES).filter(([k]) => k !== 'character').map(([k, t]) => {
+            const opts = W().entries.filter(x => x.type === k && x.id !== e.id && !isDescendant(x.id, e.id)).sort((a, b) => a.name.localeCompare(b.name));
+            return opts.length ? `<optgroup label="${t.plural}">${opts.map(x => `<option value="${x.id}" ${x.id === e.parentId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>` : '';
+          }).join('')}</select>
+          ${!e.parentId && parentOf(e) ? `<p class="small muted" style="margin:6px 0 0">Inside <b>${esc(getEntry(parentOf(e)).name)}</b> because of its map.</p>` : ''}
+        </div>
+        <div class="card side-box">
           <h4>Image</h4>
           ${e.image ? `<img ${A.src(e.image)} style="width:100%;border-radius:8px;margin-bottom:8px">` : ''}
           <div class="row"><button id="img">${e.image ? 'Replace' : '⬆ Upload'}</button>${e.image ? '<button id="noimg" class="danger">Remove</button>' : ''}</div>
@@ -191,6 +207,7 @@ export function renderEdit(main, id) {
     for (const k of TYPES[e.type].fields) if (!e.fields.some(f => f.k === k)) e.fields.push({ k, v: '' });
     touch(); renderEdit(main, id);
   });
+  $m('#parent').addEventListener('change', ev => { e.parentId = ev.target.value; touch(); renderEdit(main, id); });
   $m('#tags').addEventListener('input', ev => { e.tags = ev.target.value.split(',').map(s => s.trim().replace(/^#/, '')).filter(Boolean); touch(); });
   attachEditor($m('#body'), v => { e.body = v; touch(); });
   attachEditor($m('#secret'), v => { e.secret = v; touch(); });

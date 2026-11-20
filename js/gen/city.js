@@ -798,7 +798,7 @@ function gateTowers(wa) {
   return out;
 }
 function drawCityIcons(ctx, data, style) {
-  for (const ic of [...(data.icons || [])].sort((a, b) => a.y - b.y)) drawIcon(ctx, ic.t, ic.x, ic.y, ic.s, style, { flip: ic.flip });
+  for (const ic of [...(data.icons || [])].sort((a, b) => a.y - b.y)) drawIcon(ctx, ic.t, ic.x, ic.y, ic.s, style, { flip: ic.flip, look: ic.look });
 }
 
 // ---------------- City editing ----------------

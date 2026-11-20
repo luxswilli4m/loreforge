@@ -1110,7 +1110,7 @@ export function renderWorld(data, canvas, styleName = 'parchment', ropts = {}) {
   const iconBoxes = [];
   if (LY.icons) for (const ic of [...(data.icons || [])].sort((a, b) => a.y - b.y)) {
     const [px, py] = toPx([ic.x, ic.y]), sz = ic.s * cs;
-    drawIcon(ctx, ic.t, px, py, sz, styleName, { flip: ic.flip });
+    drawIcon(ctx, ic.t, px, py, sz, styleName, { flip: ic.flip, look: ic.look });
     iconBoxes.push([px - sz * 0.42, py - sz * 0.45, px + sz * 0.42, py + sz * 0.42]);
   }
 
