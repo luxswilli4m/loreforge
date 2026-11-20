@@ -1,7 +1,8 @@
 import { W, uid, save, getMap, getEntry, newEntry } from '../store.js';
-import { esc, query, go, toast, openModal, closeModal, promptDialog } from '../util.js';
+import { esc, query, go, toast, openModal, closeModal, promptDialog, pickFile } from '../util.js';
+import { openGlobe } from './globe.js';
 import { randomSeed, ensureFonts, drawFrame, drawCompass, drawScaleBar, drawCartouche } from '../gen/core.js';
-import { generateWorld, renderWorld, WORLD_DEFAULTS, WORLD_SIZES, worldUnits, worldFrameStyle, makeEditState, cloneEdit, applyBrush, drawEditPreview,
+import { generateWorld, renderWorld, WORLD_DEFAULTS, WORLD_SIZES, worldUnits, worldFrameStyle, makeEditState, completeEdit, SHAPES, shapePreview, heightsFromImage, LAYERS, cloneEdit, applyBrush, drawEditPreview,
   editToBlob, editFromBlob, BIOME_LABELS, REALM_COLORS } from '../gen/world.js';
 import { generateCity, renderCity, CITY_DEFAULTS, CITY_EXTENTS, cityFrameStyle, citySubtitle, ROOF_SWATCHES, ROAD_SWATCHES, cloneCity, cityBrush, setCityWall, addCityRoad, nearestRoad, removeCityRoad, cityToBlob, cityFromBlob } from '../gen/city.js';
 import { placeName, realmBase, realmName } from '../gen/names.js';
@@ -17,25 +18,31 @@ const STYLE_SWATCH = {
   painted: 'linear-gradient(135deg,#b2aa54 0 40%,#3c5c32 40% 55%,#7ec0c8 55% 60%,#18384f 60% 100%)',
   relief: 'linear-gradient(135deg,#769e5c 0 32%,#ba9668 32% 50%,#f0f0f4 50% 57%,#1a4a86 57% 100%)',
   cells: 'linear-gradient(135deg,#d88a62 0 30%,#8fb764 30% 55%,#a2c9e2 55% 100%)',
+  pastel: 'linear-gradient(135deg,#f0c6b6 0 30%,#c8e4c0 30% 50%,#e8d0ec 50% 62%,#7f9cc8 62% 100%)',
 };
-const STYLE_LABEL = { parchment: 'Parchment', atlas: 'Atlas', night: 'Night', quill: 'Ink & Quill', storybook: 'Storybook', painted: 'Painted', relief: 'Realistic', cells: 'Political' };
+const STYLE_LABEL = { parchment: 'Parchment', atlas: 'Atlas', night: 'Night', quill: 'Ink & Quill', storybook: 'Storybook', painted: 'Painted', relief: 'Realistic', cells: 'Political', pastel: 'Pastel' };
 const STYLE_HINT = {
   quill: 'Pen-and-ink on sepia — the classic epic-fantasy look', storybook: 'Bright, friendly colours', painted: 'Painted terrain with cloud edges',
-  relief: 'Realistic shaded elevation', cells: 'Coloured realm cells, like Azgaar',
+  relief: 'Realistic shaded elevation', cells: 'Coloured realm cells, like Azgaar', pastel: 'Soft realm colours, layered seas and dashed borders — Azgaar’s political look',
 };
 const MODE_STYLES = { world: Object.keys(STYLE_SWATCH), city: ['parchment', 'atlas', 'night', 'storybook', 'quill'] };
 
 const TOOLS = [
   ['Terrain', [['raise', '⬆️', 'Raise'], ['lower', '⬇️', 'Lower'], ['mountain', '🏔️', 'Mountains'], ['smooth', '〰️', 'Smooth'], ['flatten', '▁', 'Flatten'], ['land', '🏝️', 'Add land'], ['sea', '🌊', 'Add sea']]],
   ['Paint', [['biome', '🌲', 'Biome'], ['realm', '🚩', 'Realm']]],
-  ['Places', [['town', '🏘️', 'Towns']]],
+  ['Water & routes', [['river', '〰️', 'Draw river'], ['dry', '🏜️', 'Dry up rivers'], ['road', '🛣️', 'Draw road'], ['erase', '✂️', 'Erase drawn']]],
+  ['Places & labels', [['town', '🏘️', 'Towns'], ['label', '🏷️', 'Labels']]],
 ];
+const BRUSH_TOOLS = ['raise', 'lower', 'mountain', 'smooth', 'flatten', 'land', 'sea', 'biome', 'realm', 'dry'];
 const TOOL_HELP = {
   raise: 'Drag to raise the ground. Lift the sea floor to make new land.', lower: 'Drag to lower the ground — carve valleys, bays and lakes.',
   mountain: 'Drag to build mountain ranges.', smooth: 'Drag to soften rough terrain and coastlines.', flatten: 'Drag to wear mountains down into plains.',
   land: 'Drag across the sea to add land.', sea: 'Drag across land to flood it.',
   biome: 'Paint forests, deserts, swamps… “Automatic” lets the climate decide again.', realm: 'Paint land into a realm. “Automatic” lets borders grow naturally again.',
   town: 'Click land to add a town. Drag a town to move it. Click a town to rename it, make it a capital or delete it.',
+  river: 'Drag from the source to the sea. Rivers start thin and widen as they go.', dry: 'Drag over generated rivers to dry them up.',
+  road: 'Drag to draw a road or trade route.', erase: 'Click a river or road you drew to remove it.',
+  label: 'Click empty space to add your own label. Click an existing label (realm, mountain, forest, sea or yours) to rename it — leave it blank to hide it.',
 };
 
 const CITY_TOOLS = [
@@ -53,7 +60,7 @@ const CITY_HELP = {
 
 // remembered between visits in this session
 const memo = { mode: 'world', world: { ...WORLD_DEFAULTS, seed: randomSeed() }, city: { ...CITY_DEFAULTS, seed: randomSeed() },
-  tool: { tool: 'raise', size: 8, strength: 0.5, biome: 2, realm: -2 },
+  tool: { tool: 'raise', size: 8, strength: 0.5, biome: 2, realm: -2, riverW: 2.2, labelSize: 1 },
   ctool: { tool: 'bld-add', size: 70, roof: '', road: '#b8946a' } };
 const BW = 1000; // layout width of the zoomable map
 
@@ -88,6 +95,11 @@ export function render(main) {
     return MODE_STYLES[memo.mode].map(s => `<button class="swatch ${o.style === s ? 'on' : ''}" data-style="${s}" title="${esc(STYLE_HINT[s] || STYLE_LABEL[s])}"><span style="background:${STYLE_SWATCH[s]}"></span>${STYLE_LABEL[s]}</button>`).join('');
   }
 
+  function layersHTML(o) {
+    const L = o.layers || {};
+    return `<details class="layers-box"><summary>🗂️ Layers</summary><div class="checks">${LAYERS.map(([k, l]) =>
+      `<label class="check"><input type="checkbox" data-layer="${k}" ${L[k] !== false ? 'checked' : ''}> ${l}</label>`).join('')}</div></details>`;
+  }
   // map size: presets in km × km, or your own
   function sizeHTML(o, list, key, unit, step) {
     const cur = o[key] || (o.mapW ? 'custom' : list[1][0]);
@@ -107,8 +119,8 @@ export function render(main) {
       <label>Seed <span class="muted">— same seed, same map</span></label>
       <div class="row"><input data-k="seed" value="${esc(o.seed)}"><button class="shrink" id="reroll" title="Random seed">🎲</button></div>`;
     const world = `
-      <label>Landmass</label>
-      <select data-k="shape">${[['continent', 'Single continent'], ['large', 'Large continent'], ['twin', 'Twin continents'], ['archipelago', 'Archipelago'], ['coast', 'Coastal region']].map(([v, l]) => `<option value="${v}" ${o.shape === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <label>Landmass template</label>
+      <button class="template-btn" id="tpl"><canvas id="tpl-prev" width="120" height="76"></canvas><span><b>${esc(o.shape === 'import' ? 'Imported heightmap' : (SHAPES.find(x => x[0] === o.shape)?.[1] || 'Continent'))}</b><small>Change template…</small></span></button>
       ${sizeHTML(o, WORLD_SIZES, 'size', 'km', 1)}
       <label>Land vs sea <span class="val">${Math.round(o.land * 100)}% land</span></label><input type="range" data-k="land" data-num min="0.2" max="0.7" step="0.01" value="${o.land}">
       <label>Rivers <span class="val">${o.rivers < 0.3 ? 'Few' : o.rivers < 0.7 ? 'Some' : 'Many'}</span></label><input type="range" data-k="rivers" data-num min="0" max="1" step="0.05" value="${o.rivers}">
@@ -116,7 +128,8 @@ export function render(main) {
         <div><label>Realms</label><input type="number" data-k="realms" data-num min="1" max="8" value="${o.realms}"></div>
         <div><label>Towns</label><input type="number" data-k="towns" data-num min="0" max="40" value="${o.towns}"></div>
       </div>
-      <label>Climate</label><select data-k="climate">${['cold', 'temperate', 'warm'].map(c => `<option ${o.climate === c ? 'selected' : ''}>${c}</option>`).join('')}</select>`;
+      <label>Climate</label><select data-k="climate">${['cold', 'temperate', 'warm'].map(c => `<option ${o.climate === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
+      ${o.size === 'world' ? `<button class="edit-btn" id="globe">🌐 Globe view <span class="muted small">— spin your whole world</span></button>` : ''}`;
     const city = `
       <label>Size</label>
       <div class="seg small">${['village', 'town', 'city', 'capital'].map(s => `<button data-size="${s}" class="${o.size === s ? 'on' : ''}">${s[0].toUpperCase() + s.slice(1)}</button>`).join('')}</div>
@@ -131,6 +144,7 @@ export function render(main) {
       ${common}
       ${mode === 'world' ? world : city}
       <label>Style</label><div class="swatches">${styleButtons(o)}</div>
+      ${mode === 'world' ? layersHTML(o) : ''}
       <button id="startedit" class="edit-btn">✏️ ${hasEdits ? 'Keep editing' : 'Edit this map'} <span class="muted small">— ${mode === 'world' ? 'brushes, biomes, realms, towns' : 'buildings, roofs, walls, roads, trees'}</span></button>
       <div class="gen-actions">
         <button id="newmap">✨ Surprise me</button>
@@ -155,9 +169,17 @@ export function render(main) {
     const t = memo.tool, o = memo.world;
     const tools = TOOLS.map(([g, list]) => `<div class="tg-label">${g}</div><div class="tools">${list.map(([id, ic, lb]) =>
       `<button class="tool ${t.tool === id ? 'on' : ''}" data-tool="${id}" title="${esc(TOOL_HELP[id])}"><span>${ic}</span>${lb}</button>`).join('')}</div>`).join('');
-    const brush = t.tool !== 'town' ? `
-      <label>Brush size <span class="val">${t.size}</span></label><input type="range" data-t="size" min="2" max="40" step="1" value="${t.size}">
-      ${['biome', 'realm'].includes(t.tool) ? '' : `<label>Strength <span class="val">${Math.round(t.strength * 100)}%</span></label><input type="range" data-t="strength" min="0.1" max="1" step="0.05" value="${t.strength}">`}` : '';
+    const brush = BRUSH_TOOLS.includes(t.tool) ? `
+      <label>Brush size <span class="val">${t.size}</span></label><input type="range" data-t="size" min="0.5" max="40" step="0.5" value="${t.size}">
+      ${['biome', 'realm', 'dry'].includes(t.tool) ? '' : `<label>Strength <span class="val">${Math.round(t.strength * 100)}%</span></label><input type="range" data-t="strength" min="0.05" max="1" step="0.05" value="${t.strength}">`}` : '';
+    const riverOpt = t.tool === 'river' ? `<label>River size at the mouth</label><select data-t="riverW">${[[1, 'Stream'], [2.2, 'River'], [4, 'Great river']].map(([v, l]) => `<option value="${v}" ${+t.riverW === v ? 'selected' : ''}>${l}</option>`).join('')}</select>` : '';
+    const labelOpt = t.tool === 'label' ? `<label>New label size</label><select data-t="labelSize">${[[0.7, 'Small'], [1, 'Medium'], [1.5, 'Large'], [2.2, 'Huge']].map(([v, l]) => `<option value="${v}" ${+t.labelSize === v ? 'selected' : ''}>${l}</option>`).join('')}</select>` : '';
+    const drawn = (ed.rivers?.length || ed.roads?.length) ? `<p class="small muted" style="margin:8px 0 0">Drawn: ${ed.rivers.length} river${ed.rivers.length === 1 ? '' : 's'}, ${ed.roads.length} road${ed.roads.length === 1 ? '' : 's'}</p>` : '';
+    const regen = `<div class="tg-label">Regenerate</div><div class="regen-row">
+      <button class="small" id="rg-names" title="New names for towns, realms, seas, mountains and forests">🎲 Names</button>
+      <button class="small" id="rg-borders" title="Throw away painted borders and let realms grow naturally">🧭 Borders</button>
+      <button class="small" id="rg-towns" title="Place a fresh set of towns and capitals">🏘️ Towns</button>
+      <button class="small" id="rg-roads" title="Show or hide the automatic roads (your drawn roads stay)">🛣️ ${ed.noRoads ? 'Show' : 'Hide'} auto roads</button></div>`;
     const biome = t.tool === 'biome' ? `<label>Paint with</label><select data-t="biome">${BIOME_LABELS.map(([v, l]) => `<option value="${v}" ${+t.biome === v ? 'selected' : ''}>${l}</option>`).join('')}<option value="255" ${+t.biome === 255 ? 'selected' : ''}>✨ Automatic (let climate decide)</option></select>` : '';
     const realm = t.tool === 'realm' ? `<label>Paint with</label><select data-t="realm">${ed.realms.map(rl => `<option value="${rl.id}" ${+t.realm === rl.id ? 'selected' : ''}>${esc(rl.name)}</option>`).join('')}<option value="-1" ${+t.realm === -1 ? 'selected' : ''}>Unclaimed land</option><option value="-2" ${+t.realm === -2 ? 'selected' : ''}>✨ Automatic (natural borders)</option></select>` : '';
     const tw = selTown >= 0 ? ed.towns[selTown] : null;
@@ -172,9 +194,11 @@ export function render(main) {
       <div class="edit-head"><b>✏️ Editing ${esc(o.name || 'map')}</b><button class="small" id="enddone">Done</button></div>
       ${tools}
       <p class="small muted tool-help">${esc(TOOL_HELP[t.tool])}</p>
-      ${brush}${biome}${realm}${town}
+      ${brush}${biome}${realm}${riverOpt}${labelOpt}${town}${drawn}
+      ${regen}
       ${realms}
       <label>Style</label><div class="swatches">${styleButtons(o)}</div>
+      ${layersHTML(o)}
       ${undoRow()}`;
   }
 
@@ -221,6 +245,8 @@ export function render(main) {
 
   const drawControls = () => {
     ctl.innerHTML = controlsHTML();
+    const tp = ctl.querySelector('#tpl-prev');
+    if (tp) setTimeout(() => { try { if (memo.world.shape !== 'import') tp.getContext('2d').drawImage(shapePreview(memo.world), 0, 0); } catch (e) { console.error(e); } }, 0);
     pv.classList.toggle('editing', editing());
     pv.dataset.tool = editing() ? (memo.mode === 'world' ? memo.tool.tool : memo.ctool.tool) : '';
     drawMark();
@@ -280,7 +306,7 @@ export function render(main) {
     await new Promise(r => setTimeout(r, 20));
     try {
       const tmp = document.createElement('canvas');
-      if (memo.mode === 'world') renderWorld(data.gen, tmp, memo.world.style, { view, furniture: false });
+      if (memo.mode === 'world') renderWorld(data.gen, tmp, memo.world.style, { view, furniture: false, layers: memo.world.layers });
       else renderCity(data.gen, tmp, memo.city.style, { view, furniture: false });
       det.width = tmp.width; det.height = tmp.height;
       det.getContext('2d').drawImage(tmp, 0, 0);
@@ -334,11 +360,12 @@ export function render(main) {
     try {
       if (force || key !== lastKey || !data || data.mode !== mode) {
         data = { mode, gen: mode === 'world' ? generateWorld(o, ed) : (ced || generateCity(o)) };
+        if (mode === 'world' && ed) completeEdit(ed, data.gen);
         lastKey = key;
       }
       data.gen.o.name = o.name;
       data.gen.o.style = o.style;
-      data.result = mode === 'world' ? renderWorld(data.gen, canvas, o.style, { furniture: false }) : renderCity(data.gen, canvas, o.style, { furniture: false });
+      data.result = mode === 'world' ? renderWorld(data.gen, canvas, o.style, { furniture: false, layers: o.layers }) : renderCity(data.gen, canvas, o.style, { furniture: false });
       // beyond the map's edge, continue the colour of its own border so the frame looks seamless
       try { const px = canvas.getContext('2d').getImageData(4, Math.round(canvas.height / 2), 1, 1).data; pv.style.background = `rgb(${px[0]},${px[1]},${px[2]})`; }
       catch { pv.style.background = frameStyle().back; }
@@ -437,7 +464,7 @@ export function render(main) {
   canvas.addEventListener('pointermove', ev => {
     if (!editing() || pan) return;
     const rc = canvas.getBoundingClientRect(), [lw] = lay();
-    const showCur = memo.mode === 'world' ? memo.tool.tool !== 'town' : ['bld-add', 'bld-del', 'bld-paint', 'tree-add', 'tree-del'].includes(memo.ctool.tool);
+    const showCur = memo.mode === 'world' ? BRUSH_TOOLS.includes(memo.tool.tool) : ['bld-add', 'bld-del', 'bld-paint', 'tree-add', 'tree-del'].includes(memo.ctool.tool);
     if (showCur) {
       const d = memo.mode === 'world' ? memo.tool.size * 2 / gdim()[0] * lw : memo.ctool.size * 2 * cu() / canvas.width * lw;
       cur.style.width = cur.style.height = d + 'px';
@@ -461,7 +488,10 @@ export function render(main) {
         const f = s2 / dist;
         dab(stroke.x + (gx - stroke.x) * f, stroke.y + (gy - stroke.y) * f);
       }
-      if (dist >= step) { stroke.x = gx; stroke.y = gy; drawEditPreview(ed, ov, data?.gen); }
+      if (dist >= step) { stroke.x = gx; stroke.y = gy; if (t.tool !== 'dry') drawEditPreview(ed, ov, data?.gen); }
+    } else if (stroke.kind === 'line') {
+      const l = stroke.pts[stroke.pts.length - 1];
+      if (Math.hypot(gx - l[0], gy - l[1]) >= 0.7) { stroke.pts.push([+gx.toFixed(2), +gy.toFixed(2)]); drawLine(stroke); }
     } else if (stroke.kind === 'town') {
       if (!stroke.moved && Math.hypot(gx - stroke.x, gy - stroke.y) < 0.8) return;
       if (!stroke.moved) { pushUndo(); stroke.moved = true; }
@@ -509,6 +539,17 @@ export function render(main) {
       return;
     }
     const [gx, gy] = gridPos(ev), t = memo.tool;
+    const tolG = 12 / canvas.getBoundingClientRect().width * gdim()[0] + 0.6;
+    if (t.tool === 'river' || t.tool === 'road') { stroke = { kind: 'line', tool: t.tool, pts: [[+gx.toFixed(2), +gy.toFixed(2)]] }; drawLine(stroke); return; }
+    if (t.tool === 'erase') {
+      const near = (list) => list.findIndex(l => l.pts.some((p, j) => j && segD([gx, gy], l.pts[j - 1], p) < tolG));
+      let i = near(ed.rivers);
+      if (i >= 0) { pushUndo(); ed.rivers.splice(i, 1); drawControls(); changed(); return; }
+      i = near(ed.roads);
+      if (i >= 0) { pushUndo(); ed.roads.splice(i, 1); drawControls(); changed(); return; }
+      toast('Click right on a river or road you drew'); return;
+    }
+    if (t.tool === 'label') { labelClick(gx, gy, tolG * 2.5); return; }
     if (t.tool === 'town') {
       const rc = canvas.getBoundingClientRect();
       const i = nearestTown(gx, gy, 14 / rc.width * gdim()[0] + 0.8);
@@ -534,8 +575,69 @@ export function render(main) {
     if (!stroke) return;
     const s0 = stroke; stroke = null;
     if (s0.kind === 'cbrush') { if (s0.dirty) { drawControls(); changed(); } else { undoStack.pop(); drawPoly(); } return; }
+    if (s0.kind === 'line') {
+      drawLine(null);
+      if (s0.pts.length < 2) return;
+      pushUndo();
+      if (s0.tool === 'river') ed.rivers.push({ pts: s0.pts, w: +memo.tool.riverW || 2.2 });
+      else ed.roads.push({ pts: s0.pts });
+      drawControls(); changed(); return;
+    }
     if (s0.kind === 'brush' || s0.moved) { drawControls(); changed(); }
   };
+  // world: preview of a river or road being drawn
+  function drawLine(st) {
+    cov.width = canvas.width || 2400; cov.height = canvas.height || 1500;
+    const c = cov.getContext('2d');
+    c.clearRect(0, 0, cov.width, cov.height);
+    if (!st || st.pts.length < 1) return;
+    const cs = canvas.width / gdim()[0], sc = canvas.width / canvas.getBoundingClientRect().width;
+    c.lineJoin = c.lineCap = 'round';
+    c.beginPath(); st.pts.forEach(([x, y], i) => i ? c.lineTo((x + 0.5) * cs, (y + 0.5) * cs) : c.moveTo((x + 0.5) * cs, (y + 0.5) * cs));
+    c.strokeStyle = 'rgba(255,255,255,.8)'; c.lineWidth = 5 * sc; c.stroke();
+    c.strokeStyle = st.tool === 'river' ? 'rgb(60,120,190)' : 'rgb(170,100,50)'; c.lineWidth = 2.5 * sc; c.stroke();
+  }
+  const segD = (p, a, b) => { const vx = b[0] - a[0], vy = b[1] - a[1], L = vx * vx + vy * vy || 1; const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / L)); return Math.hypot(p[0] - a[0] - vx * t, p[1] - a[1] - vy * t); };
+  // labels: rename what's there, or place a new one
+  async function labelClick(gx, gy, tol) {
+    const g = data.gen;
+    let best = null, bd = tol;
+    for (const rl of g.realms) { const d = Math.hypot(rl.anchor[0] - gx, rl.anchor[1] - gy); if (d < bd) { bd = d; best = { realm: rl }; } }
+    for (const lb of g.regionLabels) { const d = Math.hypot(lb.pos[0] - gx, lb.pos[1] - gy); if (d < bd) { bd = d; best = { label: lb }; } }
+    if (best?.realm) {
+      const er = ed.realms.find(x => x.id === best.realm.rid);
+      const v = await promptDialog('Rename this realm', er?.name || best.realm.name);
+      if (v && er) { pushUndo(); er.name = v; drawControls(); changed(); }
+      return;
+    }
+    if (best?.label) {
+      const lb = best.label;
+      const v = await promptDialogBlank(`Rename this label (leave blank to hide it)`, lb.name);
+      if (v === null) return;
+      pushUndo();
+      if (lb.key.startsWith('c:')) { const id = lb.key.slice(2); if (v) ed.labels.find(x => x.id === id).text = v; else ed.labels = ed.labels.filter(x => x.id !== id); }
+      else ed.labelNames[lb.key] = v;
+      changed(); return;
+    }
+    const v = await promptDialog('New label', '', 'e.g. The Shattered Isles');
+    if (!v) return;
+    pushUndo();
+    ed.labels.push({ id: uid(), x: +gx.toFixed(2), y: +gy.toFixed(2), text: v, size: +memo.tool.labelSize || 1 });
+    changed();
+  }
+  // like promptDialog, but an empty answer is allowed (null only on Cancel)
+  function promptDialogBlank(title, value) {
+    return new Promise(resolve => {
+      openModal(`<h2>${esc(title)}</h2><input id="pdb" value="${esc(value)}">
+        <div class="modal-actions"><button data-a="no">Cancel</button><button class="primary" data-a="yes">OK</button></div>`, m => {
+        const input = m.querySelector('#pdb');
+        const done = ok => { const v = input.value.trim(); closeModal(); resolve(ok ? v : null); };
+        m.addEventListener('click', e => { if (e.target.dataset.a) done(e.target.dataset.a === 'yes'); });
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') done(true); if (e.key === 'Escape') done(false); });
+        setTimeout(() => input.select(), 30);
+      });
+    });
+  }
   canvas.addEventListener('pointerup', endStroke);
   canvas.addEventListener('pointercancel', endStroke);
   const onResize = () => { if (view.fitted) fit(); drawMark(); };
@@ -559,6 +661,7 @@ export function render(main) {
   let nameUndoArmed = true;
   ctl.addEventListener('input', e => {
     const t = e.target;
+    if (t.dataset.layer) return;
     if (editing()) {
       if (t.dataset.t || t.dataset.ct) {
         const key = t.dataset.t || t.dataset.ct, tool = t.dataset.t ? memo.tool : memo.ctool;
@@ -600,6 +703,8 @@ export function render(main) {
   });
   ctl.addEventListener('change', e => {
     const t = e.target;
+    if (t.dataset.layer) { memo.world.layers = { ...(memo.world.layers || {}), [t.dataset.layer]: t.checked }; regen(); return; }
+    if (t.dataset.t === 'riverW' || t.dataset.t === 'labelSize') { memo.tool[t.dataset.t] = +t.value; return; }
     if (!editing()) return;
     if (t.id === 'tw-cap' && selTown >= 0) { pushUndo(); makeCapital(ed.towns[selTown], t.checked); drawControls(); changed(); }
     if (t.dataset.t === 'biome' || t.dataset.t === 'realm') memo.tool[t.dataset.t] = +t.value;
@@ -619,6 +724,19 @@ export function render(main) {
     else if (b.id === 'c-cancel') { poly = null; drawPoly(); drawControls(); }
     else if (b.dataset.style) { o.style = b.dataset.style; if (ced && memo.mode === 'city') ced.o = { ...ced.o, style: o.style }; drawControls(); regen(); }
     else if (b.id === 'startedit') startEditing();
+    else if (b.id === 'tpl') templateDialog();
+    else if (b.id === 'globe') { if (data?.mode === 'world') openGlobe(canvas, memo.world.name || 'World'); }
+    else if (b.id === 'rg-names') {
+      pushUndo();
+      const r = rng(Math.random().toString(36)), used = new Set();
+      ed.nameSeed = Math.random().toString(36).slice(2, 7); ed.labelNames = {};
+      for (const tw of ed.towns) { let nm; do { nm = placeName(r); } while (used.has(nm)); used.add(nm); tw.name = nm; }
+      for (const rl of ed.realms) rl.name = realmName(r, realmBase(r));
+      drawControls(); changed();
+    }
+    else if (b.id === 'rg-borders') { pushUndo(); ed.realmPaint.fill(-2); changed(); }
+    else if (b.id === 'rg-towns') { pushUndo(); ed.towns = null; ed.realms = null; ed.realmPaint.fill(-2); ed.townSeed = Math.random().toString(36).slice(2, 7); selTown = -1; changed(); setTimeout(drawControls, 900); }
+    else if (b.id === 'rg-roads') { pushUndo(); ed.noRoads = !ed.noRoads; drawControls(); changed(); }
     else if (b.id === 'enddone') { wEdit = cEdit = false; poly = null; drawPoly(); cur.style.display = 'none'; drawControls(); }
     else if (b.id === 'undo') undo();
     else if (b.id === 'redo') redo();
@@ -668,7 +786,7 @@ export function render(main) {
     if (v.x1 > v.x0 && v.y1 > v.y0) {
       const s = scr * f, view = { x: v.x0, y: v.y0, w: v.x1 - v.x0, h: v.y1 - v.y0, s };
       const tmp = document.createElement('canvas');
-      if (memo.mode === 'world') renderWorld(data.gen, tmp, memo.world.style, { view, furniture: false });
+      if (memo.mode === 'world') renderWorld(data.gen, tmp, memo.world.style, { view, furniture: false, layers: memo.world.layers });
       else renderCity(data.gen, tmp, memo.city.style, { view, furniture: false });
       ctx.drawImage(tmp, (cr.left - pr.left + v.x0 * scr) * f, (cr.top - pr.top + v.y0 * scr) * f);
     }
@@ -681,6 +799,53 @@ export function render(main) {
     const m = editMapId && getMap(editMapId);
     if (m) { (m.shots = m.shots || []).push(shot); save(); toast(`Snapshot attached to ${m.name} — open its 📁 folder on the Maps page`); }
     else { pendingShots.push(shot); toast('Snapshot taken — it’ll be attached when you save this map'); drawControls(); }
+  }
+
+  // ---------- landmass templates (like Azgaar's heightmap picker) ----------
+  function templateDialog() {
+    const o = memo.world;
+    openModal(`<h2>Landmass templates</h2><p class="small muted" style="margin-top:-6px">Previews use your current seed. Pick one to start a fresh map.</p>
+      <div class="tpl-grid">${SHAPES.map(([k, l]) => `<button class="tpl ${o.shape === k ? 'on' : ''}" data-shape="${k}"><canvas width="120" height="76"></canvas><span>${l}</span></button>`).join('')}</div>
+      <div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap">
+        <button id="tpl-import">📥 Import heightmap image…</button><button id="tpl-reseed">🎲 New seed</button>
+        <span class="small muted" style="flex:1">Any greyscale picture works — light is high ground, dark is sea floor. Real-world heightmaps from the web are perfect.</span>
+      </div>
+      <div class="modal-actions"><button data-a="no">Close</button></div>`, m => {
+      m.closest('.modal')?.classList.add('wide');
+      const paint = () => [...m.querySelectorAll('[data-shape]')].forEach((btn, i) => setTimeout(() => {
+        try { btn.querySelector('canvas').getContext('2d').drawImage(shapePreview({ ...o, shape: btn.dataset.shape }), 0, 0); } catch (e) { console.error(e); }
+      }, i * 15));
+      paint();
+      m.addEventListener('click', async ev => {
+        const b = ev.target.closest('button'); if (!b) return;
+        if (b.dataset.a) { closeModal(); return; }
+        if (b.id === 'tpl-reseed') { o.seed = randomSeed(); paint(); return; }
+        if (b.id === 'tpl-import') { closeModal(); importHeightmap(); return; }
+        if (b.dataset.shape) {
+          if (ed && !confirm('This starts a fresh map and throws away your hand edits. Continue?')) return;
+          if (ed) discardEdits();
+          o.shape = b.dataset.shape; closeModal(); view.fitted = true; drawControls(); regen();
+        }
+      });
+    });
+  }
+  async function importHeightmap() {
+    const f = await pickFile('image/*');
+    if (!f) return;
+    if (ed && !confirm('Importing starts a fresh map and throws away your hand edits. Continue?')) return;
+    const img = new Image();
+    img.onload = () => {
+      discardEdits();
+      const o = memo.world;
+      // match the map's shape to the picture
+      if (o.size !== 'custom' || !o.mapW) { const ar = img.width / img.height; o.size = 'custom'; o.mapH = o.mapH || 750; o.mapW = Math.round(o.mapH * ar); }
+      o.shape = 'import';
+      ed = heightsFromImage(img, o); edVersion++; lastKey = '';
+      view.fitted = true; drawControls(); regen();
+      toast('Heightmap imported — use ✏️ Edit this map to keep shaping it');
+    };
+    img.onerror = () => toast('Couldn’t read that picture');
+    img.src = URL.createObjectURL(f);
   }
 
   function saveDialog() {
@@ -732,7 +897,7 @@ export function render(main) {
     const w = W();
     const isWorld = data.mode === 'world';
     const full = document.createElement('canvas');
-    const res = isWorld ? renderWorld(data.gen, full, memo.world.style) : renderCity(data.gen, full, memo.city.style);
+    const res = isWorld ? renderWorld(data.gen, full, memo.world.style, { layers: memo.world.layers }) : renderCity(data.gen, full, memo.city.style);
     const pic = await A.storeImage(full, { quality: 0.88 });
     const shots = pendingShots; pendingShots = [];
     // keep the editable terrain with world maps so they can be reopened in the editor later

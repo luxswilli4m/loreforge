@@ -119,3 +119,5 @@ The generator fills the screen: scroll to zoom, drag to move (Space, middle or r
 
 **Map folders:** every map card has a 📁 folder showing the map and its snapshots. Snapshots have names and captions with @ links, so they appear on the entries they mention.
 
+**More generator tools:** a landmass template picker (Continent, Large continent, Twin continents, Old world, Pangea, High/Low island, Volcano, Atoll, Archipelago, Shattered, Fractious, Mediterranean, Peninsula, Isthmus, Coastal region, Desert continent) with live previews, plus **Import heightmap** from any greyscale picture. A **Pastel political** style (Azgaar-like), a **Layers** panel (realm colours, borders, mountains, forests, rivers, roads, towns and each kind of label), hand-drawn rivers and roads, a dry-up-rivers brush, custom and renamed labels, and Regenerate buttons for names, borders, towns and automatic roads. **Whole world** maps wrap east–west with polar ice and can be viewed as a spinning **🌐 globe**.
+
