@@ -203,3 +203,22 @@ body.torn .paper { border-radius: 0; }
 .wanted-reward span { font-size: .8em; letter-spacing: 0; font-weight: 600; }
 .wanted-foot { font-style: italic; font-size: .95em; margin-top: 8px; }
 @media (max-width: 1000px) { .forge { grid-template-columns: 1fr; } .forge-form { position: static; } .forge-cols { grid-template-columns: 1fr; } }
+
+/* ---------- Cloud ---------- */
+.sync-ind { display: flex; align-items: center; gap: 8px; font-size: .8em; color: var(--muted); text-decoration: none; padding: 4px 10px 8px; }
+.sync-ind:hover { color: var(--accent-2); }
+.sync-ind.syncing span { display: inline-block; animation: spin 1s linear infinite; }
+.sync-ind.error, .sync-ind.conflict { color: var(--danger); }
+.sync-ind.idle { color: var(--ok); }
+.cloud-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.cloud-avatar { width: 46px; height: 46px; border-radius: 50%; background: var(--accent); color: var(--on-accent); display: flex; align-items: center; justify-content: center; font-family: var(--display); font-size: 1.6em; font-weight: 700; }
+.cloud-table { width: 100%; border-collapse: collapse; }
+.cloud-table th { text-align: left; font-size: .72em; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.cloud-table td { padding: 8px; border-bottom: 1px solid var(--line); }
+.sync-pill { font-size: .75em; font-weight: 700; padding: 2px 9px; border-radius: 99px; }
+.sync-pill.ok { background: rgba(111,179,127,.15); color: var(--ok); }
+.sync-pill.warn { background: rgba(212,162,76,.15); color: var(--accent-2); }
+
+#nav a { padding: 6px 10px; font-size: .94em; }
+#nav .nav-sep { margin: 6px 4px; }
+.sidebar-foot { position: sticky; bottom: -22px; background: inherit; padding-bottom: 4px; }

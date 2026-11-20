@@ -16,6 +16,8 @@ import * as gm from './views/gm.js';
 import * as quests from './views/quests.js';
 import * as library from './views/library.js';
 import * as forge from './views/forge.js';
+import * as cloudView from './views/cloud.js';
+import { initCloud, onConflict, connected as cloudConnected, status as syncStatus } from './cloud.js';
 import { initTray } from './tools/tray.js';
 import { newEntryDialog } from './views/entries.js';
 
@@ -37,6 +39,7 @@ const NAV = [
   null,
   { href: '#/settings', icon: '⚙️', label: 'World settings', match: /^settings/ },
   { href: '#/appearance', icon: '🎨', label: 'Appearance', match: /^appearance/ },
+  { href: '#/cloud', icon: '☁️', label: 'Cloud & devices', match: /^cloud/ },
   { href: '#/worlds', icon: '🌍', label: 'Switch world', match: /^worlds/ },
 ];
 
@@ -63,7 +66,7 @@ export function route() {
   // a world-specific background (one of its maps) follows the open world
   const wid = W()?.id || '';
   if (wid !== lastWorldId) { lastWorldId = wid; if (getPrefs().bg.kind === 'map') applyBackground(W()); }
-  if (!W() && view !== 'worlds' && view !== 'appearance') {
+  if (!W() && view !== 'worlds' && view !== 'appearance' && view !== 'cloud') {
     renderNav('worlds');
     cleanup = home.renderPicker(main);
     return;
@@ -93,6 +96,7 @@ export function route() {
     library: () => library.renderList(main),
     doc: () => library.renderDoc(main, a),
     forge: () => forge.render(main),
+    cloud: () => cloudView.render(main),
   }[view];
   cleanup = r ? r() : home.render(main);
 }
@@ -179,6 +183,8 @@ window.addEventListener('beforeunload', () => { saveNow(); });
   if (last && state.worlds.some(w => w.id === last)) openWorld(last);
   route();
   setTimeout(() => applyBackground(W()), 60);
+  onConflict(cloudView.conflictPrompt);
+  initCloud();
 })();
 
 // ---------- Dice tray & keyboard shortcuts ----------
@@ -197,4 +203,27 @@ document.addEventListener('keydown', e => {
   if (e.key === 'd' || e.key === 'D') { e.preventDefault(); tray.toggle(); }
   else if ((e.key === 'n' || e.key === 'N') && W()) { e.preventDefault(); newEntryDialog('character'); }
   else if (e.key === '?') { e.preventDefault(); shortcutsHelp(); }
+});
+
+// ---------- sync indicator ----------
+const syncEl = document.createElement('a');
+syncEl.id = 'sync-ind'; syncEl.href = '#/cloud';
+document.querySelector('.sidebar-foot').prepend(syncEl);
+let reloadTimer;
+window.addEventListener('lf-sync', e => {
+  const s = e.detail;
+  const map = { idle: ['☁️', 'Synced'], syncing: ['↻', 'Syncing…'], pending: ['☁️', 'Saving soon…'], error: ['⚠️', 'Sync problem'], offline: ['📴', 'Offline'], conflict: ['⚠️', 'Needs attention'], off: ['☁️', 'Not syncing'] };
+  const [ic, label] = map[s.state] || map.off;
+  syncEl.className = 'sync-ind ' + s.state;
+  syncEl.innerHTML = `<span>${ic}</span>${cloudConnected() ? label : 'Set up sync'}`;
+  syncEl.title = s.msg || '';
+  // another device's changes arrived: refresh the view (unless the person is typing)
+  if (s.reload) {
+    clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(() => {
+      const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName);
+      if (!typing && !$('#modal-root').innerHTML && (s.reload === '*' || s.reload === W()?.id)) route();
+    }, 300);
+    s.reload = '';
+  }
 });

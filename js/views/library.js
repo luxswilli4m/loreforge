@@ -2,6 +2,7 @@
 import { W, uid, save, getDoc } from '../store.js';
 import { esc, go, toast, confirmDialog, pickFile, promptDialog } from '../util.js';
 import { assetGet, assetPut, assetDel } from '../db.js';
+import { fetchFile } from '../cloud.js';
 
 export const DOC_CATS = ['Rulebook', 'Adventure', 'Handout', 'Image', 'Other'];
 let cat = '';
@@ -11,7 +12,8 @@ const icon = k => ({ pdf: '📕', image: '🖼️', text: '📄', other: '📦' 
 const fmtSize = n => n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
 
 export async function blobURL(id) {
-  const blob = await assetGet('lib:' + id);
+  let blob = await assetGet('lib:' + id);
+  if (!blob) blob = await fetchFile(id).catch(() => null);   // added on another device → fetch from your server
   if (!blob) return null;
   const u = URL.createObjectURL(blob);
   urls.add(u);
@@ -67,7 +69,7 @@ export async function viewerHTML(d, height = '100%') {
   if (!u) return '<p class="muted">This file isn’t stored in this browser (it may have been added on another device).</p>';
   if (d.kind === 'pdf') return `<iframe class="doc-frame" src="${u}" style="height:${height}" title="${esc(d.name)}"></iframe>`;
   if (d.kind === 'image') return `<img src="${u}" alt="${esc(d.name)}" style="max-width:100%;border-radius:8px">`;
-  if (d.kind === 'text') { const t = await (await assetGet('lib:' + d.id)).text(); return `<pre class="doc-text">${esc(t)}</pre>`; }
+  if (d.kind === 'text') { const t = await (await (await fetch(u)).blob()).text(); return `<pre class="doc-text">${esc(t)}</pre>`; }
   return `<p><a class="btn" href="${u}" download="${esc(d.file)}">⬇ Download ${esc(d.file)}</a></p>`;
 }
 

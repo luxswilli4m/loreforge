@@ -44,7 +44,7 @@ export function renderPicker(main) {
     if (del) {
       e.stopPropagation();
       const w = state.worlds.find(x => x.id === del.dataset.del);
-      if (await confirmDialog(`Delete “${w.name}” and everything in it? Export a backup first if you might want it back.`)) {
+      if (await confirmDialog(`Delete “${w.name}” and everything in it? Export a backup first if you might want it back. If cloud sync is on, the cloud copy is deleted too.`)) {
         await deleteWorld(w.id); renderPicker(main);
       }
       return;

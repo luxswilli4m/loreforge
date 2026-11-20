@@ -16,6 +16,8 @@ export const TYPES = {
 };
 
 export const state = { world: null, worlds: [] };
+// other modules (cloud sync) can listen for saves and deletions
+export const hooks = { afterSave: [], afterDelete: [] };
 
 export const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
 
@@ -24,7 +26,7 @@ export function save() {
   if (!state.world) return;
   state.world.updated = Date.now();
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => dbPut(state.world).catch(e => console.error('Save failed', e)), 250);
+  saveTimer = setTimeout(() => dbPut(state.world).then(() => hooks.afterSave.forEach(f => f(state.world))).catch(e => console.error('Save failed', e)), 250);
   if (Date.now() - lastSnapCheck > 5 * 60e3) { lastSnapCheck = Date.now(); setTimeout(() => snapshot().catch(console.error), 2000); }
 }
 
@@ -100,12 +102,30 @@ export async function createWorld(name, data) {
   const w = data ? normalizeWorld({ ...data, id: uid(), name: name || data.name }) : blankWorld(name);
   await dbPut(w);
   state.worlds.unshift(w);
+  hooks.afterSave.forEach(f => f(w));
+  return w;
+}
+
+// replace or add a whole world record (used by cloud sync), keeping the open world object in place
+export async function putWorldRecord(data) {
+  const w = normalizeWorld(data);
+  const i = state.worlds.findIndex(x => x.id === w.id);
+  if (i >= 0) {
+    const target = state.worlds[i];
+    for (const k of Object.keys(target)) delete target[k];
+    Object.assign(target, w);
+    await dbPut(target);
+    return target;
+  }
+  await dbPut(w);
+  state.worlds.push(w);
   return w;
 }
 
 export async function deleteWorld(id) {
   await dbDel(id);
   state.worlds = state.worlds.filter(w => w.id !== id);
+  hooks.afterDelete.forEach(f => f(id));
   if (state.world && state.world.id === id) state.world = null;
 }
 

@@ -1,0 +1,21 @@
+# Optional: only needed if you deploy with the Wrangler command-line tool or Cloudflare's GitHub integration.
+# The setup guide (cloudflare/SETUP.md) shows the no-code dashboard method instead.
+name = "loreforge-server"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+
+# KV namespace for accounts, worlds and files. Create one in the dashboard and paste its id here.
+[[kv_namespaces]]
+binding = "STORE"
+id = "PASTE_YOUR_KV_NAMESPACE_ID"
+
+# Free Workers AI (used when no OPENROUTER_API_KEY secret is set)
+[ai]
+binding = "AI"
+
+# Optional R2 bucket for very large worlds / PDF libraries:
+# [[r2_buckets]]
+# binding = "BUCKET"
+# bucket_name = "loreforge-data"
+
+# Secrets are set with:  wrangler secret put TOKEN_SECRET   (and INVITE_CODE, OPENROUTER_API_KEY)

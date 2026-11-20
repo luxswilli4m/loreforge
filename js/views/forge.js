@@ -3,6 +3,7 @@ import { W, TYPES, getEntry, newEntry, uid, save } from '../store.js';
 import { esc, md, go, toast, openModal, closeModal, typeColor, mentionLink, query } from '../util.js';
 import { KINDS, TONES, gatherContext, offlineStory, aiPrompt, parseAI } from '../tools/storyforge.js';
 import { PROVIDERS, getAI, setAI, aiReady, complete } from '../tools/ai.js';
+import { connected } from '../cloud.js';
 
 const req = { kind: 'bounty', text: '', location: '', ties: [], tone: 'Heroic', level: 3, engine: '' };
 let result = null;
@@ -47,7 +48,7 @@ export function render(main) {
         <label>Engine</label>
         <div class="seg small" id="feng">
           <button data-eng="offline" class="${req.engine === 'offline' ? 'on' : ''}">⚙️ Built-in (free)</button>
-          <button data-eng="ai" class="${req.engine === 'ai' ? 'on' : ''}">🤖 AI ${aiReady(ai) ? `· ${esc(ai.model || PROVIDERS[ai.provider].models[0])}` : '(set up)'}</button>
+          <button data-eng="ai" class="${req.engine === 'ai' ? 'on' : ''}">🤖 AI ${aiReady(ai) ? `· ${esc(ai.provider === 'cloud' ? 'my server' : ai.model || PROVIDERS[ai.provider].models[0])}` : '(set up)'}</button>
         </div>
         <button class="primary forge-go" id="fgo">🔮 Forge it</button>
       </div>
@@ -253,15 +254,16 @@ export function aiSettings(onSaved) {
       <select id="ap">${Object.entries(PROVIDERS).map(([k, v]) => `<option value="${k}" ${cfg.provider === k ? 'selected' : ''}>${v.label}</option>`).join('')}</select>
       <p class="small muted">${esc(p.help)}</p>
       ${p.needsKey ? `<label>API key</label><div class="row"><input id="ak" type="password" value="${esc(cfg.key)}" placeholder="${cfg.provider === 'anthropic' ? 'sk-ant-…' : 'sk-…'}" autocomplete="off"><button class="shrink" id="ashow">👁</button></div>` : ''}
-      ${cfg.provider !== 'anthropic' ? `<label>Base URL</label><input id="ab" value="${esc(cfg.base || p.base)}">` : ''}
-      <label>Model</label><input id="am" list="am-l" value="${esc(cfg.model || p.models[0])}"><datalist id="am-l">${p.models.map(x => `<option value="${x}">`).join('')}</datalist>
-      <div class="ai-note">🔒 Your key is saved only in this browser (never in backups or on GitHub). When you forge with AI, your request and the related parts of your world are sent to the provider. Usage is billed to your account with them.</div>
+      ${cfg.provider === 'openai' || cfg.provider === 'ollama' ? `<label>Base URL</label><input id="ab" value="${esc(cfg.base || p.base)}">` : ''}
+      ${p.server ? `<p class="small">${connected() ? '✅ Signed in to your server.' : '⚠️ Not signed in yet — open <a href="#/cloud">☁️ Cloud & devices</a>.'}</p>`
+        : `<label>Model</label><input id="am" list="am-l" value="${esc(cfg.model || p.models[0])}"><datalist id="am-l">${p.models.map(x => `<option value="${x}">`).join('')}</datalist>`}
+      <div class="ai-note">${p.server ? '🔒 Requests go to your own server, which talks to the AI. No keys are stored on this device.' : '🔒 Your key is saved only in this browser'} ${p.server ? '' : ' (never in backups or on GitHub). When you forge with AI, your request and the related parts of your world are sent to the provider. Any charges are billed to your account with them.'}</div>
       <div id="atest" class="small"></div>
       <div class="modal-actions">${cfg.key ? '<button class="danger" data-a="forget">Forget key</button>' : ''}<span style="flex:1"></span><button data-a="test">Test connection</button><button data-a="no">Cancel</button><button class="primary" data-a="save">Save</button></div>`;
   };
   const read = m => {
     cfg.key = m.querySelector('#ak')?.value.trim() ?? cfg.key;
-    cfg.model = m.querySelector('#am')?.value.trim() || '';
+    cfg.model = m.querySelector('#am')?.value.trim() ?? cfg.model ?? '';
     if (m.querySelector('#ab')) cfg.base = m.querySelector('#ab').value.trim();
   };
   openModal('', m => {
