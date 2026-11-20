@@ -36,6 +36,7 @@ Still in **Settings**, find **Variables and Secrets → Add** and choose type **
 |---|---|---|
 | `TOKEN_SECRET` | Any long random text, e.g. mash the keyboard for 40+ characters. It signs your logins. | **Yes** |
 | `INVITE_CODE` | A word only you know. It's needed to create an account, so strangers can't sign up on your server. | Strongly recommended |
+| `ADMIN_CODE` | Another word only you know. It lets you, the server owner, reset any account's password if a recovery key is lost too. | Recommended |
 | `OPENROUTER_API_KEY` | Your key from openrouter.ai → Keys. It enables the free OpenRouter models (`openrouter/free`). | Optional |
 
 Click **Deploy** (or **Save and deploy**) after adding them.
@@ -70,5 +71,7 @@ On **each other device**: open Loreforge → **☁️ Cloud & devices** → past
 - **Automatic sync:** changes upload at most every ~45 seconds while you work, and straight away when you switch away from the app. When you come back to the app, it checks for changes from your other devices.
 - **Edited on two devices before they synced?** Loreforge asks which version to keep. "Keep both" is always safe: you'll get two copies to compare.
 - **Free-tier limits:** Workers KV's free plan allows about 1,000 saves a day, which is plenty with the built-in throttling. Very large worlds (over ~24 MB, usually from big uploaded maps) or big PDFs need an **R2 bucket**: create one under **R2**, bind it to the Worker as `BUCKET`, and it's used automatically. R2 may ask you to add a payment method even though its free tier is free.
-- **Forgot your password?** For now, delete your user from the KV namespace (the key `u/yourname`) in the dashboard and create the account again. Your worlds aren't affected.
+- **Forgot your password?** When you create your account, Loreforge shows a **recovery key** once (e.g. `7QWS-6N3U-2H8L-5ZRH`). Save it in a password manager or on paper. On any device go to **☁️ Cloud & devices → Forgot password**, then enter your username, the recovery key and a new password. You'll get a fresh recovery key, and your other devices are signed out for safety.
+- **Lost the recovery key too?** As the server owner, use your `ADMIN_CODE` in the same Forgot password screen (under "Lost your recovery key too?").
+- **While signed in**, the Cloud page lets you change your password, make a new recovery key, or sign out every other device (handy if a device is lost).
 - **Privacy:** your data sits in your own Cloudflare account. Nobody else can read it without your login.

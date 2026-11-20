@@ -222,3 +222,5 @@ body.torn .paper { border-radius: 0; }
 #nav a { padding: 6px 10px; font-size: .94em; }
 #nav .nav-sep { margin: 6px 4px; }
 .sidebar-foot { position: sticky; bottom: -22px; background: inherit; padding-bottom: 4px; }
+
+.recovery-key { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 1.5em; letter-spacing: .08em; text-align: center; padding: 14px; margin: 14px 0; border: 2px dashed var(--accent); border-radius: 10px; background: var(--bg); color: var(--accent-2); user-select: all; }

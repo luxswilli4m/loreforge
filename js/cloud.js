@@ -53,6 +53,19 @@ export async function signIn(url, username, password, register = false, invite =
   emit({ state: 'idle', msg: 'Signed in' });
   return data;
 }
+export async function resetPassword(url, username, recoveryKey, newPassword, adminCode = '') {
+  const cfg = { url: normUrl(url), token: '' };
+  const data = await apiJSON('/api/reset', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username, recoveryKey, adminCode, newPassword }) }, cfg);
+  localStorage.removeItem(SYNC_KEY);
+  setCloud({ url: cfg.url, token: data.token, username: data.username });
+  emit({ state: 'idle', msg: 'Password reset' });
+  return data;
+}
+const post = (path, body) => apiJSON(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+export const me = () => apiJSON('/api/me');
+export async function changePassword(current, newPassword) { const d = await post('/api/account/password', { current, newPassword }); setCloud({ token: d.token }); return d; }
+export const newRecoveryKey = password => post('/api/account/recovery', { password });
+export async function signOutEverywhere() { const d = await post('/api/account/signout-all', {}); setCloud({ token: d.token }); return d; }
 export function signOut() { setCloud({ token: '' }); localStorage.removeItem(SYNC_KEY); emit({ state: 'off', msg: '' }); }
 
 // ---------- worlds ----------

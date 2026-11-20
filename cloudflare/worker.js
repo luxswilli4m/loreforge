@@ -8,6 +8,7 @@
 // Variables & secrets:
 //   TOKEN_SECRET        (secret, required) — any long random text; signs login tokens
 //   INVITE_CODE         (secret, recommended) — needed to create an account, so strangers can't sign up
+//   ADMIN_CODE          (secret, optional) — lets the server owner reset any account's password
 //   OPENROUTER_API_KEY  (secret, optional) — use OpenRouter models (e.g. free ones) for Story Forge
 //   AI_MODEL            (optional) — OpenRouter model (default openrouter/free), or the Workers AI model if no OpenRouter key
 //   WORKERS_AI_MODEL    (optional) — Workers AI model used as the fallback (default @cf/meta/llama-3.3-70b-instruct-fp8-fast)
@@ -47,8 +48,8 @@ function safeEqual(a, b) {
   for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return r === 0;
 }
-async function makeToken(env, user) {
-  const payload = b64u(enc.encode(JSON.stringify({ u: user, exp: Date.now() + TOKEN_DAYS * 864e5 })));
+async function makeToken(env, user, v = 0) {
+  const payload = b64u(enc.encode(JSON.stringify({ u: user, v, exp: Date.now() + TOKEN_DAYS * 864e5 })));
   return `${payload}.${await hmac(env.TOKEN_SECRET, payload)}`;
 }
 async function readToken(env, req) {
@@ -59,8 +60,24 @@ async function readToken(env, req) {
   if (!safeEqual(sig, await hmac(env.TOKEN_SECRET, payload))) return null;
   try {
     const p = JSON.parse(new TextDecoder().decode(fromB64u(payload)));
-    return p.exp > Date.now() ? p.u : null;
+    return p.exp > Date.now() ? { u: p.u, v: p.v || 0 } : null;
   } catch { return null; }
+}
+
+// recovery keys look like ABCD-EFGH-JKLM-NPQR (no easily-confused letters)
+function newRecoveryKey() {
+  const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const r = crypto.getRandomValues(new Uint8Array(16));
+  return [...r].map((b, i) => A[b % A.length] + ((i % 4 === 3 && i < 15) ? '-' : '')).join('');
+}
+const normKey = k => String(k || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+async function setCredentials(S, env, u, rec, password) {
+  const salt = b64u(crypto.getRandomValues(new Uint8Array(16)));
+  const rsalt = b64u(crypto.getRandomValues(new Uint8Array(16)));
+  const recoveryKey = newRecoveryKey();
+  const next = { ...rec, salt, hash: await hashPassword(password, salt, env.TOKEN_SECRET), rsalt, rhash: await hashPassword(normKey(recoveryKey), rsalt, env.TOKEN_SECRET), v: rec.v || 0 };
+  await S.put(`u/${u}`, JSON.stringify(next));
+  return { rec: next, recoveryKey };
 }
 
 // ---------- storage: R2 if bound, otherwise KV ----------
@@ -145,10 +162,8 @@ export default {
         if (String(password || '').length < 8) return err(400, 'Use a password of at least 8 characters.');
         if (env.INVITE_CODE && invite !== env.INVITE_CODE) return err(403, 'That invite code is not right.');
         if (await S.get(`u/${u}`)) return err(409, 'That username is taken.');
-        const salt = b64u(crypto.getRandomValues(new Uint8Array(16)));
-        const hash = await hashPassword(password, salt, env.TOKEN_SECRET);
-        await S.put(`u/${u}`, JSON.stringify({ salt, hash, created: Date.now() }));
-        return json({ token: await makeToken(env, u), username: u });
+        const { recoveryKey } = await setCredentials(S, env, u, { created: Date.now(), v: 0 }, password);
+        return json({ token: await makeToken(env, u, 0), username: u, recoveryKey });
       }
       if (path === '/api/login' && req.method === 'POST') {
         const { username, password } = await req.json();
@@ -157,13 +172,54 @@ export default {
         if (!rec) return err(401, 'Wrong username or password.');
         const hash = await hashPassword(String(password || ''), rec.body.salt, env.TOKEN_SECRET);
         if (!safeEqual(hash, rec.body.hash)) return err(401, 'Wrong username or password.');
-        return json({ token: await makeToken(env, u), username: u });
+        return json({ token: await makeToken(env, u, rec.body.v || 0), username: u, hasRecovery: !!rec.body.rhash });
+      }
+      // forgot password: prove it with your recovery key (or the server owner's ADMIN_CODE)
+      if (path === '/api/reset' && req.method === 'POST') {
+        const { username, recoveryKey, adminCode, newPassword } = await req.json();
+        const u = cleanUser(username);
+        if (String(newPassword || '').length < 8) return err(400, 'Use a new password of at least 8 characters.');
+        const r = await S.get(`u/${u}`, 'json');
+        let ok = false;
+        if (r && recoveryKey && r.body.rhash) ok = safeEqual(await hashPassword(normKey(recoveryKey), r.body.rsalt, env.TOKEN_SECRET), r.body.rhash);
+        if (r && !ok && adminCode && env.ADMIN_CODE) ok = safeEqual(String(adminCode), env.ADMIN_CODE);
+        if (!ok) return err(403, 'That username and recovery key don’t match.');
+        const rec = { ...r.body, v: (r.body.v || 0) + 1 };            // signs out every other device
+        const out = await setCredentials(S, env, u, rec, newPassword);
+        return json({ token: await makeToken(env, u, out.rec.v), username: u, recoveryKey: out.recoveryKey });
       }
 
-      const user = await readToken(env, req);
-      if (!user) return err(401, 'Please sign in again.');
+      const tok = await readToken(env, req);
+      const userRec = tok && await S.get(`u/${tok.u}`, 'json');
+      if (!tok || !userRec || (userRec.body.v || 0) !== tok.v) return err(401, 'Please sign in again.');
+      const user = tok.u;
 
-      if (path === '/api/me') return json({ username: user });
+      if (path === '/api/me') return json({ username: user, hasRecovery: !!userRec.body.rhash });
+
+      // --- account security (signed in) ---
+      if (path.startsWith('/api/account/') && req.method === 'POST') {
+        const b = await req.json().catch(() => ({}));
+        const rec = userRec.body;
+        const pwOK = async p => safeEqual(await hashPassword(String(p || ''), rec.salt, env.TOKEN_SECRET), rec.hash);
+        if (path === '/api/account/password') {
+          if (!(await pwOK(b.current))) return err(403, 'Your current password is not right.');
+          if (String(b.newPassword || '').length < 8) return err(400, 'Use a new password of at least 8 characters.');
+          const out = await setCredentials(S, env, user, rec, b.newPassword);
+          return json({ token: await makeToken(env, user, out.rec.v), recoveryKey: out.recoveryKey });
+        }
+        if (path === '/api/account/recovery') {
+          if (!(await pwOK(b.password))) return err(403, 'Your password is not right.');
+          const rsalt = b64u(crypto.getRandomValues(new Uint8Array(16)));
+          const recoveryKey = newRecoveryKey();
+          await S.put(`u/${user}`, JSON.stringify({ ...rec, rsalt, rhash: await hashPassword(normKey(recoveryKey), rsalt, env.TOKEN_SECRET) }));
+          return json({ recoveryKey });
+        }
+        if (path === '/api/account/signout-all') {
+          const next = { ...rec, v: (rec.v || 0) + 1 };
+          await S.put(`u/${user}`, JSON.stringify(next));
+          return json({ token: await makeToken(env, user, next.v) });
+        }
+      }
 
       // --- worlds ---
       if (path === '/api/worlds' && req.method === 'GET') {
