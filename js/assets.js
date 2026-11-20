@@ -89,6 +89,12 @@ export async function storeImage(input, { maxDim = 0, quality = 0.85 } = {}) {
   cache.set(id, URL.createObjectURL(blob));
   return { ref: 'asset:' + id, w: canvas.width, h: canvas.height, size: blob.size };
 }
+// any other file that belongs to a world (e.g. a map's editable terrain); synced like pictures
+export async function storeBlob(blob) {
+  const id = uid();
+  await assetPut('img:' + id, blob);
+  return 'asset:' + id;
+}
 function loadImage(input) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -102,7 +108,7 @@ function loadImage(input) {
 export function worldAssetIds(w) {
   const ids = new Set();
   for (const e of w.entries || []) if (isAsset(e.image)) ids.add(idOf(e.image));
-  for (const m of w.maps || []) if (isAsset(m.image)) ids.add(idOf(m.image));
+  for (const m of w.maps || []) { if (isAsset(m.image)) ids.add(idOf(m.image)); if (isAsset(m.gen?.edit)) ids.add(idOf(m.gen.edit)); }
   return [...ids];
 }
 

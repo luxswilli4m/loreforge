@@ -100,3 +100,8 @@ js/
 ```
 
 Inspired by the ideas behind tools like World Anvil, vvd and ScribesBlade. This is an independent open-source project.
+
+### Map editor & styles
+World maps can be edited by hand after generating (✏️ **Edit this map**): terrain brushes (raise, lower, mountains, smooth, flatten, add land, add sea), biome and realm painting, and adding, moving, renaming and deleting towns and capitals. Rivers, lakes, forests, borders and roads recalculate after every stroke, with undo/redo. Saved world maps keep their editable terrain, so **✏️ Edit terrain, towns & style** on a map reopens it in the editor.
+
+Eight world styles: Parchment, Atlas, Night, **Ink & Quill** (pen-and-ink epic fantasy), **Storybook** (bright and colourful), **Painted** (painterly with cloud edges), **Realistic** (shaded elevation) and **Political** (coloured realm cells).

@@ -327,3 +327,28 @@ label.check { display: flex; align-items: center; gap: 7px; color: var(--text); 
 .codex-welcome .stats { max-width: 700px; margin: 24px auto; }
 .codex-welcome .stat { cursor: pointer; color: var(--text); display: block; }
 @media (max-width: 900px) { .codex { grid-template-columns: 1fr; height: auto; } .codex-index { max-height: 50vh; } .codex-body .entry-layout { grid-template-columns: 1fr; } }
+
+/* ---- map editor ---- */
+.gen-preview .gen-overlay { position: absolute; left: 0; top: 0; width: 100%; height: 100%; image-rendering: auto; opacity: 0; pointer-events: none; transition: opacity .15s; }
+.gen-overlay.on { opacity: .82; }
+.gen-preview.editing canvas:first-child { cursor: none; touch-action: none; }
+.gen-preview.editing[data-tool="town"] canvas:first-child { cursor: pointer; }
+.brush-cur { position: absolute; display: none; pointer-events: none; border: 2px solid rgba(255,255,255,.9); border-radius: 50%; transform: translate(-50%,-50%); box-shadow: 0 0 0 1px rgba(0,0,0,.6), inset 0 0 0 1px rgba(0,0,0,.4); }
+.gen-preview:not(.editing) .brush-cur, .gen-preview[data-tool="town"] .brush-cur { display: none !important; }
+.town-mark { position: absolute; display: none; pointer-events: none; width: 26px; height: 26px; border-radius: 50%; transform: translate(-50%,-50%); border: 2px solid var(--accent); box-shadow: 0 0 0 3px rgba(0,0,0,.35), 0 0 12px var(--accent); }
+.gen-busy.soft { inset: auto 12px auto auto; top: 12px; flex-direction: row; padding: 6px 12px; border-radius: 99px; background: rgba(21,19,26,.75); backdrop-filter: none; font-size: .85em; gap: 8px; }
+.gen-busy.soft .spinner { width: 14px; height: 14px; border-width: 2px; }
+.edit-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.tg-label { font-size: .72em; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 10px 0 4px; }
+.tools { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.tool { flex-direction: column; gap: 2px; padding: 6px 2px; font-size: .72em; line-height: 1.1; }
+.tool span { font-size: 1.35em; }
+.tool.on { border-color: var(--accent); color: var(--accent-2); box-shadow: 0 0 0 2px rgba(212,162,76,.25); }
+.tool-help { margin: 8px 0 0; min-height: 2.6em; }
+.edit-btn { width: 100%; margin-top: 12px; justify-content: flex-start; flex-wrap: wrap; text-align: left; }
+.edit-note { margin: 8px 0 0; color: var(--accent-2); }
+.realm-list { margin-top: 12px; }
+.realm-list summary { cursor: pointer; font-weight: 600; font-size: .9em; }
+.realm-row { margin-top: 6px; gap: 6px; }
+.realm-row input[type=color] { flex: 0 0 38px; padding: 0; height: 34px; border-radius: 6px; }
+.sel-town { margin-top: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; }

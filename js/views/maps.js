@@ -197,6 +197,7 @@ export function renderMap(main, id) {
         <p class="small muted" style="margin:0">${m.scale.pxPerUnit ? `${esc(m.scale.unit)}: ${m.scale.pxPerUnit.toFixed(2)} px each. ` : 'Not set. '}Use 📐 Set scale to calibrate.</p>
         <label>Parent map</label>
         <select id="m-parent"><option value="">— none (top level) —</option>${others.filter(x => !chain(x).some(c => c.id === m.id)).map(x => `<option value="${x.id}" ${x.id === m.parentId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>
+        ${m.gen?.edit ? `<button class="primary" id="m-edit" style="margin-top:12px;width:100%">✏️ Edit terrain, towns &amp; style</button>` : ''}
         <div class="row" style="margin-top:12px"><button id="m-replace">Replace image</button><button class="danger" id="m-del">Delete map</button></div>
       </div>
       <div class="card side-box">
@@ -218,6 +219,7 @@ export function renderMap(main, id) {
     } else {
       $s('#m-name').oninput = e => { m.name = e.target.value || 'Untitled map'; save(); };
       $s('#m-parent').onchange = e => { m.parentId = e.target.value; save(); };
+      if ($s('#m-edit')) $s('#m-edit').onclick = () => go(`#/generate?edit=${m.id}`);
       $s('#m-replace').onclick = async () => {
         const f = await pickFile('image/*'); if (!f) return;
         const img = await A.storeImage(f, { maxDim: 4096, quality: 0.88 });

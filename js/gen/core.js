@@ -411,6 +411,7 @@ export async function ensureFonts() {
       document.fonts.load('700 40px "Cormorant Garamond"'),
       document.fonts.load('italic 500 20px "Cormorant Garamond"'),
       document.fonts.load('600 20px "Cormorant Garamond"'),
+      document.fonts.load('400 30px "Uncial Antiqua"'),
     ]);
   } catch { /* fall back to Georgia */ }
 }
