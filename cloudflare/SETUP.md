@@ -47,6 +47,22 @@ Optional variables (plain text, not secret):
 - `AI_MODEL`: the OpenRouter model to use (default `openrouter/free`).
 - `WORKERS_AI_MODEL`: the Cloudflare model (default `@cf/meta/llama-3.3-70b-instruct-fp8-fast`). If you hit Cloudflare's daily free AI limit often, pick a smaller model from the Workers AI model list.
 
+## 5b. (Optional) Keep milestone backups in a private GitHub repo
+Milestones are the backups you make deliberately with the ⭐ Milestone button. Without this step they're stored on your Cloudflare server, which works fine. With it, they go into a GitHub repo you own, outside Cloudflare, pictures included.
+
+1. On GitHub, click **New repository**. Name it `loreforge-data`, choose **Private**, tick **Add a README file**, and click **Create repository**.
+2. Make an access key that can only touch that repo: GitHub → your profile picture → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**.
+   - **Repository access:** *Only select repositories* → `loreforge-data`
+   - **Permissions → Repository permissions → Contents:** *Read and write* (leave everything else as no access)
+   - Pick an expiry and put a reminder in your calendar to renew it.
+   - Click **Generate token** and copy it.
+3. Back in your Cloudflare Worker → **Settings → Variables and Secrets**, add:
+   - `GITHUB_TOKEN` (type **Secret**): the token you just copied
+   - `GITHUB_REPO` (type **Text**): `yourGitHubName/loreforge-data` (for you: `luxswilli4m/loreforge-data`)
+4. Deploy. The server address check (next step) should now show `"milestones":"github"`.
+
+Milestones appear in the repo under `loreforge/<username>/milestones/`, and their pictures under `loreforge/<username>/assets/`. Day-to-day saves never go to GitHub, only the milestones you choose to make.
+
 ## 6. Copy your server address
 On the Worker's overview page you'll see an address like
 `https://loreforge-server.YOURNAME.workers.dev`. Open it in a browser; you should see something like:
@@ -67,6 +83,8 @@ On **each other device**: open Loreforge → **☁️ Cloud & devices** → past
 ---
 
 ## Good to know
+- **One current save per world.** Normal syncing keeps just the latest version of each world (no automatic history). Pictures and maps are stored as separate files and uploaded once, so syncing stays quick.
+- **Milestones** are your deliberate backups. Press ⭐ Milestone in the sidebar, give it a name, and restore it later from **World settings → Milestones**. Restoring saves your current version as a milestone first.
 - **Every device keeps a full offline copy.** If you lose internet, keep working; changes sync when you're back online.
 - **Automatic sync:** changes upload at most every ~45 seconds while you work, and straight away when you switch away from the app. When you come back to the app, it checks for changes from your other devices.
 - **Edited on two devices before they synced?** Loreforge asks which version to keep. "Keep both" is always safe: you'll get two copies to compare.

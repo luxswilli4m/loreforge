@@ -1,5 +1,5 @@
-import { state, loadWorlds, openWorld, saveNow, W, TYPES, getEntry, getSession, getJournal, getMap, getQuest, getDoc } from './store.js';
-import { $, esc, openModal, closeModal, typeColor, plain } from './util.js';
+import { state, loadWorlds, openWorld, saveNow, save, W, TYPES, getEntry, getSession, getJournal, getMap, getQuest, getDoc } from './store.js';
+import { $, esc, openModal, closeModal, typeColor, plain, toast } from './util.js';
 import * as home from './views/home.js';
 import * as entries from './views/entries.js';
 import * as maps from './views/maps.js';
@@ -19,6 +19,8 @@ import * as forge from './views/forge.js';
 import * as cloudView from './views/cloud.js';
 import { initCloud, onConflict, connected as cloudConnected, status as syncStatus } from './cloud.js';
 import { initTray } from './tools/tray.js';
+import { initAssets, migrateWorld } from './assets.js';
+import { initUndo, undoStep, redoStep, canUndo, canRedo, track as trackUndo, resetHistory } from './undo.js';
 import { newEntryDialog } from './views/entries.js';
 
 const NAV = [
@@ -64,8 +66,14 @@ export function route() {
   closeModal();
 
   // a world-specific background (one of its maps) follows the open world
+  trackUndo();
   const wid = W()?.id || '';
-  if (wid !== lastWorldId) { lastWorldId = wid; if (getPrefs().bg.kind === 'map') applyBackground(W()); }
+  if (wid !== lastWorldId) {
+    lastWorldId = wid;
+    if (getPrefs().bg.kind === 'map') applyBackground(W());
+    // move pictures out of older worlds (one-off, in the background)
+    if (W()) migrateWorld(W()).then(changed => { if (changed) { save(); toast('Optimised this world’s pictures'); } }).catch(console.error);
+  }
   if (!W() && view !== 'worlds' && view !== 'appearance' && view !== 'cloud') {
     renderNav('worlds');
     cleanup = home.renderPicker(main);
@@ -178,6 +186,8 @@ window.addEventListener('beforeunload', () => { saveNow(); });
 
 (async function init() {
   applyTheme();
+  initAssets();
+  initUndo();
   await loadWorlds();
   const last = localStorage.getItem('loreforge:last');
   if (last && state.worlds.some(w => w.id === last)) openWorld(last);
@@ -191,7 +201,7 @@ window.addEventListener('beforeunload', () => { saveNow(); });
 const tray = initTray();
 function shortcutsHelp() {
   openModal(`<h2>Keyboard shortcuts</h2><table class="fields-table">
-    ${[['Ctrl / ⌘ + K', 'Search everything'], ['N', 'New World Bible entry'], ['D', 'Open / close the dice tray'], ['?', 'This list'], ['Ctrl / ⌘ + click a link', 'Open it in the side panel'],
+    ${[['Ctrl / ⌘ + Z', 'Undo (anything this session)'], ['Ctrl / ⌘ + Y', 'Redo'], ['Ctrl / ⌘ + K', 'Search everything'], ['N', 'New World Bible entry'], ['D', 'Open / close the dice tray'], ['?', 'This list'], ['Ctrl / ⌘ + click a link', 'Open it in the side panel'],
       ['@ (while typing)', 'Link an entry'], ['Esc', 'Close dialogs and menus'], ['Right-click (World Web)', 'Connect, add notes, create entries'], ['Shift + drag (World Web)', 'Connect two nodes']]
       .map(([k, v]) => `<tr><td><kbd>${k}</kbd></td><td>${v}</td></tr>`).join('')}</table>
     <div class="modal-actions"><button class="primary" onclick="document.getElementById('modal-root').innerHTML=''">Got it</button></div>`);
@@ -220,6 +230,7 @@ window.addEventListener('lf-sync', e => {
   // another device's changes arrived: refresh the view (unless the person is typing)
   if (s.reload) {
     clearTimeout(reloadTimer);
+    resetHistory();
     reloadTimer = setTimeout(() => {
       const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName);
       if (!typing && !$('#modal-root').innerHTML && (s.reload === '*' || s.reload === W()?.id)) route();
@@ -227,3 +238,31 @@ window.addEventListener('lf-sync', e => {
     s.reload = '';
   }
 });
+
+// ---------- undo / redo ----------
+const undoBar = document.createElement('div');
+undoBar.className = 'undo-bar';
+undoBar.innerHTML = `<button class="icon" id="u-undo" title="Undo (Ctrl+Z)">↶ Undo</button><button class="icon" id="u-redo" title="Redo (Ctrl+Y)">↷ Redo</button><button class="icon" id="u-ms" title="Save a milestone backup">⭐ Milestone</button>`;
+document.querySelector('.sidebar-foot').prepend(undoBar);
+const drawUndo = () => { $('#u-undo').disabled = !canUndo(); $('#u-redo').disabled = !canRedo(); undoBar.classList.toggle('hidden', !W()); };
+window.addEventListener('lf-undo', drawUndo);
+drawUndo();
+function doUndo(redo = false) {
+  const ok = redo ? redoStep() : undoStep();
+  if (!ok) { toast(redo ? 'Nothing to redo' : 'Nothing to undo this session'); return; }
+  toast(redo ? 'Redone' : 'Undone');
+  setTimeout(route, 30);
+}
+$('#u-undo').onclick = () => doUndo(false);
+$('#u-redo').onclick = () => doUndo(true);
+document.addEventListener('keydown', e => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || !W()) return;
+  const k = e.key.toLowerCase();
+  if (k !== 'z' && k !== 'y') return;
+  // inside a text box, let the browser undo the typing itself (like Word)
+  if (/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return;
+  if ($('#modal-root').innerHTML) return;
+  e.preventDefault();
+  doUndo(k === 'y' || (k === 'z' && e.shiftKey));
+});
+$('#u-ms').onclick = () => settings.milestoneDialog();

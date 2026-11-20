@@ -1,5 +1,9 @@
-import { W, save, saveNow, TYPES, exportWorld, exportBackup, deleteWorld, formatDate, dateKey, getEntry, listSnapshots, restoreSnapshot, snapshot } from '../store.js';
+import { W, save, saveNow, TYPES, exportWorld, exportBackup, deleteWorld, formatDate, dateKey, getEntry } from '../store.js';
+import { createMilestone, listMilestones, restoreMilestone, deleteMilestone, where, WHERE_LABEL } from '../milestones.js';
+import { resetHistory } from '../undo.js';
+import { openModal, closeModal } from '../util.js';
 import { esc, md, download, slug, confirmDialog, toast, go, typeColor } from '../util.js';
+import { dataURL as assetDataURL, isAsset } from '../assets.js';
 
 export async function downloadBackup() {
   const w = W();
@@ -39,10 +43,11 @@ export function render(main) {
         <p class="muted small" id="usage" style="margin-top:12px"></p>
       </div>
       <div class="card">
-        <h3>Snapshots</h3>
-        <p class="muted small">Loreforge quietly saves a snapshot of this world every 30 minutes while you work (the last 6 are kept in this browser). Roll back if something goes wrong.</p>
+        <h3>⭐ Milestones</h3>
+        <p class="muted small">Deliberate backups you make with the ⭐ Milestone button (bottom of the sidebar). Restore one to go back to how your world was then — your current version is saved as a milestone first, so you can always change your mind.</p>
+        <p class="small" id="mswhere"></p>
         <div id="snaps"><p class="muted small">Loading…</p></div>
-        <button class="small" id="snapnow" style="margin-top:8px">📸 Take a snapshot now</button>
+        <button class="small primary" id="snapnow" style="margin-top:8px">⭐ Save a milestone now</button>
       </div>
       <div class="card" style="border-color:var(--danger)">
         <h3>Danger zone</h3>
@@ -54,31 +59,46 @@ export function render(main) {
   $m('#wd').oninput = e => { w.description = e.target.value; save(); };
   main.querySelectorAll('[data-sp]').forEach(i => i.oninput = () => { sp[i.dataset.sp] = Math.max(0.1, +i.value || 1); save(); });
   $m('#exp').onclick = () => downloadBackup();
-  $m('#wiki').onclick = () => { download(`${slug(w.name)}-wiki.html`, buildWiki(), 'text/html'); toast('Wiki exported'); };
+  $m('#wiki').onclick = async () => { toast('Building wiki…'); download(`${slug(w.name)}-wiki.html`, await buildWiki(), 'text/html'); toast('Wiki exported'); };
   $m('#del').onclick = async () => {
     if (await confirmDialog(`Permanently delete “${w.name}”? This can’t be undone unless you have a backup.`)) {
       await deleteWorld(w.id); localStorage.removeItem('loreforge:last'); go('#/worlds');
     }
   };
   const drawSnaps = async () => {
-    const list = await listSnapshots(w.id);
     const el = $m('#snaps'); if (!el) return;
-    el.innerHTML = list.length ? list.map(s => `<div class="table-row"><span><b>${new Date(s.t).toLocaleString()}</b><br><span class="muted small">${s.counts.entries} entries · ${s.counts.maps} maps · ${s.counts.sessions} sessions</span></span><span style="flex:1"></span><button class="small" data-restore="${s.t}">Restore</button></div>`).join('')
-      : '<p class="muted small">No snapshots yet.</p>';
+    const dest = await where();
+    $m('#mswhere') && ($m('#mswhere').innerHTML = `Saved to <b>${WHERE_LABEL[dest]}</b>${dest === 'device' ? ' — sign in under ☁️ Cloud & devices to keep them on your server or GitHub.' : '.'}`);
+    let list = [];
+    try { list = await listMilestones(w.id); } catch (e) { el.innerHTML = `<p class="danger-text small">${esc(e.message)}</p>`; return; }
+    el.innerHTML = list.length ? list.map(s => `<div class="table-row"><span><b>${esc(s.name)}</b><br><span class="muted small">${new Date(s.at).toLocaleString()} · ${s.entries} entries</span></span><span style="flex:1"></span><button class="small" data-restore="${esc(s.id)}">Restore</button><button class="icon small" data-msdel="${esc(s.id)}" title="Delete">🗑</button></div>`).join('')
+      : '<p class="muted small">No milestones yet.</p>';
+    el._list = list;
   };
   drawSnaps();
-  $m('#snapnow').onclick = async () => { await snapshot(true); toast('Snapshot saved'); drawSnaps(); };
+  $m('#snapnow').onclick = () => milestoneDialog(drawSnaps);
   $m('#snaps').addEventListener('click', async e => {
-    const b = e.target.closest('[data-restore]'); if (!b) return;
-    if (!(await confirmDialog('Restore this snapshot? Your current version is snapshotted first, so you can undo this.', 'Restore'))) return;
-    if (await restoreSnapshot(+b.dataset.restore)) { toast('Snapshot restored'); go('#/'); }
+    const el = $m('#snaps');
+    const r = e.target.closest('[data-restore]'), d = e.target.closest('[data-msdel]');
+    const m = (el._list || []).find(x => x.id === (r || d)?.dataset.restore || x.id === (r || d)?.dataset.msdel);
+    if (!m) return;
+    if (r) {
+      if (!(await confirmDialog(`Restore “${m.name}” (${new Date(m.at).toLocaleString()})? Your current version is saved as a milestone first.`, 'Restore'))) return;
+      toast('Restoring…');
+      try { await restoreMilestone(w, m); resetHistory(); toast('Restored'); go('#/'); } catch (err) { toast(err.message); }
+    }
+    if (d && await confirmDialog(`Delete the milestone “${m.name}”? This can’t be undone.`)) { try { await deleteMilestone(w.id, m); drawSnaps(); } catch (err) { toast(err.message); } }
   });
   navigator.storage?.estimate?.().then(e => { $m('#usage') && ($m('#usage').textContent = `World size: ${(exportWorld().length / 1048576).toFixed(1)} MB · browser storage used ${(e.usage / 1048576).toFixed(1)} MB`); });
 }
 
 // ---------- Static player wiki ----------
-function buildWiki() {
+async function buildWiki() {
   const w = W();
+  // pictures are stored separately — embed them so the wiki is one self-contained file
+  const pics = {};
+  for (const ref of [...w.entries.map(e => e.image), ...w.maps.map(m => m.image)]) if (isAsset(ref) && !pics[ref]) pics[ref] = await assetDataURL(ref);
+  const pic = ref => (isAsset(ref) ? pics[ref] : ref) || '';
   const fix = html => html.replace(/href="#\/entry\/([a-z0-9]+)"/g, 'href="#e-$1"').replace(/ data-entry="[a-z0-9]+"/g, '');
   const byType = Object.keys(TYPES).map(t => ({ t, list: w.entries.filter(e => e.type === t).sort((a, b) => a.name.localeCompare(b.name)) })).filter(g => g.list.length);
   const events = [...w.events].sort((a, b) => dateKey(a.date) - dateKey(b.date));
@@ -88,7 +108,7 @@ function buildWiki() {
     const fields = e.fields.filter(f => f.v);
     return `<article id="e-${e.id}" style="--tc:${TYPES[e.type].hex}">
       <div class="badge">${TYPES[e.type].icon} ${TYPES[e.type].label}</div><h2>${esc(e.name)}</h2>
-      ${e.image ? `<img src="${e.image}" alt="">` : ''}
+      ${e.image ? `<img src="${pic(e.image)}" alt="">` : ''}
       ${e.summary ? `<p class="sum">${esc(e.summary)}</p>` : ''}
       ${fields.length ? `<table>${fields.map(f => `<tr><td>${esc(f.k)}</td><td>${fix(md(f.v).replace(/^<p>|<\/p>$/g, ''))}</td></tr>`).join('')}</table>` : ''}
       ${fix(md(e.body))}
@@ -120,7 +140,7 @@ ${events.length ? '<h4>History</h4><a href="#timeline">Timeline</a>' : ''}${jour
 </nav><main>
 ${w.description ? `<p class="sum">${esc(w.description)}</p>` : ''}
 ${byType.map(g => `<div class="sec">${TYPES[g.t].plural}</div>${g.list.map(entryHTML).join('')}`).join('')}
-${w.maps.length ? `<div class="sec">Maps</div>${w.maps.map(m => `<article id="m-${m.id}"><h2>${esc(m.name)}</h2><div class="map"><img src="${m.image}" alt="">
+${w.maps.length ? `<div class="sec">Maps</div>${w.maps.map(m => `<article id="m-${m.id}"><h2>${esc(m.name)}</h2><div class="map"><img src="${pic(m.image)}" alt="">
   ${m.pins.map(p => { const e = getEntry(p.entryId); const t = esc(p.label || e?.name || ''); return `<a href="${e ? '#e-' + e.id : (p.submapId ? '#m-' + p.submapId : '#')}" title="${t}" style="position:absolute;left:${p.x / m.w * 100}%;top:${p.y / m.h * 100}%;transform:translate(-50%,-50%);width:14px;height:14px;border-radius:50%;background:${p.color || (e ? TYPES[e.type].hex : '#d4a24c')};border:2px solid #000"></a><span style="position:absolute;left:calc(${p.x / m.w * 100}% + 10px);top:${p.y / m.h * 100}%;transform:translateY(-50%);font-weight:600;font-size:13px;text-shadow:0 0 3px #000,0 0 3px #000;pointer-events:none">${t}</span>`; }).join('')}</div></article>`).join('')}` : ''}
 ${events.length ? `<div class="sec" id="timeline">Timeline</div>${events.map(ev => `<div class="ev"><div class="d">${esc(formatDate(ev.date))}</div><b>${esc(ev.title)}</b>${fix(md(ev.desc))}</div>`).join('')}` : ''}
 ${journals.map(j => `<article id="j-${j.id}"><div class="badge">${esc(j.category)}</div><h2>${esc(j.title)}</h2>${fix(md(j.body))}</article>`).join('')}
@@ -128,4 +148,26 @@ ${journals.map(j => `<article id="j-${j.id}"><div class="badge">${esc(j.category
 </main>
 <script>document.getElementById('f').oninput=e=>{const q=e.target.value.toLowerCase();document.querySelectorAll('nav a[data-n]').forEach(a=>a.style.display=a.dataset.n.includes(q)?'':'none')}</script>
 </body></html>`;
+}
+
+// ⭐ Milestone: a deliberate, named backup of the world as it is right now
+export function milestoneDialog(after) {
+  const w = W(); if (!w) return;
+  const def = `Milestone — ${new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}`;
+  where().then(dest => {
+    openModal(`<h2>⭐ Save a milestone</h2>
+      <p class="muted small" style="margin-top:-4px">A permanent backup of <b>${esc(w.name)}</b> as it is right now, saved to <b>${WHERE_LABEL[dest]}</b>. Restore it any time from World settings.</p>
+      <label>Name</label><input id="msn" value="${esc(def)}" autofocus>
+      <div class="modal-actions"><button data-a="no">Cancel</button><button class="primary" data-a="yes">Save milestone</button></div>`, m => {
+      const go2 = async () => {
+        const name = m.querySelector('#msn').value.trim() || def;
+        const btn = m.querySelector('[data-a=yes]'); btn.disabled = true; btn.textContent = 'Saving…';
+        try { const d = await createMilestone(w, name); closeModal(); toast(`Milestone saved to ${WHERE_LABEL[d]}`); after?.(); }
+        catch (e) { btn.disabled = false; btn.textContent = 'Save milestone'; toast(e.message); }
+      };
+      m.addEventListener('click', e => { if (e.target.dataset.a === 'no') closeModal(); if (e.target.dataset.a === 'yes') go2(); });
+      m.querySelector('#msn').addEventListener('keydown', e => { if (e.key === 'Enter') go2(); });
+      setTimeout(() => m.querySelector('#msn').select(), 30);
+    });
+  });
 }

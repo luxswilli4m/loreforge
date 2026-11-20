@@ -3,6 +3,7 @@ import { esc, pickFile, imageToDataURL, toast } from '../util.js';
 import { THEMES, PRESETS, getPrefs, setPrefs, applyBackground } from '../theme.js';
 import { assetGet, assetPut } from '../db.js';
 import { randomSeed } from '../gen/core.js';
+import * as A from '../assets.js';
 
 export function render(main) {
   const p = getPrefs();
@@ -32,7 +33,7 @@ export function render(main) {
       <div class="bg-grid" id="bgs">
         <button class="card bg-card ${bg.kind === 'generated' ? 'on' : ''}" data-kind="generated"><div class="bg-prev" id="genprev">🗺️</div>Generated world</button>
         ${Object.entries(PRESETS).map(([k, pr]) => `<button class="card bg-card ${bg.kind === 'preset' && bg.preset === k ? 'on' : ''}" data-kind="preset" data-preset="${k}"><div class="bg-prev" style="background:${pr.css}"></div>${pr.label}</button>`).join('')}
-        ${maps.map(m => `<button class="card bg-card ${bg.kind === 'map' && bg.mapId === m.id ? 'on' : ''}" data-kind="map" data-map="${m.id}"><div class="bg-prev" style="background:url('${m.image}')"></div>${esc(m.name)}</button>`).join('')}
+        ${maps.map(m => `<button class="card bg-card ${bg.kind === 'map' && bg.mapId === m.id ? 'on' : ''}" data-kind="map" data-map="${m.id}"><div class="bg-prev" ${A.bg(m.image)}></div>${esc(m.name)}</button>`).join('')}
         <button class="card bg-card ${bg.kind === 'upload' ? 'on' : ''}" data-kind="upload"><div class="bg-prev" id="upprev">⬆</div>Your own image</button>
         <button class="card bg-card ${bg.kind === 'none' ? 'on' : ''}" data-kind="none"><div class="bg-prev" style="background:var(--bg)">∅</div>Plain</button>
       </div>

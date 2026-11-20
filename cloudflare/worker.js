@@ -9,6 +9,9 @@
 //   TOKEN_SECRET        (secret, required) — any long random text; signs login tokens
 //   INVITE_CODE         (secret, recommended) — needed to create an account, so strangers can't sign up
 //   ADMIN_CODE          (secret, optional) — lets the server owner reset any account's password
+//   GITHUB_TOKEN        (secret, optional) — fine-grained token with Contents read/write on ONE private repo
+//   GITHUB_REPO         (optional) — that repo as "owner/name", e.g. luxswilli4m/loreforge-data
+//                       With both set, milestone backups are saved to GitHub; otherwise they're kept on this server.
 //   OPENROUTER_API_KEY  (secret, optional) — use OpenRouter models (e.g. free ones) for Story Forge
 //   AI_MODEL            (optional) — OpenRouter model (default openrouter/free), or the Workers AI model if no OpenRouter key
 //   WORKERS_AI_MODEL    (optional) — Workers AI model used as the fallback (default @cf/meta/llama-3.3-70b-instruct-fp8-fast)
@@ -80,6 +83,30 @@ async function setCredentials(S, env, u, rec, password) {
   return { rec: next, recoveryKey };
 }
 
+// ---------- GitHub (milestone backups) ----------
+const ghOn = env => !!(env.GITHUB_TOKEN && env.GITHUB_REPO);
+function gh(env, path, init = {}) {
+  return fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/contents/${path}`, {
+    ...init,
+    headers: { authorization: `Bearer ${env.GITHUB_TOKEN}`, 'user-agent': 'loreforge-server', 'x-github-api-version': '2022-11-28', accept: 'application/vnd.github+json', ...(init.headers || {}) },
+  });
+}
+async function ghPut(env, path, base64, message) {
+  // body is assembled as text so the (possibly large) content never has to be parsed here
+  const r = await gh(env, path, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: `{"message":${JSON.stringify(message)},"content":"${base64}"}` });
+  if (r.status === 422) return true;          // already exists (assets are immutable)
+  if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(`GitHub: ${d.message || r.status}`); }
+  return true;
+}
+async function ghList(env, path) {
+  const r = await gh(env, path);
+  if (r.status === 404) return [];
+  if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(`GitHub: ${d.message || r.status}`); }
+  return (await r.json()).filter(f => f.type === 'file').map(f => ({ name: f.name, size: f.size, sha: f.sha }));
+}
+const msName = id => { try { return new TextDecoder().decode(fromB64u(id.split('__')[2] || '')); } catch { return 'Milestone'; } };
+const validMs = id => /^\d{10,15}__\d{1,6}__[A-Za-z0-9_-]{0,200}$/.test(id);
+
 // ---------- storage: R2 if bound, otherwise KV ----------
 function storage(env) {
   if (env.BUCKET) return {
@@ -149,7 +176,7 @@ export default {
 
     try {
       if (path === '' || path === '/' || path === '/api/health') {
-        return json({ ok: true, app: 'loreforge', storage: env.BUCKET ? 'r2' : env.STORE ? 'kv' : 'none', ai: env.OPENROUTER_API_KEY ? (env.AI ? 'openrouter+workers-ai' : 'openrouter') : env.AI ? 'workers-ai' : 'none', inviteRequired: !!env.INVITE_CODE, ready: !!(S && env.TOKEN_SECRET) });
+        return json({ ok: true, app: 'loreforge', milestones: ghOn(env) ? 'github' : 'server', storage: env.BUCKET ? 'r2' : env.STORE ? 'kv' : 'none', ai: env.OPENROUTER_API_KEY ? (env.AI ? 'openrouter+workers-ai' : 'openrouter') : env.AI ? 'workers-ai' : 'none', inviteRequired: !!env.INVITE_CODE, ready: !!(S && env.TOKEN_SECRET) });
       }
       if (!S) return err(500, 'Server storage is not set up: bind a KV namespace named STORE (or an R2 bucket named BUCKET).');
       if (!env.TOKEN_SECRET) return err(500, 'Server is missing the TOKEN_SECRET secret.');
@@ -277,6 +304,58 @@ export default {
           return json({ ok: true });
         }
         if (req.method === 'DELETE') { await S.del(key); return json({ ok: true }); }
+      }
+
+      // --- milestone backups (only made when you press the button) ---
+      m = path.match(/^\/api\/milestones\/([^/]+)(?:\/([^/]+))?$/);
+      if (m) {
+        const wid = m[1], msid = m[2] ? decodeURIComponent(m[2]) : null;
+        if (!validId(wid) || (msid && !validMs(msid))) return err(400, 'Bad milestone id.');
+        const ghDir = `loreforge/${user}/milestones/${wid}`;
+        if (req.method === 'GET' && !msid) {
+          const files = ghOn(env) ? (await ghList(env, ghDir)).map(f => ({ id: f.name.replace(/\.json$/, ''), size: f.size }))
+            : (await S.list(`ms/${user}/${wid}/`)).map(o => ({ id: o.key.split('/').pop(), size: o.size || +o.meta.size || 0 }));
+          return json(files.filter(f => validMs(f.id)).map(f => ({ id: f.id, at: +f.id.split('__')[0], entries: +f.id.split('__')[1], name: msName(f.id), size: f.size, where: ghOn(env) ? 'github' : 'server' })).sort((a, b) => b.at - a.at));
+        }
+        if (req.method === 'GET' && msid) {
+          if (ghOn(env)) {
+            const r = await gh(env, `${ghDir}/${msid}.json`, { headers: { accept: 'application/vnd.github.raw+json' } });
+            if (!r.ok) return err(r.status === 404 ? 404 : 502, 'Could not read that milestone from GitHub.');
+            return new Response(r.body, { headers: { 'content-type': 'application/json', ...cors } });
+          }
+          const o = await S.get(`ms/${user}/${wid}/${msid}`, 'stream');
+          return o ? new Response(o.body, { headers: { 'content-type': 'application/json', ...cors } }) : err(404, 'Not found.');
+        }
+        if (req.method === 'PUT' && msid) {          // body: the world as base64 text
+          const b64 = await req.text();
+          if (!/^[A-Za-z0-9+/=\s]*$/.test(b64.slice(0, 2000))) return err(400, 'Expected base64.');
+          if (ghOn(env)) { await ghPut(env, `${ghDir}/${msid}.json`, b64.replace(/\s/g, ''), `Milestone: ${msName(msid)}`); return json({ ok: true, where: 'github' }); }
+          const text = new TextDecoder().decode(Uint8Array.from(atob(b64.replace(/\s/g, '')), c => c.charCodeAt(0)));
+          await S.put(`ms/${user}/${wid}/${msid}`, text, { size: String(text.length) });
+          return json({ ok: true, where: 'server' });
+        }
+        if (req.method === 'DELETE' && msid) {
+          if (ghOn(env)) {
+            const f = (await ghList(env, ghDir)).find(x => x.name === `${msid}.json`);
+            if (f) await gh(env, `${ghDir}/${msid}.json`, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: `Delete milestone: ${msName(msid)}`, sha: f.sha }) });
+          } else await S.del(`ms/${user}/${wid}/${msid}`);
+          return json({ ok: true });
+        }
+      }
+      // pictures for GitHub milestones, so a backup there is complete on its own
+      if (path === '/api/milestone-assets' && req.method === 'GET') {
+        if (!ghOn(env)) return json([]);
+        return json((await ghList(env, `loreforge/${user}/assets`)).map(f => f.name));
+      }
+      m = path.match(/^\/api\/milestone-assets\/([^/]+)$/);
+      if (m && ghOn(env)) {
+        if (!validId(m[1])) return err(400, 'Bad id.');
+        const p = `loreforge/${user}/assets/${m[1]}`;
+        if (req.method === 'PUT') { await ghPut(env, p, (await req.text()).replace(/\s/g, ''), 'Milestone picture'); return json({ ok: true }); }
+        if (req.method === 'GET') {
+          const r = await gh(env, p, { headers: { accept: 'application/vnd.github.raw+json' } });
+          return r.ok ? new Response(r.body, { headers: { 'content-type': 'application/octet-stream', ...cors } }) : err(404, 'Not found.');
+        }
       }
 
       // --- AI ---

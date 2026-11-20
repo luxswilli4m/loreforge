@@ -27,7 +27,6 @@ export function save() {
   state.world.updated = Date.now();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => dbPut(state.world).then(() => hooks.afterSave.forEach(f => f(state.world))).catch(e => console.error('Save failed', e)), 250);
-  if (Date.now() - lastSnapCheck > 5 * 60e3) { lastSnapCheck = Date.now(); setTimeout(() => snapshot().catch(console.error), 2000); }
 }
 
 // ---------- automatic snapshots (kept in this browser, newest first) ----------
@@ -134,7 +133,6 @@ export function openWorld(id) {
   if (i >= 0) {
     state.world = state.worlds[i] = normalizeWorld(state.worlds[i]);
     localStorage.setItem('loreforge:last', id);
-    setTimeout(() => snapshot().catch(console.error), 1500);
   }
   return state.world;
 }
@@ -225,11 +223,15 @@ const blobToDataURL = b => new Promise((res, rej) => { const r = new FileReader(
 // full backup including Library files (PDFs, images) as embedded data
 export async function exportBackup() {
   const w = W();
-  const libraryFiles = {};
+  const libraryFiles = {}, imageFiles = {};
   for (const d of w.library || []) { const b = await assetGet('lib:' + d.id); if (b) libraryFiles[d.id] = await blobToDataURL(b); }
+  for (const ref of [...w.entries.map(e => e.image), ...w.maps.map(m => m.image)]) {
+    if (typeof ref !== 'string' || !ref.startsWith('asset:') || imageFiles[ref.slice(6)]) continue;
+    const b = await assetGet('img:' + ref.slice(6)); if (b) imageFiles[ref.slice(6)] = await blobToDataURL(b);
+  }
   w.lastExport = Date.now();
   save();
-  return JSON.stringify({ app: 'loreforge', version: 2, world: w, libraryFiles });
+  return JSON.stringify({ app: 'loreforge', version: 3, world: w, libraryFiles, imageFiles });
 }
 export async function importWorld(json) {
   const data = JSON.parse(json);
@@ -237,6 +239,9 @@ export async function importWorld(json) {
   if (!world || !Array.isArray(world.entries)) throw new Error('This file does not look like a Loreforge world.');
   for (const [id, url] of Object.entries(data.libraryFiles || {})) {
     try { await assetPut('lib:' + id, await (await fetch(url)).blob()); } catch (e) { console.error('Library file import failed', e); }
+  }
+  for (const [id, url] of Object.entries(data.imageFiles || {})) {
+    try { await assetPut('img:' + id, await (await fetch(url)).blob()); } catch (e) { console.error('Picture import failed', e); }
   }
   return createWorld(world.name + (state.worlds.some(w => w.name === world.name) ? ' (imported)' : ''), world);
 }

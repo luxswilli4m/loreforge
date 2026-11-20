@@ -1,6 +1,7 @@
 import { W, getMap, getEntry, uid, save, TYPES } from '../store.js';
 import { esc, openModal, closeModal, confirmDialog, pickFile, imageToDataURL, toast, go, query, typeColor, promptDialog } from '../util.js';
 import { newEntryDialog } from './entries.js';
+import * as A from '../assets.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const PIN_COLORS = ['#d4a24c', '#e07a5f', '#5fa8d3', '#c77dff', '#81b29a', '#e9c46a', '#ffffff'];
@@ -17,10 +18,10 @@ async function newMapDialog(parentId = '', pin = null) {
   if (!f) return null;
   toast('Loading map…');
   let img;
-  try { img = await imageToDataURL(f, 4096); } catch { toast('Could not read that image'); return null; }
+  try { img = await A.storeImage(f, { maxDim: 4096, quality: 0.88 }); } catch { toast('Could not read that image'); return null; }
   const def = pin ? (pin.label || getEntry(pin.entryId)?.name || '') : f.name.replace(/\.[^.]+$/, '');
   const name = await promptDialog('Name this map', def) || def || 'Untitled map';
-  const m = { id: uid(), name, image: img.src, w: img.w, h: img.h, parentId, scale: { pxPerUnit: 0, unit: 'miles' }, pins: [] };
+  const m = { id: uid(), name, image: img.ref, w: img.w, h: img.h, parentId, scale: { pxPerUnit: 0, unit: 'miles' }, pins: [] };
   W().maps.push(m);
   if (pin) pin.submapId = m.id;
   save();
@@ -34,7 +35,7 @@ export function renderList(main) {
     ${maps.length ? `<div class="grid">${maps.map(m => {
       const parent = getMap(m.parentId);
       return `<a class="card entry-card" href="#/map/${m.id}" style="text-decoration:none;color:inherit;--tc:var(--accent)">
-        <img class="thumb" src="${m.image}" alt="">
+        <img class="thumb" ${A.src(m.image)} alt="">
         <h3>${esc(m.name)}</h3>
         <p>${m.pins.length} pins${parent ? ` · inside ${esc(parent.name)}` : ''}${m.scale.pxPerUnit ? ' · scaled' : ''}</p></a>`;
     }).join('')}</div>`
@@ -44,7 +45,7 @@ export function renderList(main) {
 
 export function peekHTML(m) {
   return `<h2>${esc(m.name)}</h2>
-    <div style="position:relative"><img src="${m.image}" style="width:100%;border-radius:8px;display:block">
+    <div style="position:relative"><img ${A.src(m.image)} style="width:100%;border-radius:8px;display:block">
     ${m.pins.map(p => `<span title="${esc(p.label || getEntry(p.entryId)?.name || '')}" style="position:absolute;left:${p.x / m.w * 100}%;top:${p.y / m.h * 100}%;width:10px;height:10px;margin:-5px;border-radius:50%;background:${p.color || '#d4a24c'};border:2px solid #000"></span>`).join('')}</div>
     <ul class="link-list" style="margin-top:10px">${m.pins.map(p => `<li>📍 ${p.entryId && getEntry(p.entryId) ? `<a class="mention" style="--tc:${typeColor(getEntry(p.entryId).type)}" href="#/entry/${p.entryId}">${esc(p.label || getEntry(p.entryId).name)}</a>` : esc(p.label)}</li>`).join('')}</ul>`;
 }
@@ -76,7 +77,7 @@ export function renderMap(main, id) {
           <button data-mode="calibrate" title="Set the map scale">📐 Set scale</button>
           <button id="fit" title="Fit map to view">⤢</button>
         </div>
-        <svg id="svg"><g id="vp"><image href="${m.image}" width="${m.w}" height="${m.h}"/><g id="overlay"></g><g id="pins"></g></g></svg>
+        <svg id="svg"><g id="vp"><image ${A.href(m.image)} width="${m.w}" height="${m.h}"/><g id="overlay"></g><g id="pins"></g></g></svg>
         <div class="map-info hidden" id="info"></div>
       </div>
       <div class="map-side" id="side"></div>
@@ -219,11 +220,11 @@ export function renderMap(main, id) {
       $s('#m-parent').onchange = e => { m.parentId = e.target.value; save(); };
       $s('#m-replace').onclick = async () => {
         const f = await pickFile('image/*'); if (!f) return;
-        const img = await imageToDataURL(f, 4096);
+        const img = await A.storeImage(f, { maxDim: 4096, quality: 0.88 });
         const sx = img.w / m.w, sy = img.h / m.h;
         m.pins.forEach(x => { x.x *= sx; x.y *= sy; });
         if (m.scale.pxPerUnit) m.scale.pxPerUnit *= sx;
-        Object.assign(m, { image: img.src, w: img.w, h: img.h }); save(); renderMap(main, id);
+        Object.assign(m, { image: img.ref, w: img.w, h: img.h }); save(); renderMap(main, id);
       };
       $s('#m-del').onclick = async () => {
         if (!(await confirmDialog(`Delete the map “${m.name}” and its pins?`))) return;

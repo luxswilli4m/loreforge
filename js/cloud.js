@@ -1,6 +1,7 @@
 // Cloud sync with a personal Loreforge server (a Cloudflare Worker): accounts, worlds, library files, AI.
 import { state, hooks, putWorldRecord, uid } from './store.js';
 import { assetGet, assetPut } from './db.js';
+import { worldAssetIds, setRemoteFetch } from './assets.js';
 
 const KEY = 'loreforge:cloud';
 const SYNC_KEY = 'loreforge:syncstate';
@@ -50,6 +51,7 @@ export async function signIn(url, username, password, register = false, invite =
   const data = await apiJSON(register ? '/api/register' : '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username, password, invite }) }, cfg);
   localStorage.removeItem(SYNC_KEY);
   setCloud({ url: cfg.url, token: data.token, username: data.username });
+  window.dispatchEvent(new Event('lf-auth'));
   emit({ state: 'idle', msg: 'Signed in' });
   return data;
 }
@@ -66,7 +68,7 @@ export const me = () => apiJSON('/api/me');
 export async function changePassword(current, newPassword) { const d = await post('/api/account/password', { current, newPassword }); setCloud({ token: d.token }); return d; }
 export const newRecoveryKey = password => post('/api/account/recovery', { password });
 export async function signOutEverywhere() { const d = await post('/api/account/signout-all', {}); setCloud({ token: d.token }); return d; }
-export function signOut() { setCloud({ token: '' }); localStorage.removeItem(SYNC_KEY); emit({ state: 'off', msg: '' }); }
+export function signOut() { window.dispatchEvent(new Event('lf-auth')); setCloud({ token: '' }); localStorage.removeItem(SYNC_KEY); emit({ state: 'off', msg: '' }); }
 
 // ---------- worlds ----------
 export const listCloud = () => apiJSON('/api/worlds');
@@ -173,25 +175,28 @@ export async function downloadWorld(id) { const { w, updated } = await download(
 
 // ---------- library files ----------
 let cloudFiles = null;
+// library files and pictures upload once each; other devices fetch them when first needed
 async function syncFiles(w) {
-  if (!w.library?.length) return;
+  const wanted = [...(w.library || []).map(d => ['lib:', d.id]), ...worldAssetIds(w).map(id => ['img:', id])];
+  if (!wanted.length) return;
   if (!cloudFiles) cloudFiles = new Set(await apiJSON('/api/files'));
-  for (const d of w.library) {
-    if (cloudFiles.has(d.id)) continue;
-    const blob = await assetGet('lib:' + d.id);
+  for (const [prefix, id] of wanted) {
+    if (cloudFiles.has(id)) continue;
+    const blob = await assetGet(prefix + id);
     if (!blob) continue;
-    const res = await api('/api/files/' + d.id, { method: 'PUT', headers: { 'x-file-type': d.type || blob.type || '' }, body: blob });
-    if (res.ok) cloudFiles.add(d.id);
+    const res = await api('/api/files/' + id, { method: 'PUT', headers: { 'x-file-type': blob.type || '' }, body: blob });
+    if (res.ok) cloudFiles.add(id);
   }
 }
-export async function fetchFile(id) {
+export async function fetchFile(id, prefix = 'lib:') {
   if (!connected()) return null;
   const res = await api('/api/files/' + id);
   if (!res.ok) return null;
   const blob = await res.blob();
-  await assetPut('lib:' + id, blob);
+  await assetPut(prefix + id, blob);
   return blob;
 }
+setRemoteFetch(id => fetchFile(id, 'img:'));
 
 // ---------- AI through the server ----------
 export async function serverAI({ system, user, maxTokens }) {

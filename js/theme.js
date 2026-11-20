@@ -1,6 +1,7 @@
 // Appearance: theme "vibes", torn-paper panels, and backgrounds (generated world map by default).
 import { assetGet, assetPut } from './db.js';
 import { rng, makeNoise, randomSeed, ensureFonts } from './gen/core.js';
+import { url as assetURL } from './assets.js';
 
 export const THEMES = {
   tavern: { label: 'Tavern', desc: 'Candlelit dark wood & gold', swatch: ['#1d1a24', '#d4a24c', '#ebe5d8'], mapStyle: 'night' },
@@ -113,7 +114,7 @@ export async function resolveBackground(p, world) {
   if (bg.kind === 'none') return { css: 'none' };
   if (bg.kind === 'preset') return { css: PRESETS[bg.preset]?.css || PRESETS.night.css };
   if (bg.kind === 'upload') { const a = await assetGet('bg:upload'); return a ? { url: a } : { css: PRESETS.night.css }; }
-  if (bg.kind === 'map') { const m = world?.maps.find(x => x.id === bg.mapId); return m ? { url: m.image } : { css: PRESETS.night.css }; }
+  if (bg.kind === 'map') { const m = world?.maps.find(x => x.id === bg.mapId); const u = m && await assetURL(m.image); return u ? { url: u } : { css: PRESETS.night.css }; }
   return { url: await generatedBackground(bg.seed, THEMES[p.theme]?.mapStyle || 'night') };
 }
 

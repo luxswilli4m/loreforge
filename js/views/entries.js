@@ -1,5 +1,6 @@
 import { W, TYPES, getEntry, newEntry, deleteEntry, backlinks, mentionsIn, save, uid, formatDate } from '../store.js';
 import { suggestName } from '../tools/generators.js';
+import * as A from '../assets.js';
 import { esc, md, typeBadge, typeColor, mentionLink, openModal, closeModal, confirmDialog, editorHTML, attachEditor, pickFile, imageToDataURL, toast, go, rerender } from '../util.js';
 
 let listFilter = { q: '', tag: '' };
@@ -35,7 +36,7 @@ export function renderList(main, type) {
 
 function cardHTML(e) {
   return `<a class="card entry-card" href="#/entry/${e.id}" style="--tc:${typeColor(e.type)};text-decoration:none;color:inherit">
-    ${e.image ? `<img class="thumb" src="${e.image}" alt="">` : ''}
+    ${e.image ? `<img class="thumb" ${A.src(e.image)} alt="">` : ''}
     ${typeBadge(e.type)}<h3>${esc(e.name)}</h3><p>${esc(e.summary)}</p>
     ${e.tags.length ? `<div style="margin-top:6px">${e.tags.map(t => `<span class="tag">#${esc(t)}</span>`).join('')}</div>` : ''}
   </a>`;
@@ -79,7 +80,7 @@ export function readHTML(e, compact = false) {
   return `
   <div class="entry-layout">
     <div>
-      ${e.image ? `<img class="entry-hero" src="${e.image}" alt="">` : ''}
+      ${e.image ? `<img class="entry-hero" ${A.src(e.image)} alt="">` : ''}
       ${typeBadge(e.type)}
       <h1 style="margin-top:4px">${esc(e.name)}</h1>
       ${e.summary ? `<p class="muted" style="font-size:1.1em;font-style:italic">${md(e.summary).replace(/^<p>|<\/p>$/g, '')}</p>` : ''}
@@ -167,7 +168,7 @@ export function renderEdit(main, id) {
         </div>
         <div class="card side-box">
           <h4>Image</h4>
-          ${e.image ? `<img src="${e.image}" style="width:100%;border-radius:8px;margin-bottom:8px">` : ''}
+          ${e.image ? `<img ${A.src(e.image)} style="width:100%;border-radius:8px;margin-bottom:8px">` : ''}
           <div class="row"><button id="img">${e.image ? 'Replace' : '⬆ Upload'}</button>${e.image ? '<button id="noimg" class="danger">Remove</button>' : ''}</div>
         </div>
         <div class="card side-box">
@@ -206,7 +207,7 @@ export function renderEdit(main, id) {
   $m('#addf').onclick = () => { e.fields.push({ k: '', v: '' }); touch(); renderEdit(main, id); main.querySelector('#fields .field-row:last-child input')?.focus(); };
   $m('#img').onclick = async () => {
     const f = await pickFile('image/*'); if (!f) return;
-    try { e.image = (await imageToDataURL(f, 1200)).src; touch(); renderEdit(main, id); } catch { toast('Could not read that image'); }
+    try { e.image = (await A.storeImage(f, { maxDim: 1200 })).ref; touch(); renderEdit(main, id); } catch { toast('Could not read that image'); }
   };
   const noimg = $m('#noimg'); if (noimg) noimg.onclick = () => { e.image = ''; touch(); renderEdit(main, id); };
 }

@@ -5,6 +5,7 @@ import { generateWorld, renderWorld, WORLD_DEFAULTS } from '../gen/world.js';
 import { generateCity, renderCity, CITY_DEFAULTS } from '../gen/city.js';
 import { placeName } from '../gen/names.js';
 import { rng } from '../gen/core.js';
+import * as A from '../assets.js';
 
 const STYLE_SWATCH = {
   parchment: 'linear-gradient(135deg,#eadcbf 0 55%,#b9bfb0 55% 100%)',
@@ -149,19 +150,19 @@ export function render(main) {
           parent: m.querySelector('#sparent').value, pin: m.querySelector('#spin')?.value || '',
         };
         closeModal();
-        const map = commit(opts);
-        toast('Map saved');
-        go(`#/map/${map.id}`);
+        toast('Saving map…');
+        commit(opts).then(map => { toast('Map saved'); go(`#/map/${map.id}`); });
       });
     });
   }
 
-  function commit(opts) {
+  async function commit(opts) {
     const w = W();
     const isWorld = data.mode === 'world';
     const res = data.result;
+    const pic = await A.storeImage(canvas, { quality: 0.88 });
     const map = {
-      id: uid(), name: opts.name, image: canvas.toDataURL('image/jpeg', 0.9), w: canvas.width, h: canvas.height,
+      id: uid(), name: opts.name, image: pic.ref, w: canvas.width, h: canvas.height,
       parentId: opts.parent || '', scale: { pxPerUnit: res.pxPerUnit, unit: isWorld ? 'miles' : 'feet' }, pins: [],
     };
     const findOrCreate = (name, type, summary, fields) => {

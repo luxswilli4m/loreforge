@@ -24,7 +24,9 @@ It combines a **world wiki** (entries, maps, relationship graphs, a shareable pl
 
 **Library.** Drop in PDF rulebooks, adventures, handouts and images, then read them in the app or Ctrl+click to open them in the side panel next to your notes.
 
-**Safety nets.** Automatic snapshots every 30 minutes (the last 6 are kept) that you can restore, full backups that include Library files, and a reminder when you haven't backed up in two weeks.
+**Undo and milestones.** Ctrl+Z / Ctrl+Y undo and redo anything you've done since opening the app, with fast typing grouped into one step, like Word. Inside a text box, Ctrl+Z works on the text as usual. ⭐ Milestone saves a named, permanent backup whenever you choose, to your GitHub repo, your server, or this device. Restore one from World settings; your current version is kept as a milestone first. Full backups (.json) include pictures and Library files, and you get a reminder when you haven't backed up in two weeks.
+
+**Lightweight worlds.** Pictures and maps are stored as separate files in a compact format and referenced by the world, so worlds stay small and sync quickly. Older worlds convert automatically.
 
 **Little things.** ⭐ Pin favourite entries to the sidebar, 🎲 get name suggestions when creating entries, and press **?** for keyboard shortcuts.
 
@@ -90,6 +92,9 @@ js/
   gen/            map generators (core helpers, world.js, city.js, names.js)
   theme.js        themes, torn edges, backgrounds
   cloud.js        sync engine for the Cloudflare server
+  assets.js       pictures stored as separate files
+  undo.js         session undo / redo
+  milestones.js   milestone backups (device / server / GitHub)
   tools/          dice, generators, dice tray, story forge, AI providers
   views/          home, entries, codex, maps, generator, graph, campaign, quests, timeline, journals, gm, forge, library, cloud, settings, appearance
 ```
