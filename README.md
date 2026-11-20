@@ -1,5 +1,7 @@
 # 📜 Loreforge
 
+### ▶ Open the app: **https://luxswilli4m.github.io/loreforge**
+
 A free, private worldbuilding and campaign manager for game masters and storytellers. It runs entirely in your browser: no account, no server, no subscription.
 
 It combines a **world wiki** (entries, maps, relationship graphs, a shareable player wiki) with **GM campaign tools** (arcs, sessions with beats, a custom calendar timeline and journals).
