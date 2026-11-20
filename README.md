@@ -113,3 +113,5 @@ City maps have five styles, including **Storybook** (coloured roofs, cobbled str
 ### Drawing on maps
 Any map, generated or uploaded, has a 🖌️ **Draw** mode: pen, marker, line, box, circle, text (serif, calligraphy or plain), 18 map stamps (castle, tower, village, temple, ruins, camp, cave, peak, grove, ship, port, sea beast, danger, battle, X marks the spot, flag, magic, star), an eraser, a move tool and layers you can show or hide. Hidden layers are left out of the player wiki, so they're handy for GM-only notes. Hold Space or use the middle mouse button to pan while drawing.
 
+The generator fills the screen: scroll to zoom, drag to move (Space, middle or right mouse button while editing). City maps can show more countryside (**Area shown**: close up → whole valley) and can be edited by hand: add, remove and repaint buildings, plant or clear trees, draw a new town wall (gates open where roads cross), draw, colour and remove roads.
+

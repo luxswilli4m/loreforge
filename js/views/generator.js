@@ -3,7 +3,7 @@ import { esc, query, go, toast, openModal, closeModal } from '../util.js';
 import { randomSeed, ensureFonts } from '../gen/core.js';
 import { generateWorld, renderWorld, WORLD_DEFAULTS, GRID_W, GRID_H, makeEditState, cloneEdit, applyBrush, drawEditPreview,
   editToBlob, editFromBlob, BIOME_LABELS, REALM_COLORS } from '../gen/world.js';
-import { generateCity, renderCity, CITY_DEFAULTS } from '../gen/city.js';
+import { generateCity, renderCity, CITY_DEFAULTS, CITY_AREAS, ROOF_SWATCHES, ROAD_SWATCHES, cloneCity, cityBrush, setCityWall, addCityRoad, nearestRoad, removeCityRoad, cityToBlob, cityFromBlob } from '../gen/city.js';
 import { placeName, realmBase, realmName } from '../gen/names.js';
 import { rng } from '../gen/core.js';
 import * as A from '../assets.js';
@@ -38,9 +38,24 @@ const TOOL_HELP = {
   town: 'Click land to add a town. Drag a town to move it. Click a town to rename it, make it a capital or delete it.',
 };
 
+const CITY_TOOLS = [
+  ['Buildings', [['bld-add', '🏠', 'Add'], ['bld-del', '🧹', 'Remove'], ['bld-paint', '🎨', 'Paint roofs']]],
+  ['Nature', [['tree-add', '🌳', 'Add trees'], ['tree-del', '🪓', 'Clear trees']]],
+  ['Walls & roads', [['wall', '🧱', 'Draw wall'], ['road', '🛣️', 'Draw road'], ['road-paint', '🖌️', 'Colour road'], ['road-del', '✂️', 'Remove road']]],
+];
+const CITY_HELP = {
+  'bld-add': 'Drag to fill an area with houses. They line up with the nearest street.', 'bld-del': 'Drag over buildings to knock them down.',
+  'bld-paint': 'Drag over buildings to repaint their roofs.', 'tree-add': 'Drag to plant trees.', 'tree-del': 'Drag to clear trees.',
+  wall: 'Click around the town to place wall corners. Click the first corner again, double-click or press Enter to close the loop. Gates open where roads cross.',
+  road: 'Click to place points along a road; double-click or press Enter to finish. Houses in the way are cleared.',
+  'road-paint': 'Click a road to give it the colour below.', 'road-del': 'Click a road to remove it.',
+};
+
 // remembered between visits in this session
 const memo = { mode: 'world', world: { ...WORLD_DEFAULTS, seed: randomSeed() }, city: { ...CITY_DEFAULTS, seed: randomSeed() },
-  tool: { tool: 'raise', size: 8, strength: 0.5, biome: 2, realm: -2 } };
+  tool: { tool: 'raise', size: 8, strength: 0.5, biome: 2, realm: -2 },
+  ctool: { tool: 'bld-add', size: 70, roof: '', road: '#b8946a' } };
+const BW = 1000; // layout width of the zoomable map
 
 export function render(main) {
   const q = query();
@@ -51,12 +66,21 @@ export function render(main) {
   const link = q.parent ? { parent: q.parent, pin: q.pin || '' } : null;
 
   let data = null, lastKey = '', timer = null, busy = false, pending = false;
-  // editor state
-  let ed = null, editing = false, editMapId = q.edit || '', selTown = -1, undoStack = [], redoStack = [], edVersion = 0;
+  // world editor state
+  let ed = null, wEdit = false, selTown = -1, edVersion = 0;
+  // city editor state
+  let ced = null, cEdit = false, cVersion = 0, poly = null;
+  let undoStack = [], redoStack = [];
+  let editMapId = q.edit || '';
+  const editing = () => memo.mode === 'world' ? wEdit : cEdit;
+
   const canvas = document.createElement('canvas');
   const ov = document.createElement('canvas'); ov.className = 'gen-overlay';
+  const cov = document.createElement('canvas'); cov.className = 'gen-overlay city-ov';
   const cur = document.createElement('div'); cur.className = 'brush-cur';
   const mark = document.createElement('div'); mark.className = 'town-mark';
+  const zw = document.createElement('div'); zw.className = 'gen-zoom';
+  zw.append(canvas, ov, cov, cur, mark);
 
   function styleButtons(o) {
     return MODE_STYLES[memo.mode].map(s => `<button class="swatch ${o.style === s ? 'on' : ''}" data-style="${s}" title="${esc(STYLE_HINT[s] || STYLE_LABEL[s])}"><span style="background:${STYLE_SWATCH[s]}"></span>${STYLE_LABEL[s]}</button>`).join('');
@@ -64,7 +88,8 @@ export function render(main) {
 
   function controlsHTML() {
     const mode = memo.mode, o = memo[mode];
-    if (mode === 'world' && editing) return editHTML();
+    if (mode === 'world' && wEdit) return editHTML();
+    if (mode === 'city' && cEdit) return cityEditHTML();
     const common = `
       <label>Map title</label><input data-k="name" value="${esc(o.name)}" placeholder="${mode === 'world' ? 'e.g. The Shattered Coast' : 'e.g. Saltmere'}">
       <label>Seed <span class="muted">— same seed, same map</span></label>
@@ -85,22 +110,33 @@ export function render(main) {
     const city = `
       <label>Size</label>
       <div class="seg small">${['village', 'town', 'city', 'capital'].map(s => `<button data-size="${s}" class="${o.size === s ? 'on' : ''}">${s[0].toUpperCase() + s.slice(1)}</button>`).join('')}</div>
+      <label>Area shown <span class="muted">— how much countryside</span></label>
+      <select data-k="area">${CITY_AREAS.map(([v, l]) => `<option value="${v}" ${(o.area || 'normal') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <label>Features</label>
       <div class="checks">${[['walls', 'City walls'], ['river', 'River'], ['coast', 'Harbour & sea'], ['castle', 'Castle'], ['temple', 'Temple']].map(([k, l]) =>
         `<label class="check"><input type="checkbox" data-k="${k}" ${o[k] ? 'checked' : ''}> ${l}</label>`).join('')}</div>`;
+    const hasEdits = mode === 'world' ? ed : ced;
     return `
       <div class="seg" id="mode"><button data-mode="world" class="${mode === 'world' ? 'on' : ''}">🌍 World</button><button data-mode="city" class="${mode === 'city' ? 'on' : ''}">🏰 City</button></div>
-      ${ed && mode === 'world' ? `<p class="small edit-note">✏️ This map has hand edits. Changing the options below starts a fresh map.</p>` : ''}
+      ${hasEdits ? `<p class="small edit-note">✏️ This map has hand edits. Changing the options below starts a fresh map.</p>` : ''}
       ${common}
       ${mode === 'world' ? world : city}
       <label>Style</label><div class="swatches">${styleButtons(o)}</div>
-      ${mode === 'world' ? `<button id="startedit" class="edit-btn">✏️ ${ed ? 'Keep editing' : 'Edit this map'} <span class="muted small">— brushes, biomes, realms, towns</span></button>` : ''}
+      <button id="startedit" class="edit-btn">✏️ ${hasEdits ? 'Keep editing' : 'Edit this map'} <span class="muted small">— ${mode === 'world' ? 'brushes, biomes, realms, towns' : 'buildings, roofs, walls, roads, trees'}</span></button>
       <div class="gen-actions">
         <button id="newmap">✨ Surprise me</button>
         <button class="primary" id="save">💾 ${editMapId ? 'Save' : 'Save to my maps'}</button>
       </div>
       ${link ? `<p class="small muted" style="margin:10px 0 0">Will open from the pin on <b>${esc(getMap(link.parent)?.name || 'your map')}</b>.</p>` : ''}`;
   }
+
+  const undoRow = () => `
+      <div class="row" style="margin-top:12px">
+        <button id="undo" ${undoStack.length ? '' : 'disabled'} title="Undo (Ctrl+Z)">↶ Undo</button>
+        <button id="redo" ${redoStack.length ? '' : 'disabled'} title="Redo (Ctrl+Y)">↷ Redo</button>
+        <button id="reset" class="shrink" title="Throw away all hand edits">⟲</button>
+      </div>
+      <div class="gen-actions"><button class="primary" id="save" style="grid-column:1/-1">💾 ${editMapId ? 'Save changes' : 'Save to my maps'}</button></div>`;
 
   function editHTML() {
     const t = memo.tool, o = memo.world;
@@ -126,37 +162,111 @@ export function render(main) {
       ${brush}${biome}${realm}${town}
       ${realms}
       <label>Style</label><div class="swatches">${styleButtons(o)}</div>
-      <div class="row" style="margin-top:12px">
-        <button id="undo" ${undoStack.length ? '' : 'disabled'} title="Undo (Ctrl+Z)">↶ Undo</button>
-        <button id="redo" ${redoStack.length ? '' : 'disabled'} title="Redo (Ctrl+Y)">↷ Redo</button>
-        <button id="reset" class="shrink" title="Throw away all hand edits">⟲</button>
-      </div>
-      <div class="gen-actions"><button class="primary" id="save" style="grid-column:1/-1">💾 ${editMapId ? 'Save changes' : 'Save to my maps'}</button></div>`;
+      ${undoRow()}`;
+  }
+
+  function cityEditHTML() {
+    const t = memo.ctool, o = memo.city;
+    const tools = CITY_TOOLS.map(([g, list]) => `<div class="tg-label">${g}</div><div class="tools">${list.map(([id, ic, lb]) =>
+      `<button class="tool ${t.tool === id ? 'on' : ''}" data-ctool="${id}" title="${esc(CITY_HELP[id])}"><span>${ic}</span>${lb}</button>`).join('')}</div>`).join('');
+    const brushTools = ['bld-add', 'bld-del', 'bld-paint', 'tree-add', 'tree-del'];
+    const size = brushTools.includes(t.tool) ? `<label>Brush size <span class="val">${t.size}</span></label><input type="range" data-ct="size" min="15" max="260" step="5" value="${t.size}">` : '';
+    const roof = ['bld-add', 'bld-paint'].includes(t.tool) ? `<label>Roof colour</label><div class="color-row">
+        <button class="swatch-dot style-dot ${!t.roof ? 'on' : ''}" data-roof="" title="Use the map style’s colours">✦</button>
+        ${ROOF_SWATCHES.map(c => `<button class="swatch-dot ${t.roof === c ? 'on' : ''}" data-roof="${c}" style="background:${c}"></button>`).join('')}
+        <input type="color" id="c-roof" value="${t.roof || '#cc5c46'}" title="Any colour"></div>` : '';
+    const road = ['road', 'road-paint'].includes(t.tool) ? `<label>Road colour</label><div class="color-row">
+        <button class="swatch-dot style-dot ${!t.road ? 'on' : ''}" data-road="" title="Use the map style’s colour">✦</button>
+        ${ROAD_SWATCHES.map(c => `<button class="swatch-dot ${t.road === c ? 'on' : ''}" data-road="${c}" style="background:${c}"></button>`).join('')}
+        <input type="color" id="c-road" value="${t.road || '#c2beb6'}" title="Any colour"></div>
+        ${t.tool === 'road-paint' ? '<button class="small" id="c-allroads" style="margin-top:8px">Colour every road</button>' : ''}` : '';
+    const wall = t.tool === 'wall' ? `<div class="row" style="margin-top:8px"><button class="small" id="c-nowall" ${ced.wall ? '' : 'disabled'}>Remove the wall</button></div>` : '';
+    const drawing = poly ? `<div class="row" style="margin-top:8px"><button class="small primary" id="c-finish">Finish ${t.tool === 'wall' ? 'wall' : 'road'}</button><button class="small" id="c-cancel">Cancel</button></div>` : '';
+    return `
+      <div class="edit-head"><b>✏️ Editing ${esc(o.name || 'city')}</b><button class="small" id="enddone">Done</button></div>
+      ${tools}
+      <p class="small muted tool-help">${esc(CITY_HELP[t.tool])}</p>
+      ${size}${roof}${road}${wall}${drawing}
+      <p class="small muted" style="margin:10px 0 0">${ced.buildings.length} buildings · ${ced.roads.length} roads · ${ced.trees.length} trees</p>
+      <label>Style</label><div class="swatches">${styleButtons(o)}</div>
+      ${undoRow()}`;
   }
 
   main.innerHTML = `
-    <div class="page-head"><h1>Map generator</h1><span class="muted small">Generate a world or city, edit it by hand, then save it with pins and entries ready to go.</span></div>
+    <div class="page-head gen-head"><h1>Map generator</h1><span class="muted small">Scroll to zoom · drag to move${''} · edit by hand, then save with pins and entries ready to go.</span></div>
     <div class="gen-shell">
       <div class="card gen-controls" id="ctl"></div>
-      <div class="gen-preview" id="pv"><div class="gen-busy" id="busy"><div class="spinner"></div><span>Drawing your map…</span></div></div>
+      <div class="gen-preview" id="pv">
+        <div class="zoom-btns"><button id="z-in" title="Zoom in">＋</button><button id="z-out" title="Zoom out">－</button><button id="z-fit" title="Fit to screen">⤢</button></div>
+        <div class="gen-busy" id="busy"><div class="spinner"></div><span>Drawing your map…</span></div>
+      </div>
     </div>`;
   const ctl = main.querySelector('#ctl'), pv = main.querySelector('#pv'), busyEl = main.querySelector('#busy');
-  pv.prepend(canvas); pv.append(ov, cur, mark);
+  pv.prepend(zw);
 
-  const drawControls = () => { ctl.innerHTML = controlsHTML(); pv.classList.toggle('editing', editing); pv.dataset.tool = editing ? memo.tool.tool : ''; drawMark(); };
+  const drawControls = () => {
+    ctl.innerHTML = controlsHTML();
+    pv.classList.toggle('editing', editing());
+    pv.dataset.tool = editing() ? (memo.mode === 'world' ? memo.tool.tool : memo.ctool.tool) : '';
+    drawMark();
+  };
+
+  // ---------- zoom & pan ----------
+  const view = { k: 1, x: 0, y: 0, fitted: true, fitK: 1 };
+  const applyView = () => { zw.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.k})`; };
+  function fit() {
+    const r = pv.getBoundingClientRect();
+    const h = BW * (canvas.height / canvas.width || 0.625);
+    zw.style.height = h + 'px';
+    view.fitK = view.k = Math.min(r.width / BW, r.height / h) * 0.98;
+    view.x = (r.width - BW * view.k) / 2; view.y = (r.height - h * view.k) / 2;
+    view.fitted = true; applyView();
+  }
+  function zoomAt(f, cx, cy) {
+    const r = pv.getBoundingClientRect();
+    if (cx == null) { cx = r.width / 2; cy = r.height / 2; }
+    const nk = Math.min(view.fitK * 14, Math.max(view.fitK * 0.35, view.k * f));
+    view.x = cx - (cx - view.x) * (nk / view.k); view.y = cy - (cy - view.y) * (nk / view.k);
+    view.k = nk; view.fitted = false; applyView();
+  }
+  pv.addEventListener('wheel', ev => {
+    ev.preventDefault();
+    const r = pv.getBoundingClientRect();
+    zoomAt(Math.exp(-ev.deltaY * 0.0015), ev.clientX - r.left, ev.clientY - r.top);
+  }, { passive: false });
+  main.querySelector('#z-in').onclick = () => zoomAt(1.4);
+  main.querySelector('#z-out').onclick = () => zoomAt(1 / 1.4);
+  main.querySelector('#z-fit').onclick = fit;
+  let pan = null, spaceDown = false;
+  pv.addEventListener('pointerdown', ev => {
+    const wantPan = ev.button === 1 || ev.button === 2 || spaceDown || (ev.button === 0 && !editing());
+    if (!wantPan || ev.target.closest('.zoom-btns')) return;
+    ev.preventDefault(); ev.stopPropagation();
+    pv.setPointerCapture(ev.pointerId);
+    pan = { sx: ev.clientX, sy: ev.clientY, x: view.x, y: view.y };
+    pv.classList.add('panning');
+  }, true);
+  pv.addEventListener('pointermove', ev => {
+    if (!pan) return;
+    view.x = pan.x + ev.clientX - pan.sx; view.y = pan.y + ev.clientY - pan.sy; view.fitted = false; applyView();
+  });
+  const endPan = () => { if (pan) { pan = null; pv.classList.remove('panning'); } };
+  pv.addEventListener('pointerup', endPan); pv.addEventListener('pointercancel', endPan);
+  pv.addEventListener('contextmenu', ev => ev.preventDefault());
 
   async function regen(force = false) {
     if (busy) { pending = true; return; }
     const mode = memo.mode, o = memo[mode];
-    const key = mode + JSON.stringify({ ...o, style: '', name: '' }) + (mode === 'world' && ed ? ':e' + edVersion : '');
+    const key = mode + JSON.stringify({ ...o, style: '', name: '' }) + (mode === 'world' && ed ? ':e' + edVersion : '') + (mode === 'city' && ced ? ':c' + cVersion : '');
     busy = true;
-    busyEl.classList.toggle('soft', !!(editing || ed));
+    busyEl.classList.toggle('soft', !!(editing() || ed || ced || data));
     busyEl.classList.add('on');
     await ensureFonts();
     await new Promise(r => setTimeout(r, 30));
+    const prevW = canvas.width, prevH = canvas.height;
     try {
       if (force || key !== lastKey || !data || data.mode !== mode) {
-        data = { mode, gen: mode === 'world' ? generateWorld(o, ed) : generateCity(o) };
+        data = { mode, gen: mode === 'world' ? generateWorld(o, ed) : (ced || generateCity(o)) };
         lastKey = key;
       }
       data.gen.o.name = o.name;
@@ -165,29 +275,45 @@ export function render(main) {
     } catch (e) { console.error(e); toast('Something went wrong drawing that map — try another seed'); }
     busy = false; busyEl.classList.remove('on');
     ov.classList.remove('on');
+    if (view.fitted || prevW !== canvas.width || prevH !== canvas.height) fit();
     drawMark();
     if (pending) { pending = false; regen(); }
   }
   const schedule = (ms = 350) => { clearTimeout(timer); timer = setTimeout(() => regen(), ms); };
 
-  // ---------- editing ----------
-  const pushUndo = () => { undoStack.push(cloneEdit(ed)); if (undoStack.length > 30) undoStack.shift(); redoStack = []; };
-  const changed = () => { edVersion++; schedule(60); };
+  // ---------- editing (shared) ----------
+  const snap = () => memo.mode === 'world' ? cloneEdit(ed) : cloneCity(ced);
+  const restore = st => { if (memo.mode === 'world') ed = st; else ced = st; };
+  const pushUndo = () => { undoStack.push(snap()); if (undoStack.length > 30) undoStack.shift(); redoStack = []; };
+  const changed = () => { if (memo.mode === 'world') edVersion++; else { cVersion++; ced.o = { ...ced.o }; } schedule(60); };
   function startEditing() {
-    if (!data || data.mode !== 'world') return;
-    if (!ed) { ed = makeEditState(data.gen); edVersion++; lastKey = ''; }
-    editing = true; selTown = -1;
+    if (!data) return;
+    if (memo.mode === 'world') {
+      if (data.mode !== 'world') return;
+      if (!ed) { ed = makeEditState(data.gen); edVersion++; lastKey = ''; }
+      wEdit = true; selTown = -1;
+    } else {
+      if (data.mode !== 'city') return;
+      if (!ced) { ced = cloneCity(data.gen); cVersion++; lastKey = ''; }
+      cEdit = true;
+    }
     drawControls();
   }
-  function discardEdits() { ed = null; editing = false; undoStack = []; redoStack = []; selTown = -1; edVersion++; }
-  function undo() { if (!undoStack.length) return; redoStack.push(cloneEdit(ed)); ed = undoStack.pop(); selTown = -1; drawControls(); changed(); }
-  function redo() { if (!redoStack.length) return; undoStack.push(cloneEdit(ed)); ed = redoStack.pop(); selTown = -1; drawControls(); changed(); }
-  const gridPos = ev => { const rc = canvas.getBoundingClientRect(); return [(ev.clientX - rc.left) / rc.width * GRID_W - 0.5, (ev.clientY - rc.top) / rc.height * GRID_H - 0.5]; };
-  const screenPos = (gx, gy) => [(gx + 0.5) / GRID_W * canvas.clientWidth, (gy + 0.5) / GRID_H * canvas.clientHeight];
+  function discardEdits(mode = memo.mode) {
+    if (mode === 'world') { ed = null; wEdit = false; selTown = -1; edVersion++; }
+    else { ced = null; cEdit = false; poly = null; drawPoly(); cVersion++; }
+    undoStack = []; redoStack = [];
+  }
+  function undo() { if (!undoStack.length) return; redoStack.push(snap()); restore(undoStack.pop()); selTown = -1; poly = null; drawPoly(); drawControls(); changed(); }
+  function redo() { if (!redoStack.length) return; undoStack.push(snap()); restore(redoStack.pop()); selTown = -1; drawControls(); changed(); }
+  const relPos = ev => { const rc = canvas.getBoundingClientRect(); return [(ev.clientX - rc.left) / rc.width, (ev.clientY - rc.top) / rc.height]; };
+  const gridPos = ev => { const [fx, fy] = relPos(ev); return [fx * GRID_W - 0.5, fy * GRID_H - 0.5]; };
+  const cityPos = ev => { const [fx, fy] = relPos(ev); return [fx * canvas.width, fy * canvas.height]; };
+  const lay = () => [BW, BW * canvas.height / canvas.width];
   function drawMark() {
-    const tw = editing && memo.tool.tool === 'town' && selTown >= 0 ? ed?.towns[selTown] : null;
+    const tw = memo.mode === 'world' && wEdit && memo.tool.tool === 'town' && selTown >= 0 ? ed?.towns[selTown] : null;
     mark.style.display = tw ? 'block' : 'none';
-    if (tw) { const [x, y] = screenPos(tw.gx, tw.gy); mark.style.left = x + 'px'; mark.style.top = y + 'px'; }
+    if (tw) { const [lw, lh] = lay(); mark.style.left = (tw.gx + 0.5) / GRID_W * lw + 'px'; mark.style.top = (tw.gy + 0.5) / GRID_H * lh + 'px'; }
   }
   function nearestTown(gx, gy, maxD) {
     let best = -1, bd = maxD;
@@ -208,18 +334,49 @@ export function render(main) {
       tw.capital = false; delete tw.rid;
     }
   }
+  // wall / road outline being drawn (city)
+  function drawPoly(hover) {
+    cov.width = canvas.width || 2000; cov.height = canvas.height || 1600;
+    const c = cov.getContext('2d');
+    c.clearRect(0, 0, cov.width, cov.height);
+    if (!poly || !poly.length) return;
+    const pts = hover ? [...poly, hover] : poly;
+    c.lineJoin = c.lineCap = 'round';
+    c.beginPath(); pts.forEach((p, i) => i ? c.lineTo(...p) : c.moveTo(...p));
+    if (memo.ctool.tool === 'wall' && hover && poly.length > 2) c.lineTo(...poly[0]);
+    c.strokeStyle = 'rgba(0,0,0,.55)'; c.lineWidth = 14; c.stroke();
+    c.strokeStyle = memo.ctool.tool === 'wall' ? '#d8d2c4' : (memo.ctool.road || '#c2beb6'); c.lineWidth = 8; c.stroke();
+    for (const [i, p] of poly.entries()) { c.beginPath(); c.arc(p[0], p[1], i === 0 && memo.ctool.tool === 'wall' ? 11 : 7, 0, Math.PI * 2); c.fillStyle = i === 0 ? '#d4a24c' : '#fff'; c.fill(); c.strokeStyle = '#000'; c.lineWidth = 2; c.stroke(); }
+  }
+  function finishPoly() {
+    if (!poly) return;
+    const t = memo.ctool.tool, pts = poly; poly = null; drawPoly();
+    if (t === 'wall' && pts.length >= 3) { pushUndo(); setCityWall(ced, pts); changed(); }
+    else if (t === 'road' && pts.length >= 2) { pushUndo(); addCityRoad(ced, pts); if (memo.ctool.road) ced.roadColors[ced.roads.length - 1] = memo.ctool.road; changed(); }
+    drawControls();
+  }
 
   let stroke = null;
   canvas.addEventListener('pointermove', ev => {
-    if (!editing) return;
-    const rc = canvas.getBoundingClientRect(), t = memo.tool;
-    if (t.tool !== 'town') {
-      const d = t.size * 2 / GRID_W * rc.width;
+    if (!editing() || pan) return;
+    const rc = canvas.getBoundingClientRect(), [lw] = lay();
+    const showCur = memo.mode === 'world' ? memo.tool.tool !== 'town' : ['bld-add', 'bld-del', 'bld-paint', 'tree-add', 'tree-del'].includes(memo.ctool.tool);
+    if (showCur) {
+      const d = memo.mode === 'world' ? memo.tool.size * 2 / GRID_W * lw : memo.ctool.size * 2 / canvas.width * lw;
       cur.style.width = cur.style.height = d + 'px';
-      cur.style.left = (ev.clientX - rc.left) + 'px'; cur.style.top = (ev.clientY - rc.top) + 'px';
+      cur.style.left = (ev.clientX - rc.left) / rc.width * lw + 'px'; cur.style.top = (ev.clientY - rc.top) / rc.width * lw + 'px';
       cur.style.display = 'block';
+    } else cur.style.display = 'none';
+    if (memo.mode === 'city') {
+      if (poly) drawPoly(cityPos(ev));
+      if (stroke?.kind === 'cbrush') {
+        const [x, y] = cityPos(ev), step = Math.max(6, memo.ctool.size * 0.35);
+        if (Math.hypot(x - stroke.x, y - stroke.y) >= step) { if (cityDab(x, y)) stroke.dirty = true; stroke.x = x; stroke.y = y; }
+      }
+      return;
     }
     if (!stroke) return;
+    const t = memo.tool;
     const [gx, gy] = gridPos(ev);
     if (stroke.kind === 'brush') {
       const dist = Math.hypot(gx - stroke.x, gy - stroke.y), step = Math.max(0.6, t.size * 0.25);
@@ -240,10 +397,39 @@ export function render(main) {
     const t = memo.tool;
     applyBrush(ed, t.tool, gx, gy, t.size, t.strength, t.tool === 'biome' ? +t.biome : t.tool === 'realm' ? +t.realm : 0);
   };
+  const cityDab = (x, y) => {
+    const t = memo.ctool;
+    const ok = cityBrush(ced, t.tool, x, y, t.size, t.roof || null);
+    if (ok) { const c = cov.getContext('2d'); c.beginPath(); c.arc(x, y, t.size, 0, Math.PI * 2); c.fillStyle = t.tool.endsWith('del') ? 'rgba(255,80,60,.18)' : 'rgba(255,255,255,.18)'; c.fill(); }
+    return ok;
+  };
   canvas.addEventListener('pointerdown', ev => {
-    if (!editing || ev.button !== 0) return;
+    if (!editing() || ev.button !== 0 || spaceDown) return;
     ev.preventDefault();
     canvas.setPointerCapture(ev.pointerId);
+    if (memo.mode === 'city') {
+      const t = memo.ctool, p = cityPos(ev);
+      if (t.tool === 'wall' || t.tool === 'road') {
+        if (!poly) poly = [];
+        if (t.tool === 'wall' && poly.length > 2 && Math.hypot(p[0] - poly[0][0], p[1] - poly[0][1]) < 24 / (canvas.getBoundingClientRect().width / canvas.width)) { finishPoly(); return; }
+        const last = poly[poly.length - 1];
+        if (!last || Math.hypot(p[0] - last[0], p[1] - last[1]) > 4) poly.push(p);
+        drawPoly(); if (poly.length === 1) drawControls();
+        return;
+      }
+      if (t.tool === 'road-paint' || t.tool === 'road-del') {
+        const tol = 18 / (canvas.getBoundingClientRect().width / canvas.width);
+        const i = nearestRoad(ced, p, tol + ced.roadW / 2);
+        if (i < 0) { toast('Click right on a road'); return; }
+        pushUndo();
+        if (t.tool === 'road-del') removeCityRoad(ced, i); else ced.roadColors[i] = t.road || null;
+        drawControls(); changed(); return;
+      }
+      pushUndo();
+      drawPoly();
+      stroke = { kind: 'cbrush', x: p[0], y: p[1], dirty: cityDab(p[0], p[1]) };
+      return;
+    }
     const [gx, gy] = gridPos(ev), t = memo.tool;
     if (t.tool === 'town') {
       const rc = canvas.getBoundingClientRect();
@@ -265,34 +451,46 @@ export function render(main) {
     drawEditPreview(ed, ov, data?.gen);
     ov.classList.add('on');
   });
+  canvas.addEventListener('dblclick', ev => { if (memo.mode === 'city' && cEdit && poly) { ev.preventDefault(); finishPoly(); } });
   const endStroke = () => {
     if (!stroke) return;
     const s0 = stroke; stroke = null;
+    if (s0.kind === 'cbrush') { if (s0.dirty) { drawControls(); changed(); } else { undoStack.pop(); drawPoly(); } return; }
     if (s0.kind === 'brush' || s0.moved) { drawControls(); changed(); }
   };
   canvas.addEventListener('pointerup', endStroke);
   canvas.addEventListener('pointercancel', endStroke);
-  const onResize = () => drawMark();
+  const onResize = () => { if (view.fitted) fit(); drawMark(); };
   window.addEventListener('resize', onResize);
+  const typing = ev => ev.target.matches?.('input,textarea,select');
   const onKey = ev => {
-    if (!editing || !(ev.ctrlKey || ev.metaKey) || ev.altKey || ev.target.matches?.('input,textarea,select')) return;
+    if (ev.code === 'Space' && !typing(ev)) { if (!spaceDown) { spaceDown = true; pv.classList.add('space-pan'); } ev.preventDefault(); return; }
+    if (!editing() || typing(ev)) return;
+    if (poly && ev.key === 'Enter') { ev.preventDefault(); finishPoly(); return; }
+    if (poly && ev.key === 'Escape') { ev.preventDefault(); ev.stopImmediatePropagation(); poly = null; drawPoly(); drawControls(); return; }
+    if (!(ev.ctrlKey || ev.metaKey) || ev.altKey) return;
     const k = ev.key.toLowerCase();
     if (k === 'z' && !ev.shiftKey) { ev.preventDefault(); ev.stopImmediatePropagation(); undo(); }
     else if (k === 'y' || (k === 'z' && ev.shiftKey)) { ev.preventDefault(); ev.stopImmediatePropagation(); redo(); }
   };
+  const onKeyUp = ev => { if (ev.code === 'Space') { spaceDown = false; pv.classList.remove('space-pan'); } };
   window.addEventListener('keydown', onKey, true);
+  window.addEventListener('keyup', onKeyUp, true);
 
   // ---------- controls ----------
   let nameUndoArmed = true;
   ctl.addEventListener('input', e => {
     const t = e.target;
-    if (editing) {
-      if (t.dataset.t) {
-        memo.tool[t.dataset.t] = t.type === 'range' ? +t.value : t.value;
+    if (editing()) {
+      if (t.dataset.t || t.dataset.ct) {
+        const key = t.dataset.t || t.dataset.ct, tool = t.dataset.t ? memo.tool : memo.ctool;
+        tool[key] = t.type === 'range' ? +t.value : t.value;
         const val = t.previousElementSibling?.querySelector?.('.val');
-        if (val) val.textContent = t.dataset.t === 'strength' ? Math.round(+t.value * 100) + '%' : t.value;
+        if (val) val.textContent = key === 'strength' ? Math.round(+t.value * 100) + '%' : t.value;
         return;
       }
+      if (t.id === 'c-roof') { memo.ctool.roof = t.value; ctl.querySelectorAll('[data-roof]').forEach(x => x.classList.remove('on')); return; }
+      if (t.id === 'c-road') { memo.ctool.road = t.value; ctl.querySelectorAll('[data-road]').forEach(x => x.classList.remove('on')); return; }
       if (t.id === 'tw-name' && selTown >= 0) { if (nameUndoArmed) { pushUndo(); nameUndoArmed = false; } ed.towns[selTown].name = t.value; changed(); return; }
       if (t.dataset.rn != null) { const rl = ed.realms.find(x => x.id === +t.dataset.rn); if (rl) { rl.name = t.value; changed(); } return; }
       if (t.dataset.rc != null) { const rl = ed.realms.find(x => x.id === +t.dataset.rc); if (rl) { rl.color = t.value; changed(); } return; }
@@ -300,31 +498,42 @@ export function render(main) {
     }
     const k = t.dataset.k; if (!k) return;
     const o = memo[memo.mode];
-    if (memo.mode === 'world' && ed && !['name'].includes(k)) {
+    const hasEdits = memo.mode === 'world' ? ed : ced;
+    if (hasEdits && k !== 'name') {
       if (!confirm('Changing this starts a fresh map and throws away your hand edits. Continue?')) { drawControls(); return; }
       discardEdits(); drawControls();
     }
     if (t.type === 'checkbox') o[k] = t.checked;
     else o[k] = t.dataset.num != null ? +t.value : t.value;
+    if (k === 'name' && ced) ced.o.name = t.value;
     const val = t.previousElementSibling?.querySelector?.('.val');
     if (val && k === 'land') val.textContent = Math.round(o.land * 100) + '% land';
     if (val && k === 'rivers') val.textContent = o.rivers < 0.3 ? 'Few' : o.rivers < 0.7 ? 'Some' : 'Many';
+    if (k === 'area') view.fitted = true;
     schedule(t.type === 'range' || t.type === 'text' || t.type === 'number' ? 450 : 50);
   });
   ctl.addEventListener('change', e => {
     const t = e.target;
-    if (!editing) return;
+    if (!editing()) return;
     if (t.id === 'tw-cap' && selTown >= 0) { pushUndo(); makeCapital(ed.towns[selTown], t.checked); drawControls(); changed(); }
     if (t.dataset.t === 'biome' || t.dataset.t === 'realm') memo.tool[t.dataset.t] = +t.value;
+    if (t.id === 'c-roof' || t.id === 'c-road') drawControls();
   });
   ctl.addEventListener('focusin', e => { if (e.target.id === 'tw-name') nameUndoArmed = true; });
   ctl.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
     const o = memo[memo.mode];
     if (b.dataset.tool) { memo.tool.tool = b.dataset.tool; if (b.dataset.tool !== 'town') selTown = -1; if (b.dataset.tool === 'realm' && +memo.tool.realm === -2 && ed.realms[0]) memo.tool.realm = ed.realms[0].id; drawControls(); }
-    else if (b.dataset.style) { o.style = b.dataset.style; drawControls(); regen(); }
+    else if (b.dataset.ctool) { if (poly) { poly = null; drawPoly(); } memo.ctool.tool = b.dataset.ctool; drawControls(); }
+    else if (b.dataset.roof != null) { memo.ctool.roof = b.dataset.roof; drawControls(); }
+    else if (b.dataset.road != null) { memo.ctool.road = b.dataset.road; drawControls(); }
+    else if (b.id === 'c-allroads') { pushUndo(); ced.roadColors = ced.roads.map(() => memo.ctool.road || null); changed(); }
+    else if (b.id === 'c-nowall') { pushUndo(); setCityWall(ced, null); drawControls(); changed(); }
+    else if (b.id === 'c-finish') finishPoly();
+    else if (b.id === 'c-cancel') { poly = null; drawPoly(); drawControls(); }
+    else if (b.dataset.style) { o.style = b.dataset.style; if (ced && memo.mode === 'city') ced.o = { ...ced.o, style: o.style }; drawControls(); regen(); }
     else if (b.id === 'startedit') startEditing();
-    else if (b.id === 'enddone') { editing = false; cur.style.display = 'none'; drawControls(); }
+    else if (b.id === 'enddone') { wEdit = cEdit = false; poly = null; drawPoly(); cur.style.display = 'none'; drawControls(); }
     else if (b.id === 'undo') undo();
     else if (b.id === 'redo') redo();
     else if (b.id === 'reset') { if (confirm('Throw away every hand edit and go back to the generated map?')) { discardEdits(); drawControls(); regen(true); } }
@@ -332,14 +541,20 @@ export function render(main) {
     else if (b.id === 'tw-del' && selTown >= 0) { pushUndo(); makeCapital(ed.towns[selTown], false); ed.towns.splice(selTown, 1); selTown = -1; drawControls(); changed(); }
     else if (b.dataset.mode) {
       if (b.dataset.mode === memo.mode) return;
-      if (ed && b.dataset.mode === 'city' && !confirm('Switching to a city map throws away your hand edits to this world map. Continue?')) return;
-      if (b.dataset.mode === 'city') discardEdits();
-      memo.mode = b.dataset.mode; drawControls(); regen();
+      const hasEdits = memo.mode === 'world' ? ed : ced;
+      if (hasEdits && !confirm(`Switching to a ${b.dataset.mode} map throws away your hand edits to this ${memo.mode} map. Continue?`)) return;
+      discardEdits();
+      memo.mode = b.dataset.mode; view.fitted = true; drawControls(); regen();
     }
-    else if (b.dataset.size) { o.size = b.dataset.size; if (o.size === 'village') { o.walls = false; o.castle = false; } drawControls(); regen(); }
+    else if (b.dataset.size) {
+      if (ced && !confirm('This starts a fresh map and throws away your hand edits. Continue?')) return;
+      if (ced) discardEdits();
+      o.size = b.dataset.size; if (o.size === 'village') { o.walls = false; o.castle = false; } drawControls(); regen();
+    }
     else if (b.id === 'reroll' || b.id === 'newmap') {
-      if (memo.mode === 'world' && ed && !confirm('This starts a fresh map and throws away your hand edits. Continue?')) return;
-      if (memo.mode === 'world') discardEdits();
+      const hasEdits = memo.mode === 'world' ? ed : ced;
+      if (hasEdits && !confirm('This starts a fresh map and throws away your hand edits. Continue?')) return;
+      discardEdits();
       o.seed = randomSeed();
       if (b.id === 'newmap') {
         const rr = rng(o.seed + ':opts');
@@ -355,7 +570,7 @@ export function render(main) {
     const mode = data.mode, o = memo[mode];
     const maps = W().maps;
     const isWorld = mode === 'world';
-    const existing = isWorld && editMapId ? getMap(editMapId) : null;
+    const existing = editMapId ? getMap(editMapId) : null;
     openModal(`<h2>Save map</h2>
       ${existing ? `<div class="seg" id="smode" style="margin-bottom:8px"><button data-sm="update" class="on">Update “${esc(existing.name)}”</button><button data-sm="new">Save as a new map</button></div>` : ''}
       <label>Map name</label><input id="sn" value="${esc(existing?.name || o.name || (isWorld ? 'World map' : 'City map'))}">
@@ -405,11 +620,13 @@ export function render(main) {
     if (isWorld) {
       const state = ed || makeEditState(data.gen);
       gen = { kind: 'world', edit: await A.storeBlob(await editToBlob(state, { ...memo.world })), style: memo.world.style };
+    } else {
+      gen = { kind: 'city', edit: await A.storeBlob(await cityToBlob(ced || data.gen, { ...memo.city })), style: memo.city.style };
     }
     if (opts.update) {
       const map = opts.update;
       map.name = opts.name; map.image = pic.ref; map.w = canvas.width; map.h = canvas.height; map.gen = gen;
-      map.scale = { pxPerUnit: res.pxPerUnit, unit: 'miles' };
+      map.scale = { pxPerUnit: res.pxPerUnit, unit: isWorld ? 'miles' : 'feet' };
       // move pins that match a town, add pins for new towns, leave everything else alone
       const pinName = p => (p.label || getEntry(p.entryId)?.name || '').toLowerCase();
       for (const p of res.pins) {
@@ -419,9 +636,9 @@ export function render(main) {
         let ent = null;
         if (opts.entries) {
           ent = w.entries.find(x => x.name.toLowerCase() === p.name.toLowerCase());
-          if (!ent) { ent = newEntry('location', p.name); ent.summary = `${p.capital ? 'Capital' : p.port ? 'Port town' : 'Town'}${p.realm ? ' in ' + p.realm : ''}.`; ent.tags = ['generated']; }
+          if (!ent) { ent = newEntry('location', p.name); ent.summary = isWorld ? `${p.capital ? 'Capital' : p.port ? 'Port town' : 'Town'}${p.realm ? ' in ' + p.realm : ''}.` : `${p.kind === 'district' ? 'A district' : 'A landmark'} of ${opts.name}.`; ent.tags = ['generated']; }
         }
-        map.pins.push({ id: uid(), x: p.x, y: p.y, label: ent ? '' : p.name, entryId: ent?.id || '', submapId: '', color: p.capital ? '#d4a24c' : '', quiet: true });
+        map.pins.push({ id: uid(), x: p.x, y: p.y, label: ent ? '' : p.name, entryId: ent?.id || '', submapId: '', color: isWorld ? (p.capital ? '#d4a24c' : '') : (p.kind === 'district' ? '#a5a5c7' : ''), quiet: true });
       }
       save();
       return map;
@@ -492,13 +709,20 @@ export function render(main) {
         if (!m?.gen?.edit) throw new Error('not editable');
         const blob = await A.getBlob(m.gen.edit);
         if (!blob) throw new Error('missing');
-        const st = await editFromBlob(blob);
-        memo.mode = 'world';
-        memo.world = { ...WORLD_DEFAULTS, ...st.o, name: st.o.name || m.name };
-        ed = st.edit; editing = true; edVersion++;
+        if (m.gen.kind === 'city') {
+          const st = await cityFromBlob(blob);
+          memo.mode = 'city';
+          memo.city = { ...CITY_DEFAULTS, ...st.o, name: st.o.name || m.name };
+          ced = st.data; cEdit = true; cVersion++;
+        } else {
+          const st = await editFromBlob(blob);
+          memo.mode = 'world';
+          memo.world = { ...WORLD_DEFAULTS, ...st.o, name: st.o.name || m.name };
+          ed = st.edit; wEdit = true; edVersion++;
+        }
       } catch (e) {
         console.error(e);
-        toast('Couldn’t open that map for editing — its terrain file is missing');
+        toast('Couldn’t open that map for editing — its map file is missing');
         editMapId = '';
       }
     }
@@ -506,5 +730,5 @@ export function render(main) {
     regen();
   }
   boot();
-  return () => { clearTimeout(timer); window.removeEventListener('keydown', onKey, true); window.removeEventListener('resize', onResize); };
+  return () => { clearTimeout(timer); window.removeEventListener('keydown', onKey, true); window.removeEventListener('keyup', onKeyUp, true); window.removeEventListener('resize', onResize); };
 }

@@ -3,7 +3,9 @@ import { rng, makeNoise, chaikin, tracePath, polyArea, centroid, clipHalf, inset
   Labeler, haloText, spaced, mix, rgba, hexToRgb, drawCompass, drawScaleBar, drawFrame, drawCartouche, paperGrain } from './core.js';
 import { districtName, templeName } from './names.js';
 
-export const CITY_DEFAULTS = { seed: 'saltmere', name: '', size: 'town', walls: true, river: true, coast: false, castle: true, temple: true, style: 'parchment' };
+export const CITY_DEFAULTS = { seed: 'saltmere', name: '', size: 'town', area: 'normal', walls: true, river: true, coast: false, castle: true, temple: true, style: 'parchment' };
+export const CITY_AREAS = [['close', 'Close up'], ['normal', 'Normal'], ['wide', 'Wide'], ['vast', 'Whole valley']];
+const AREA_F = { close: 1.3, normal: 1, wide: 0.72, vast: 0.52 };
 export const CITY_W = 2000, CITY_H = 1600;
 const SIZES = { village: 9, town: 22, city: 40, capital: 64 };
 
@@ -14,7 +16,7 @@ export function generateCity(opts) {
   const W = CITY_W, H = CITY_H;
   const nInner = SIZES[o.size] || 22;
   const walls = o.walls && o.size !== 'village';
-  const R = H * (o.size === 'village' ? 0.22 : o.size === 'town' ? 0.27 : 0.31);
+  const R = H * (o.size === 'village' ? 0.22 : o.size === 'town' ? 0.27 : 0.31) * (AREA_F[o.area] || 1);
   const cx = W / 2 + r.range(-40, 40), cy = (o.coast ? H * 0.43 : H / 2) + r.range(-30, 30);
   const s = R / Math.sqrt(nInner);
 
@@ -260,7 +262,10 @@ export function generateCity(opts) {
   }
   if (o.coast && docks.length) labels.push({ name: 'The Docks', p: [cx, shoreY(cx) + 40], kind: 'landmark' });
 
-  return { o, W, H, R, s, cx, cy, cells, wall: walls ? wall : null, gates, roads, roadW, river, riverW, shore, buildings, fields, trees, bridges, docks, castle, labels, walls };
+  const rv = rng(o.seed + ':v');
+  for (const b of buildings) b.v = rv();
+  for (const t of trees) t.v = rv();
+  return { o, W, H, R, s, cx, cy, cells, wall: walls ? wall : null, gates, roads, roadW, river, riverW, shore, buildings, fields, trees, bridges, docks, castle, labels, walls, roadColors: [] };
 }
 
 const CSTYLES = {
@@ -327,11 +332,11 @@ export function renderCity(data, canvas, styleName = 'parchment') {
   }
 
   // main roads
-  for (const rd of data.roads) {
+  data.roads.forEach((rd, i) => {
     ctx.beginPath(); tracePath(ctx, rd);
     ctx.strokeStyle = rgba(S.ink, 0.55); ctx.lineWidth = data.roadW + 2; ctx.stroke();
-    ctx.strokeStyle = rgba(S.road); ctx.lineWidth = data.roadW; ctx.stroke();
-  }
+    ctx.strokeStyle = data.roadColors?.[i] || rgba(S.road); ctx.lineWidth = data.roadW; ctx.stroke();
+  });
 
   // plaza
   const plaza = data.cells.find(c => c.type === 'plaza');
@@ -363,7 +368,7 @@ export function renderCity(data, canvas, styleName = 'parchment') {
   for (const b of data.buildings) { ctx.beginPath(); tracePath(ctx, b.poly.map(p => [p[0] + 2, p[1] + 2]), true); ctx.fillStyle = shadow; ctx.fill(); }
   for (const b of data.buildings) {
     ctx.beginPath(); tracePath(ctx, b.poly, true);
-    ctx.fillStyle = rgba(b.kind === 'keep' ? S.keep : b.kind === 'temple' ? S.temple : mix(S.bld, [0, 0, 0], r.range(-0.06, 0.08)));
+    ctx.fillStyle = b.color ? b.color : rgba(b.kind === 'keep' ? S.keep : b.kind === 'temple' ? S.temple : mix(S.bld, [0, 0, 0], (b.v ?? r()) * 0.14 - 0.06));
     ctx.fill();
     ctx.strokeStyle = ink; ctx.lineWidth = b.kind === 'house' ? 1 : 2; ctx.stroke();
     if (b.kind !== 'house') {
@@ -395,7 +400,7 @@ export function renderCity(data, canvas, styleName = 'parchment') {
   // trees
   for (const t of data.trees.sort((a, b) => a.p[1] - b.p[1])) {
     ctx.beginPath(); ctx.arc(t.p[0] + 2, t.p[1] + 2, t.s, 0, Math.PI * 2); ctx.fillStyle = shadow; ctx.fill();
-    ctx.beginPath(); ctx.arc(t.p[0], t.p[1], t.s, 0, Math.PI * 2); ctx.fillStyle = rgba(mix(S.tree, [0, 0, 0], r.range(-0.05, 0.1))); ctx.fill();
+    ctx.beginPath(); ctx.arc(t.p[0], t.p[1], t.s, 0, Math.PI * 2); ctx.fillStyle = rgba(mix(S.tree, [0, 0, 0], (t.v ?? r()) * 0.15 - 0.05)); ctx.fill();
     ctx.strokeStyle = rgba(S.ink, 0.8); ctx.lineWidth = 1; ctx.stroke();
   }
 
@@ -546,8 +551,8 @@ function renderCityStorybook(data, canvas) {
     ctx.beginPath(); tracePath(ctx, poly, closed);
   };
   for (const rd of data.roads) { cobble(rd); ctx.strokeStyle = 'rgb(84,80,84)'; ctx.lineWidth = data.roadW + 5; ctx.stroke(); }
-  for (const rd of data.roads) {
-    cobble(rd); ctx.strokeStyle = 'rgb(194,190,182)'; ctx.lineWidth = data.roadW; ctx.stroke();
+  for (const [ri, rd] of data.roads.entries()) {
+    cobble(rd); ctx.strokeStyle = data.roadColors?.[ri] || 'rgb(194,190,182)'; ctx.lineWidth = data.roadW; ctx.stroke();
     for (const [off, col] of [[0, 'rgba(120,114,110,.55)'], [5, 'rgba(236,232,224,.6)']]) {
       cobble(rd); ctx.setLineDash([3, 7]); ctx.lineDashOffset = off; ctx.strokeStyle = col; ctx.lineWidth = data.roadW * 0.7; ctx.stroke();
     }
@@ -599,12 +604,14 @@ function renderCityStorybook(data, canvas) {
     let best = 0, dir = [1, 0];
     for (let i = 0; i < poly.length; i++) { const a = poly[i], q = poly[(i + 1) % poly.length], L = Math.hypot(q[0] - a[0], q[1] - a[1]); if (L > best) { best = L; dir = [(q[0] - a[0]) / L, (q[1] - a[1]) / L]; } }
     let col;
-    if (b.kind === 'keep') col = [112, 118, 140];
+    const bv = b.v ?? r();
+    if (b.color) col = hexToRgb(b.color);
+    else if (b.kind === 'keep') col = [112, 118, 140];
     else if (b.kind === 'temple') col = [86, 132, 170];
     else {
       const bias = nz.fbm(c[0] / 320, c[1] / 320, 2);
       const pool = bias > 0.12 ? [0, 1, 4, 8] : bias < -0.15 ? [3, 5, 6, 2] : [0, 2, 3, 1, 7, 4];
-      col = mix(ROOFS[pool[Math.floor(r() * pool.length)]], [255, 255, 255], r.range(-0.08, 0.1));
+      col = mix(ROOFS[pool[Math.floor(bv * pool.length) % pool.length]], [255, 255, 255], ((bv * 7.31) % 1) * 0.18 - 0.08);
     }
     ctx.beginPath(); tracePath(ctx, poly, true); ctx.fillStyle = rgba(col); ctx.fill();
     const n = [-dir[1], dir[0]];
@@ -652,7 +659,7 @@ function renderCityStorybook(data, canvas) {
   // lush tree clumps
   const TREE = [[58, 118, 64], [76, 140, 70], [50, 104, 74], [92, 150, 76]];
   for (const t of data.trees.sort((a, b) => a.p[1] - b.p[1])) {
-    const base = TREE[Math.floor(r() * TREE.length)], s0 = t.s * 1.25;
+    const base = TREE[Math.floor((t.v ?? r()) * TREE.length) % TREE.length], s0 = t.s * 1.25;
     const blobs = [[0, 0, 1], [-0.55, 0.25, 0.7], [0.55, 0.3, 0.72], [0, -0.45, 0.68]];
     ctx.beginPath(); for (const [dx, dy, rr] of blobs) { ctx.moveTo(t.p[0] + dx * s0 + rr * s0 + 4, t.p[1] + dy * s0 + 4); ctx.arc(t.p[0] + dx * s0 + 4, t.p[1] + dy * s0 + 4, rr * s0, 0, Math.PI * 2); }
     ctx.fillStyle = shadow; ctx.fill();
@@ -707,4 +714,144 @@ function renderCityStorybook(data, canvas) {
   ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
 
   return finishCity(ctx, data, S, ink, rgba(S.paper));
+}
+
+// ---------------- City editing ----------------
+export const ROOF_SWATCHES = ['#cc5c46', '#ba5040', '#de844a', '#d6a86a', '#c47054', '#687a9c', '#4c8e8e', '#926492', '#8a6a4a', '#e8dcc0'];
+export const ROAD_SWATCHES = ['#c2beb6', '#e8dcc0', '#b8946a', '#8c7a66', '#9a9aa4', '#d8c48c'];
+
+export function cloneCity(d) {
+  const c = JSON.parse(JSON.stringify(d));
+  c.roadColors = c.roadColors || [];
+  return c;
+}
+const cen = poly => centroid(poly);
+const nearestRoadDir = (d, p) => {
+  let best = Infinity, dir = null;
+  for (const rd of d.roads) for (let i = 1; i < rd.length; i++) {
+    const dd = distToSeg(p, rd[i - 1], rd[i]);
+    if (dd < best) { best = dd; dir = [rd[i][0] - rd[i - 1][0], rd[i][1] - rd[i - 1][1]]; }
+  }
+  return best < d.s * 1.6 && dir ? Math.atan2(dir[1], dir[0]) : null;
+};
+const onWater = (d, p) => {
+  if (d.shore) { for (let i = 1; i < d.shore.length; i++) if (d.shore[i][0] >= p[0]) { const a = d.shore[i - 1], b = d.shore[i]; if (p[1] > a[1] + (b[1] - a[1]) * (p[0] - a[0]) / ((b[0] - a[0]) || 1)) return true; break; } }
+  if (d.river && distToPolyline(p, d.river) < d.riverW / 2 + 4) return true;
+  return false;
+};
+const onRoad = (d, p, pad = 2) => d.roads.some(rd => distToPolyline(p, rd) < d.roadW / 2 + pad);
+
+// one dab of a city brush at (x, y) in map pixels
+export function cityBrush(d, tool, x, y, radius, value, rand = Math.random) {
+  const inR = p => Math.hypot(p[0] - x, p[1] - y) <= radius;
+  if (tool === 'bld-del') { const n = d.buildings.length; d.buildings = d.buildings.filter(b => !inR(cen(b.poly))); return d.buildings.length !== n; }
+  if (tool === 'bld-paint') { let ch = false; for (const b of d.buildings) if (inR(cen(b.poly))) { if (value) b.color = value; else delete b.color; ch = true; } return ch; }
+  if (tool === 'tree-del') { const n = d.trees.length; d.trees = d.trees.filter(t => !inR(t.p)); return d.trees.length !== n; }
+  if (tool === 'tree-add') {
+    let ch = false;
+    for (let k = 0; k < 3; k++) {
+      const a = rand() * Math.PI * 2, rr = Math.sqrt(rand()) * radius, p = [x + Math.cos(a) * rr, y + Math.sin(a) * rr];
+      if (onWater(d, p) || onRoad(d, p, 4)) continue;
+      if (d.buildings.some(b => pointInPoly(p, b.poly))) continue;
+      if (d.trees.some(t => Math.hypot(t.p[0] - p[0], t.p[1] - p[1]) < t.s * 1.2)) continue;
+      d.trees.push({ p, s: 6 + rand() * 5, v: rand() }); ch = true;
+    }
+    return ch;
+  }
+  if (tool === 'bld-add') {
+    let ch = false;
+    for (let k = 0; k < 4; k++) {
+      const a = rand() * Math.PI * 2, rr = Math.sqrt(rand()) * radius, p = [x + Math.cos(a) * rr, y + Math.sin(a) * rr];
+      const w = d.s * (0.26 + rand() * 0.16), h = d.s * (0.18 + rand() * 0.12);
+      const ang = nearestRoadDir(d, p) ?? (rand() * Math.PI);
+      const ca = Math.cos(ang), sa = Math.sin(ang);
+      const poly = [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]].map(([u, v]) => [p[0] + u * ca - v * sa, p[1] + u * sa + v * ca]);
+      if (poly.some(q => onWater(d, q) || onRoad(d, q, 1)) || onRoad(d, p, 3)) continue;
+      const minGap = Math.min(w, h) * 0.75;
+      if (d.buildings.some(b => { const c = cen(b.poly); return Math.hypot(c[0] - p[0], c[1] - p[1]) < minGap || pointInPoly(p, b.poly) || poly.some(q => pointInPoly(q, b.poly)); })) continue;
+      if (d.wall && d.wall.some((q, i) => distToSeg(p, q, d.wall[(i + 1) % d.wall.length]) < Math.max(w, h) * 0.6 + 6)) continue;
+      d.buildings.push({ poly, kind: 'house', v: rand(), ...(value ? { color: value } : {}) });
+      ch = true;
+    }
+    return ch;
+  }
+  return false;
+}
+
+// replace the town wall with a hand-drawn loop; gates open wherever a road crosses it
+export function setCityWall(d, pts) {
+  if (!pts || pts.length < 3) { d.wall = null; d.gates = []; d.walls = false; return; }
+  const loop = chaikin(pts, 2, true);
+  const dense = [];
+  for (let i = 0; i < loop.length; i++) {
+    const a = loop[i], b = loop[(i + 1) % loop.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.max(1, Math.ceil(L / 42));
+    for (let j = 0; j < n; j++) dense.push([a[0] + (b[0] - a[0]) * j / n, a[1] + (b[1] - a[1]) * j / n]);
+  }
+  gateWall(d, dense);
+  d.walls = true;
+  // clear buildings the wall now runs through
+  const w = d.wall;
+  d.buildings = d.buildings.filter(b => !w.some((q, i) => distToSeg(cen(b.poly), q, w[(i + 1) % w.length]) < 12));
+}
+function gateWall(d, dense) {
+  const out = [], gates = [];
+  for (let i = 0; i < dense.length; i++) {
+    const a = dense[i], b = dense[(i + 1) % dense.length];
+    out.push(a);
+    const hits = [];
+    for (const rd of d.roads) for (let j = 1; j < rd.length; j++) { const h = segIntersect(a, b, rd[j - 1], rd[j]); if (h) hits.push(h.p); }
+    hits.sort((p, q) => Math.hypot(p[0] - a[0], p[1] - a[1]) - Math.hypot(q[0] - a[0], q[1] - a[1]));
+    for (const h of hits) { if (gates.some(g => Math.hypot(g.p[0] - h[0], g.p[1] - h[1]) < 30)) continue; gates.push({ p: h, wi: out.length }); out.push(h); }
+  }
+  d.wall = out; d.gates = gates;
+}
+// re-open gates after roads change
+function regate(d) {
+  if (!d.wall) return;
+  const gi = new Set(d.gates.map(g => g.wi));
+  gateWall(d, d.wall.filter((_, i) => !gi.has(i)));
+}
+
+export function addCityRoad(d, pts) {
+  if (!pts || pts.length < 2) return;
+  const road = chaikin(pts, 3);
+  d.roads.push(road);
+  d.roadColors = d.roadColors || [];
+  d.roadColors[d.roads.length - 1] = null;
+  d.buildings = d.buildings.filter(b => !b.poly.some(q => distToPolyline(q, road) < d.roadW / 2 + 1) && distToPolyline(cen(b.poly), road) > d.roadW / 2 + 3);
+  d.trees = d.trees.filter(t => distToPolyline(t.p, road) > d.roadW / 2 + t.s * 0.5);
+  regate(d);
+  updateBridges(d);
+}
+export function nearestRoad(d, p, maxD) {
+  let best = -1, bd = maxD;
+  d.roads.forEach((rd, i) => { const dd = distToPolyline(p, rd); if (dd < bd) { bd = dd; best = i; } });
+  return best;
+}
+export function removeCityRoad(d, i) {
+  d.roads.splice(i, 1);
+  (d.roadColors || []).splice(i, 1);
+  regate(d);
+  updateBridges(d);
+}
+export function updateBridges(d) {
+  d.bridges = [];
+  if (!d.river) return;
+  for (const rd of d.roads) for (let i = 1; i < rd.length; i++) for (let j = 1; j < d.river.length; j++) {
+    const hit = segIntersect(rd[i - 1], rd[i], d.river[j - 1], d.river[j]);
+    if (hit && !d.bridges.some(b => Math.hypot(b.p[0] - hit.p[0], b.p[1] - hit.p[1]) < 30)) d.bridges.push(hit);
+  }
+}
+
+export async function cityToBlob(d, o) {
+  let blob = new Blob([JSON.stringify({ v: 1, kind: 'city', o, data: d })]);
+  if (typeof CompressionStream !== 'undefined') blob = await new Response(blob.stream().pipeThrough(new CompressionStream('gzip'))).blob();
+  return new Blob([blob], { type: 'application/octet-stream' });
+}
+export async function cityFromBlob(blob) {
+  let buf = await blob.arrayBuffer();
+  const b0 = new Uint8Array(buf, 0, 2);
+  if (b0[0] === 0x1f && b0[1] === 0x8b) buf = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+  const j = JSON.parse(new TextDecoder().decode(buf));
+  return { o: j.o, data: cloneCity(j.data) };
 }
