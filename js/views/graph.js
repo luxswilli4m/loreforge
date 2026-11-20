@@ -8,6 +8,20 @@ let showMentions = true;
 // web settings kept between visits
 const opt = { masters: true, nest: true, rel: 'all', mode: 'web', famFocus: '', depth: 9 };
 const collapsed = new Set();
+// filters are remembered per world in this browser, so the web looks the same when you come back
+const prefKey = () => 'loreforge:web:' + (W()?.id || '');
+function loadPrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem(prefKey()) || 'null'); if (!p) return;
+    Object.assign(opt, p.opt || {});
+    hidden.clear(); for (const t of p.hidden || []) hidden.add(t);
+    collapsed.clear(); for (const c of p.collapsed || []) collapsed.add(c);
+    if (typeof p.mentions === 'boolean') showMentions = p.mentions;
+  } catch { /* storage unavailable */ }
+}
+function savePrefs() {
+  try { localStorage.setItem(prefKey(), JSON.stringify({ opt, hidden: [...hidden], collapsed: [...collapsed], mentions: showMentions })); } catch { /* storage unavailable */ }
+}
 const live = new Map(); // id -> {x,y,vx,vy} kept between visits
 
 // nodes used to be pinnable; now everything floats, so old pins are cleared
@@ -127,6 +141,7 @@ const ROOT = '__root', TN = t => '__t:' + t;
 
 export function render(main) {
   const w = W();
+  loadPrefs();
   const focusQ = query().focus;
   if (focusQ) opt.mode = 'web';
   const relOpts = [['all', 'All relationships'], ['none', 'None (just the tree)'], ...Object.entries(REL_KINDS).map(([k, v]) => [k, v.label])];
@@ -213,6 +228,7 @@ export function render(main) {
   };
 
   function rebuild() {
+    savePrefs();
     if (opt.mode === 'family') { buildFamily(); drawLegend(); drawCard(); return; }
     const ents = W().entries.filter(e => !hidden.has(e.type));
     const vis = new Set(ents.map(e => e.id));
