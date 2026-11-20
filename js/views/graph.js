@@ -220,9 +220,10 @@ export function render(main) {
     for (const e of ents) {
       const p = opt.nest ? parentOf(e) : '';
       if (p && vis.has(p)) parent[e.id] = p;
-      else if (opt.masters) parent[e.id] = TN(e.type);
+      // the cosmos sits at the very centre: solar systems and other cosmos entries hang straight off it
+      else if (opt.masters) parent[e.id] = e.type === 'cosmos' ? ROOT : TN(e.type);
     }
-    const types = Object.keys(TYPES).filter(t => !hidden.has(t) && ents.some(e => e.type === t));
+    const types = Object.keys(TYPES).filter(t => t !== 'cosmos' && !hidden.has(t) && ents.some(e => e.type === t));
     if (opt.masters) for (const t of types) parent[TN(t)] = ROOT;
     kidsOf = {};
     for (const [c, p] of Object.entries(parent)) (kidsOf[p] = kidsOf[p] || []).push(c);
@@ -234,7 +235,7 @@ export function render(main) {
     nodes = [];
     if (opt.masters) {
       const rs = nodeState(ROOT); rs.x = rs.x || 0; rs.y = rs.y || 0;
-      nodes.push(Object.assign(rs, { id: ROOT, virt: 'root', name: W().name || 'World', deg: 0, fixed: true }));
+      nodes.push(Object.assign(rs, { id: ROOT, virt: 'root', name: W().cosmos?.name || 'The Cosmos', deg: 0, fixed: true }));
       rs.x = 0; rs.y = 0;
       types.forEach((t, i) => {
         if (folded(TN(t))) return;
@@ -397,7 +398,7 @@ export function render(main) {
         ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2); ctx.fillStyle = halo(); ctx.fill();
         ctx.lineWidth = 3; ctx.strokeStyle = col; ctx.stroke();
         ctx.font = `${n.virt === 'root' ? 28 : 20}px "Segoe UI Emoji","Apple Color Emoji",sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillStyle = textCol(); ctx.fillText(n.virt === 'root' ? '🌍' : TYPES[n.type].icon, n.x, n.y + 1);
+        ctx.fillStyle = textCol(); ctx.fillText(n.virt === 'root' ? '🌌' : TYPES[n.type].icon, n.x, n.y + 1);
         ctx.textBaseline = 'alphabetic';
       } else {
         ctx.fillStyle = col;
@@ -621,6 +622,8 @@ export function render(main) {
         { header: n.name },
         { icon: '⊖', label: 'Fold every type', action: () => { for (const t of Object.keys(TYPES)) collapsed.add(TN(t)); rebuild(); } },
         { icon: '⊕', label: 'Unfold everything', action: () => { collapsed.clear(); rebuild(); } },
+        { icon: '✎', label: 'Rename the cosmos…', action: async () => { const { promptDialog } = await import('../util.js'); const v = await promptDialog('Name your cosmos', W().cosmos?.name || 'The Cosmos'); if (v) { W().cosmos.name = v; save(); rebuild(); } } },
+        { icon: '🌌', label: 'Open the Cosmos star chart', action: () => go('#/cosmos') },
         { icon: '◎', label: 'Hide master nodes', action: () => { opt.masters = false; drawOpts(); rebuild(); alpha = 1; } },
       ]);
       return;
@@ -784,7 +787,7 @@ export function render(main) {
     const p = toWorld(ev.clientX, ev.clientY);
     if (opt.mode === 'family') { const id = famHit(p); if (id) go(`#/entry/${id}`); return; }
     const n = hitNode(p); if (!n) return;
-    if (n.virt) { if (n.virt === 'type') toggleFold(n.id); return; }
+    if (n.virt) { if (n.virt === 'type') toggleFold(n.id); else go('#/cosmos'); return; }
     const mh = mapHref(n.e);
     go(mh || `#/entry/${n.id}`);
   });

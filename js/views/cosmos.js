@@ -16,16 +16,33 @@ const bodyR = b => b.kind === 'star' ? 10 + b.size * 2.6 : b.kind === 'moon' ? 3
 
 export function render(main) {
   const w = W(), cz = w.cosmos;
+  cz.systems = cz.systems || [];
+  const ensureSystem = () => { if (!cz.systems.length) cz.systems.push({ id: uid(), name: 'Home system', color: '#f4b740', x: 0, y: 0, z: 0, entryId: '' }); return cz.systems[0]; };
+  if (cz.bodies.length) ensureSystem();
+  for (const b of cz.bodies) if (cz.systems.length && !cz.systems.some(x => x.id === b.systemId)) b.systemId = cz.systems[0].id;
+  // which solar system is on screen ('all' = the whole universe)
+  let cur = cz.current === 'all' || cz.systems.some(x => x.id === cz.current) ? cz.current : (cz.systems[0]?.id || 'all');
+  const sysOf = id => cz.systems.find(x => x.id === id);
+  const inView = b => cur === 'all' || b.systemId === cur;
+  const vis = () => cz.bodies.filter(inView);
+  // where a body sits in the current view (systems are spread out across the universe view)
+  const U = 0.42;
+  const P = b => { if (cur !== 'all') return [b.x, b.y, b.z]; const sy = sysOf(b.systemId) || { x: 0, y: 0, z: 0 }; return [sy.x + b.x * U, sy.y + b.y * U, sy.z + b.z * U]; };
+  const sysBar = () => cz.systems.length ? `<div class="cz-systems" id="sysbar">
+      <button data-sys="all" class="${cur === 'all' ? 'on' : ''}" title="Every solar system at once">🌌 Universe</button>
+      ${cz.systems.map(x => `<button data-sys="${x.id}" class="${cur === x.id ? 'on' : ''}"><span class="cz-sys-dot" style="background:${esc(x.color || '#f4b740')};color:${esc(x.color || '#f4b740')}"></span>${esc(x.name)}</button>`).join('')}
+      <button id="cz-addsys" title="Start a new, separate solar system">＋ Solar system</button></div>` : '';
   main.innerHTML = `
     <div class="page-head"><h1>Cosmos</h1><span class="muted small cz-hint">Drag to turn · scroll to zoom · Shift-drag a selected body to move it · double-click to focus</span>
       <button id="cz-spin">${cam.spin ? '⏸ Pause' : '▶ Spin'}</button><button id="cz-link">＋ Connection</button><button class="primary" id="cz-add">＋ World or plane</button></div>
     <div class="cosmos-shell">
       <div class="cosmos-stage" id="stage"><canvas></canvas><div class="tl-tip hidden" id="tip"></div>
-        ${cz.bodies.length ? '' : `<div class="cosmos-empty"><div class="big">🌌</div><p>Chart the worlds, moons, stars and planes of your setting, and the portals between them.</p>
+        ${vis().length || cur === 'all' && cz.bodies.length ? '' : `<div class="cosmos-empty"><div class="big">🌌</div><p>Chart the worlds, moons, stars and planes of your setting, and the portals between them.</p>
           <div class="row" style="justify-content:center;gap:8px"><button class="primary" id="cz-example">✨ Start with an example cosmos</button><button id="cz-add2">＋ Add a world</button></div></div>`}
       </div>
       <div class="card side-box cosmos-side" id="side"></div>
     </div>`;
+  main.querySelector('.page-head').insertAdjacentHTML('afterend', sysBar());
   const stage = main.querySelector('#stage'), cv = stage.querySelector('canvas'), tip = main.querySelector('#tip'), side = main.querySelector('#side');
 
   // background stars, fixed in space
@@ -66,13 +83,22 @@ export function render(main) {
     c.globalAlpha = 1;
 
     proj = new Map();
-    for (const b of cz.bodies) { const p = project(b.x, b.y, b.z, Wd, Hd); if (p) proj.set(b.id, { ...p, r: Math.max(2, bodyR(b) * p.s), b }); }
+    for (const b of vis()) { const [bx, by, bz] = P(b), p = project(bx, by, bz, Wd, Hd); if (p) proj.set(b.id, { ...p, r: Math.max(2, bodyR(b) * p.s * (cur === 'all' ? 1.6 : 1)), b }); }
+    // in the universe view, name each solar system under its cluster
+    if (cur === 'all') for (const sy of cz.systems) {
+      const p = project(sy.x, sy.y - 70, sy.z, Wd, Hd); if (!p) continue;
+      const ring = []; for (let k = 0; k <= 60; k++) { const a = k / 60 * Math.PI * 2, q = project(sy.x + Math.cos(a) * 95, sy.y, sy.z + Math.sin(a) * 95, Wd, Hd); if (q) ring.push(q); }
+      c.beginPath(); ring.forEach((q, k) => k ? c.lineTo(q.x, q.y) : c.moveTo(q.x, q.y)); c.strokeStyle = sy.color || '#f4b740'; c.globalAlpha = 0.25; c.lineWidth = 1; c.setLineDash([3, 6]); c.stroke(); c.setLineDash([]);
+      c.globalAlpha = 0.9; c.font = '700 14px "Cormorant Garamond", Georgia, serif'; c.textAlign = 'center'; c.fillStyle = '#e8ecff'; c.strokeStyle = 'rgba(0,0,0,.7)'; c.lineWidth = 3;
+      const lab = sy.name.toUpperCase(); c.strokeText(lab, p.x, p.y + 30); c.fillText(lab, p.x, p.y + 30); c.globalAlpha = 1;
+    }
     // connections
     linkProj = [];
     for (const l of cz.links) {
       const pa = proj.get(l.a), pb = proj.get(l.b);
-      const A_ = cz.bodies.find(b => b.id === l.a), B_ = cz.bodies.find(b => b.id === l.b);
-      if (!A_ || !B_) continue;
+      const A0 = cz.bodies.find(b => b.id === l.a), B0 = cz.bodies.find(b => b.id === l.b);
+      if (!A0 || !B0 || !inView(A0) || !inView(B0)) continue;
+      const [ax, ay, az] = P(A0), [bx2, by2, bz2] = P(B0), A_ = { x: ax, y: ay, z: az }, B_ = { x: bx2, y: by2, z: bz2 };
       const col = l.color || LINKS[l.kind]?.[2] || '#ccc';
       const isSel = selected?.kind === 'link' && selected.id === l.id, isHov = hover?.link === l;
       c.save();
@@ -107,7 +133,7 @@ export function render(main) {
     c.textAlign = 'center'; c.font = '600 13px Inter, sans-serif';
     for (const p of order) {
       const sel = selected?.kind === 'body' && selected.id === p.b.id;
-      if (!sel && hover?.body !== p.b && cz.bodies.length > 14) continue;
+      if (!sel && hover?.body !== p.b && (proj.size > 14 || (cur === 'all' && p.b.kind !== 'star'))) continue;
       c.globalAlpha = sel || hover?.body === p.b ? 1 : 0.6;
       c.fillStyle = '#e8ecff'; c.strokeStyle = 'rgba(0,0,0,.7)'; c.lineWidth = 3;
       c.strokeText(p.b.name, p.x, p.y + p.r + 16); c.fillText(p.b.name, p.x, p.y + p.r + 16);
@@ -182,7 +208,7 @@ export function render(main) {
     const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
     cv.setPointerCapture(e.pointerId);
     const h = pick(mx, my);
-    const movable = e.shiftKey && h?.body && selected?.kind === 'body' && selected.id === h.body.id;
+    const movable = cur !== 'all' && e.shiftKey && h?.body && selected?.kind === 'body' && selected.id === h.body.id;
     drag = { x: mx, y: my, yaw: cam.yaw, pitch: cam.pitch, moved: false, body: movable ? h.body : null, last: [mx, my] };
   });
   cv.addEventListener('pointermove', e => {
@@ -224,6 +250,7 @@ export function render(main) {
   });
   cv.addEventListener('dblclick', e => {
     const r = cv.getBoundingClientRect(), h = pick(e.clientX - r.left, e.clientY - r.top);
+    if (h?.body && cur === 'all') { const b = h.body; switchTo(b.systemId); selected = { kind: 'body', id: b.id }; cam.focus = [b.x, b.y, b.z]; drawSide(); return; }
     if (h?.body) { cam.focus = [h.body.x, h.body.y, h.body.z]; cam.dist = Math.max(120, Math.min(cam.dist, 260)); }
     else { cam.focus = [0, 0, 0]; }
   });
@@ -249,7 +276,7 @@ export function render(main) {
         <div class="row" style="margin-top:12px;gap:6px;flex-wrap:wrap"><button id="b-edit">✎ Edit</button><button id="b-link">＋ Connect</button><button id="b-focus">🎯 Focus</button><button class="danger" id="b-del">Delete</button></div>`;
       side.querySelector('#b-edit').onclick = () => bodyDialog(sel);
       side.querySelector('#b-link').onclick = () => linkDialog(null, sel.id);
-      side.querySelector('#b-focus').onclick = () => { cam.focus = [sel.x, sel.y, sel.z]; cam.dist = Math.max(120, Math.min(cam.dist, 260)); };
+      side.querySelector('#b-focus').onclick = () => { if (cur === 'all') switchTo(sel.systemId); cam.focus = [sel.x, sel.y, sel.z]; cam.dist = Math.max(120, Math.min(cam.dist, 260)); };
       side.querySelector('#b-del').onclick = async () => {
         if (!(await confirmDialog(`Remove “${sel.name}” from the cosmos? (Its maps are kept.)`))) return;
         cz.bodies = cz.bodies.filter(b => b !== sel); cz.links = cz.links.filter(l => l.a !== sel.id && l.b !== sel.id); save(); selected = null; drawSide();
@@ -263,15 +290,39 @@ export function render(main) {
       side.querySelector('#l-edit').onclick = () => linkDialog(lnk);
       side.querySelector('#l-del').onclick = () => { cz.links = cz.links.filter(l => l !== lnk); save(); selected = null; drawSide(); };
     } else {
-      side.innerHTML = `<h4>🌌 ${esc(w.name)} — the cosmos</h4>
-        ${cz.bodies.length ? `<ul class="link-list">${cz.bodies.map(b => `<li><a href="#" data-sel-body="${b.id}"><span class="cz-dot" style="background:${esc(b.color)}"></span>${kindOf(b)[0]} ${esc(b.name)}</a>${b.mapIds?.length ? ` <span class="muted small">· ${b.mapIds.length} map${b.mapIds.length > 1 ? 's' : ''}</span>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">Nothing charted yet.</p>'}
-        <label>Key</label>
-        <p class="small" style="margin:0">${Object.values(LINKS).map(([i, n, c]) => `<span style="color:${c}">━</span> ${i} ${n}`).join(' &nbsp; ')}</p>
-        <p class="small muted">A gold dot on a world means it has maps attached. Click any world to see them.</p>`;
+      const sy = cur === 'all' ? null : sysOf(cur);
+      const list = vis();
+      if (cur === 'all') {
+        side.innerHTML = `<h4>🌌 The universe</h4>
+          ${cz.systems.length ? `<ul class="link-list">${cz.systems.map(x => { const n = cz.bodies.filter(b => b.systemId === x.id).length; return `<li><a href="#" data-go-sys="${x.id}"><span class="cz-dot" style="background:${esc(x.color || '#f4b740')}"></span>☀️ ${esc(x.name)}</a><span class="muted small">${n} bod${n === 1 ? 'y' : 'ies'}</span></li>`; }).join('')}</ul>` : '<p class="small muted">No solar systems yet.</p>'}
+          <p class="small muted">Double-click any world to fly into its solar system. Portals between systems show up here as long lines.</p>
+          <button id="cz-addsys2">＋ New solar system</button>`;
+      } else {
+        const ent = getEntry(sy?.entryId);
+        side.innerHTML = `<h4>☀️ Solar system</h4>
+          <h2 style="margin:0 0 6px;font-family:var(--display)"><span class="cz-dot" style="background:${esc(sy?.color || '#f4b740')}"></span>${esc(sy?.name || 'This system')}</h2>
+          ${ent ? `<p class="small">📖 <a class="mention" style="--tc:${typeColor(ent.type)}" href="#/entry/${ent.id}">${esc(ent.name)}</a></p>` : sy ? `<p class="small muted" style="margin:0 0 6px">Not in the World Bible yet. <button class="small" id="sys-entry">＋ Add it</button></p>` : ''}
+          ${list.length ? `<ul class="link-list">${list.map(b => `<li><a href="#" data-sel-body="${b.id}"><span class="cz-dot" style="background:${esc(b.color)}"></span>${kindOf(b)[0]} ${esc(b.name)}</a>${b.mapIds?.length ? ` <span class="muted small">· ${b.mapIds.length} map${b.mapIds.length > 1 ? 's' : ''}</span>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">Nothing charted in this system yet — use ＋ World or plane.</p>'}
+          ${sy ? `<div class="row" style="gap:6px;flex-wrap:wrap;margin-top:8px"><button class="small" id="sys-edit">✎ Rename / colour</button>${cz.systems.length > 1 ? '<button class="small danger" id="sys-del">Delete system</button>' : ''}</div>` : ''}
+          <label>Key</label>
+          <p class="small" style="margin:0">${Object.values(LINKS).map(([i, n, c]) => `<span style="color:${c}">━</span> ${i} ${n}`).join(' &nbsp; ')}</p>
+          <p class="small muted">A gold dot on a world means it has maps attached. Click any world to see them.</p>`;
+        side.querySelector('#sys-entry')?.addEventListener('click', () => { const e = newEntry('cosmos', sy.name); const kf = e.fields.find(f => f.k === 'Kind'); if (kf) kf.v = 'Solar system'; sy.entryId = e.id; save(); drawSide(); toast(`Added ${sy.name} to the World Bible`); });
+        side.querySelector('#sys-edit')?.addEventListener('click', () => systemDialog(sy));
+        side.querySelector('#sys-del')?.addEventListener('click', async () => {
+          const n = cz.bodies.filter(b => b.systemId === sy.id).length, other = cz.systems.find(x => x !== sy);
+          if (!(await confirmDialog(`Delete the ${sy.name}?${n ? ` Its ${n} bod${n === 1 ? 'y moves' : 'ies move'} to ${other.name}.` : ''}`))) return;
+          for (const b of cz.bodies) if (b.systemId === sy.id) b.systemId = other.id;
+          cz.systems = cz.systems.filter(x => x !== sy); save(); switchTo(other.id);
+        });
+      }
+      side.querySelectorAll('[data-go-sys]').forEach(a => a.onclick = e => { e.preventDefault(); switchTo(a.dataset.goSys); });
+      side.querySelector('#cz-addsys2')?.addEventListener('click', () => systemDialog(null));
     }
     side.querySelectorAll('[data-sel-body]').forEach(a => a.onclick = e => {
       e.preventDefault(); const b = cz.bodies.find(x => x.id === a.dataset.selBody); if (!b) return;
-      selected = { kind: 'body', id: b.id }; cam.focus = [b.x, b.y, b.z]; drawSide();
+      if (!inView(b)) switchTo(b.systemId);
+      selected = { kind: 'body', id: b.id }; cam.focus = P(b); drawSide();
     });
   }
 
@@ -279,7 +330,8 @@ export function render(main) {
   function bodyDialog(body) {
     const isNew = !body;
     const n = cz.bodies.length;
-    const d = body ? JSON.parse(JSON.stringify(body)) : { id: uid(), name: '', kind: 'planet', typeName: '', color: COLORS[n % COLORS.length], size: 4, rings: false, mapIds: [], entryId: '', desc: '', ...randomSpot() };
+    const d = body ? JSON.parse(JSON.stringify(body)) : { id: uid(), name: '', kind: 'planet', typeName: '', color: COLORS[n % COLORS.length], size: 4, rings: false, mapIds: [], entryId: '', desc: '', systemId: cur !== 'all' ? cur : ensureSystem().id, ...randomSpot() };
+    if (!d.systemId) d.systemId = ensureSystem().id;
     d.mapIds = d.mapIds || [];
     let custom = !!d.typeName;
     openModal(`<h2>${isNew ? 'Add to the cosmos' : 'Edit ' + esc(body.name)}</h2>
@@ -289,6 +341,7 @@ export function render(main) {
         <div style="flex:0 0 84px"><label>Colour</label><input type="color" id="bc" value="${esc(d.color)}"></div></div>
       <div id="bcustom" class="row ${custom ? '' : 'hidden'}"><div><label>Custom type name</label><input id="btn" value="${esc(d.typeName || '')}" placeholder="e.g. Shard, Dreamscape, Prison plane"></div>
         <div><label>Looks like</label><select id="blook">${Object.entries(KINDS).filter(([k]) => k !== 'other').map(([k, [i, l]]) => `<option value="${k}" ${d.kind === k ? 'selected' : ''}>${i} ${l}</option>`).join('')}</select></div></div>
+      ${cz.systems.length > 1 ? `<label>Solar system</label><select id="bsys">${cz.systems.map(x => `<option value="${x.id}" ${x.id === d.systemId ? 'selected' : ''}>☀️ ${esc(x.name)}</option>`).join('')}</select>` : ''}
       <label>Size <span class="val" id="bsv">${d.size}</span></label><input type="range" id="bs" min="1" max="10" value="${d.size}">
       <label class="check"><input type="checkbox" id="br" ${d.rings ? 'checked' : ''}> Rings</label>
 
@@ -384,11 +437,12 @@ export function render(main) {
           if (custom) { d.typeName = $('#btn').value.trim() || 'Custom'; d.kind = $('#blook').value; }
           else { d.typeName = ''; d.kind = $('#bt').value; }
           d.color = $('#bc').value; d.size = +$('#bs').value; d.rings = $('#br').checked;
+          if ($('#bsys')) d.systemId = $('#bsys').value;
           if (isNew) cz.bodies.push(d); else Object.assign(body, d);
           save(); selected = { kind: 'body', id: d.id };
         }
         closeModal();
-        if (a === 'yes' && isNew && cz.bodies.length === 1) render(main); else drawSide();
+        if (a === 'yes' && (isNew && cz.bodies.length === 1 || (d.systemId !== cur && cur !== 'all'))) { if (d.systemId !== cur && cur !== 'all') cz.current = d.systemId; render(main); } else drawSide();
       });
       drawMaps(); drawEntry();
     });
@@ -433,6 +487,8 @@ export function render(main) {
     const fey = B('The Glimmerwild', 'plane', '#81e0a8', 5, [40, 70, -120], { desc: 'An echo of the world where everything is brighter, and bargains bind.' });
     const shadow = B('The Hollow Dark', 'plane', '#8a6fd6', 5, [70, -70, 140], { desc: 'A grey reflection where memories go to fade.' });
     const astral = B('The Silver Sea', 'demiplane', '#a8dadc', 4, [-60, 90, 120], { desc: 'The space between the planes, crossed only by dreamers and the dead.' });
+    const sid = cur !== 'all' ? cur : ensureSystem().id;
+    for (const b of [sun, home, moon, giant, fey, shadow, astral]) b.systemId = sid;
     cz.bodies.push(sun, home, moon, giant, fey, shadow, astral);
     const L = (a, b, kind, label) => cz.links.push({ id: uid(), a: a.id, b: b.id, kind, label, desc: '' });
     L(sun, home, 'orbit', 'Home orbit'); L(home, moon, 'orbit', 'Lunar orbit'); L(sun, giant, 'orbit', 'Outer orbit');
@@ -441,6 +497,39 @@ export function render(main) {
     render(main);
   }
 
+  function switchTo(id) {
+    cz.current = id; save();
+    if (id === 'all') { cam.focus = [0, 0, 0]; cam.dist = Math.min(2200, 520 + 260 * cz.systems.length); }
+    else { cam.focus = [0, 0, 0]; cam.dist = 420; }
+    cam.tx = cam.ty = cam.tz = 0;
+    selected = null; render(main);
+  }
+  // a new solar system: its own star, its own place in the universe, and (optionally) a World Bible entry
+  function systemDialog(sys) {
+    const isNew = !sys;
+    openModal(`<h2>${isNew ? '☀️ New solar system' : 'Edit ' + esc(sys.name)}</h2>
+      <label>Name</label><input id="sn" value="${esc(sys?.name || '')}" placeholder="e.g. The Verdant Reach, the Twin Suns" autofocus>
+      <div class="row"><div><label>Star colour</label><input type="color" id="sc" value="${esc(sys?.color || ['#f4b740', '#ff7a4a', '#8ec5ff', '#ffe9a8', '#c77dff'][cz.systems.length % 5])}"></div><div></div></div>
+      ${isNew ? `<label class="check"><input type="checkbox" id="sstar" checked> Put a star at its centre</label>
+      <label class="check"><input type="checkbox" id="sent" checked> Add it to the World Bible (planets you link go inside it in the World Web)</label>` : ''}
+      <div class="modal-actions"><button data-a="no">Cancel</button><button class="primary" data-a="yes">${isNew ? 'Create' : 'Save'}</button></div>`, m => {
+      const done = () => {
+        const name = m.querySelector('#sn').value.trim() || 'New system', color = m.querySelector('#sc').value;
+        if (!isNew) { sys.name = name; sys.color = color; const e = getEntry(sys.entryId); if (e && e.name !== name && confirm(`Rename its World Bible entry to “${name}” too?`)) e.name = name; save(); closeModal(); render(main); return; }
+        ensureSystem();
+        const i = cz.systems.length, a = i * 2.4;
+        const ns = { id: uid(), name, color, x: Math.cos(a) * (420 + i * 120), y: (i % 2 ? 1 : -1) * 40, z: Math.sin(a) * (420 + i * 120), entryId: '' };
+        if (m.querySelector('#sent').checked) { const e = newEntry('cosmos', name); const kf = e.fields.find(f => f.k === 'Kind'); if (kf) kf.v = 'Solar system'; ns.entryId = e.id; }
+        cz.systems.push(ns);
+        if (m.querySelector('#sstar').checked) cz.bodies.push({ id: uid(), name: name.replace(/\b(system|reach)\b/i, '').trim() ? `${name.replace(/^the\s+/i, '').replace(/\s+system$/i, '')} Star` : 'New star', kind: 'star', color, size: 6, rings: false, mapIds: [], entryId: '', desc: '', systemId: ns.id, x: 0, y: 0, z: 0 });
+        save(); closeModal(); toast(`Created ${name}`); switchTo(ns.id);
+      };
+      m.addEventListener('click', e => { const a = e.target.dataset.a; if (a === 'no') closeModal(); if (a === 'yes') done(); });
+      m.querySelector('#sn').addEventListener('keydown', e => { if (e.key === 'Enter') done(); });
+    });
+  }
+  main.querySelectorAll('[data-sys]').forEach(b => b.onclick = () => switchTo(b.dataset.sys));
+  main.querySelector('#cz-addsys')?.addEventListener('click', () => systemDialog(null));
   main.querySelector('#cz-add').onclick = () => bodyDialog(null);
   main.querySelector('#cz-link').onclick = () => linkDialog(null, selected?.kind === 'body' ? selected.id : null);
   main.querySelector('#cz-spin').onclick = e => { cam.spin = !cam.spin; e.target.textContent = cam.spin ? '⏸ Pause' : '▶ Spin'; };

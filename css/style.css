@@ -195,7 +195,7 @@ input[type=checkbox] { width: auto; }
 .empty .big { font-size: 2.6em; margin-bottom: 6px; }
 
 /* Graph */
-.graph-stage { position: relative; height: calc(100vh - 150px); background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.graph-stage { position: relative; height: calc(100vh - 205px); min-height: 420px; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .graph-stage canvas { width: 100%; height: 100%; display: block; cursor: grab; }
 .graph-legend { position: absolute; top: 10px; right: 10px; background: rgba(29,26,36,.9); padding: 8px 12px; border-radius: 8px; font-size: .82em; border: 1px solid var(--line); }
 .graph-legend div { display: flex; align-items: center; gap: 6px; }
@@ -291,7 +291,7 @@ label.check { display: flex; align-items: center; gap: 7px; color: var(--text); 
 .ctx-ic { width: 18px; text-align: center; }
 .ctx-sep { height: 1px; background: var(--line); margin: 4px 6px; }
 .ctx-head { padding: 6px 10px 4px; font-size: .75em; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
-.graph-card { position: absolute; left: 12px; bottom: 12px; width: 300px; background: var(--bg-2); border: 1px solid var(--line); border-left: 4px solid var(--tc, var(--accent)); border-radius: 10px; padding: 12px 14px; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+.graph-card { position: absolute; left: 12px; top: 12px; width: 300px; max-height: calc(100% - 24px); overflow-y: auto; background: var(--bg-2); border: 1px solid var(--line); border-left: 4px solid var(--tc, var(--accent)); border-radius: 10px; padding: 12px 14px; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
 .graph-card h3 { margin: 2px 0 4px; }
 .graph-card p { margin: 0 0 8px; }
 .graph-hint { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: var(--accent); font-weight: 600; padding: 7px 16px; border-radius: 99px; box-shadow: 0 6px 20px rgba(0,0,0,.35); }
@@ -533,3 +533,9 @@ label.check { display: flex; align-items: center; gap: 7px; color: var(--text); 
 .rk-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
 .web-opts { align-items: center; margin-top: -4px; }
 .web-opts select { width: auto; padding: 4px 8px; min-height: 0; }
+
+/* solar systems in the cosmos */
+.cz-systems { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 10px; align-items: center; }
+.cz-systems button { min-height: 0; padding: 5px 12px; border-radius: 99px; font-size: .88em; }
+.cz-systems button.on { background: var(--accent); color: var(--on-accent, #1b1408); border-color: var(--accent); }
+.cz-systems .cz-sys-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; box-shadow: 0 0 6px currentColor; }

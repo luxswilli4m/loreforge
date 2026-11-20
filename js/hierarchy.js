@@ -44,8 +44,16 @@ export function placeOfMap(mapId) {
   for (const mm of w.maps) for (const p of mm.pins || []) if (p.submapId === mapId && p.entryId && getEntry(p.entryId)) return p.entryId;
   return '';
 }
+// the World Bible entry of the solar system a cosmos body (linked to entry e) sits in
+function systemOf(e) {
+  const cz = W().cosmos; if (!cz?.systems?.length) return '';
+  const b = (cz.bodies || []).find(x => x.entryId === e.id); if (!b) return '';
+  const sys = cz.systems.find(s => s.id === b.systemId);
+  return sys?.entryId && sys.entryId !== e.id && getEntry(sys.entryId) ? sys.entryId : '';
+}
 function rawParent(e) {
   if (e.parentId && getEntry(e.parentId)) return e.parentId;
+  const sp = systemOf(e); if (sp) return sp;
   if (e.type === 'character' || !e.mapId) return '';
   const p = placeOfMap(e.mapId);
   return p && p !== e.id ? p : '';

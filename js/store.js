@@ -79,6 +79,10 @@ export function normalizeWorld(w) {
   out.cosmos = { bodies: [], links: [], ...(w.cosmos || {}) };
   if (!Array.isArray(out.cosmos.bodies)) out.cosmos.bodies = [];
   if (!Array.isArray(out.cosmos.links)) out.cosmos.links = [];
+  if (!Array.isArray(out.cosmos.systems)) out.cosmos.systems = [];
+  // every body belongs to a solar system; older worlds get one "Home system" holding everything
+  if (out.cosmos.bodies.length && !out.cosmos.systems.length) out.cosmos.systems.push({ id: uid(), name: 'Home system', color: '#f4b740', x: 0, y: 0, z: 0, entryId: '' });
+  for (const b of out.cosmos.bodies) if (!out.cosmos.systems.some(s => s.id === b.systemId)) b.systemId = out.cosmos.systems[0].id;
   if (!out.hierV) { migrateHierarchy(out); out.hierV = 1; }
   return out;
 }
