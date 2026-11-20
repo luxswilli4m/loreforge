@@ -98,7 +98,7 @@ function drawSignedIn(body, main) {
       </div>
       <p class="muted small" style="margin-bottom:0">Your recovery key lets you reset a forgotten password. Keep it somewhere safe outside Loreforge, such as a password manager or on paper.</p>
     </div>
-    <p class="muted small" style="margin-top:14px">Each device keeps a full offline copy, so Loreforge still works without internet — changes upload when you’re back online. Snapshots stay on each device.</p>`;
+    <p class="muted small" style="margin-top:14px">Each device keeps a full offline copy, so Loreforge still works without internet — changes upload when you’re back online. Milestone backups (World settings → Milestones) are stored on your server and can be restored from any device.</p>`;
   const $ = s => body.querySelector(s);
   const drawStat = () => {
     const el = $('#cstat'); if (!el) return;
