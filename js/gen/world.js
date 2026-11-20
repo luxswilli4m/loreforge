@@ -303,12 +303,34 @@ export function generateWorld(opts, edit = null) {
     }
     if (path.length > 2) rivers.push(path);
   }
-  // hand-drawn rivers: thin at the source, widening towards the mouth
+  // hand-drawn rivers: thin at the source, widening towards the mouth. Where one runs into the sea or a lake it
+  // ends at the shore (and starts again on the far side), so it never runs across open water.
+  const wetAt = (x, y) => { const c = idx(Math.max(0, Math.min(GW - 1, Math.round(x))), Math.max(0, Math.min(GH - 1, Math.round(y)))); return isOcean[c] || lake[c]; };
   for (const hr of edit?.rivers || []) {
     if (!hr.pts || hr.pts.length < 2) continue;
     const n = hr.pts.length, wmax = hr.w || 2.2;
-    rivers.push(hr.pts.map(([x, y], j) => ({ x, y, w: 0.15 + (wmax - 0.15) * Math.pow(j / (n - 1), 1.3) })));
-    for (const [x, y] of hr.pts) { const c = idx(Math.max(0, Math.min(GW - 1, Math.round(x))), Math.max(0, Math.min(GH - 1, Math.round(y)))); if (!isOcean[c]) isRiver[c] = 1; }
+    let seg = [];
+    const flush = () => { if (seg.length > 1) rivers.push(seg); seg = []; };
+    hr.pts.forEach(([x, y], j) => {
+      const p = { x, y, w: 0.15 + (wmax - 0.15) * Math.pow(j / (n - 1), 1.3) };
+      if (wetAt(x, y)) { if (seg.length) { seg.push(p); flush(); } return; }
+      if (!seg.length && j > 0) { const [px, py] = hr.pts[j - 1]; seg.push({ x: px, y: py, w: p.w }); } // start at the far shore
+      seg.push(p);
+    });
+    flush();
+    for (const [x, y] of hr.pts) { const c = idx(Math.max(0, Math.min(GW - 1, Math.round(x))), Math.max(0, Math.min(GH - 1, Math.round(y)))); if (!isOcean[c] && !lake[c]) isRiver[c] = 1; }
+  }
+  // dried-up stretches (precise points from the Dry brush) cut any river that passes through them
+  if (edit?.dry?.length) {
+    const D = edit.dry;
+    const isDry = p => D.some(([x, y, r]) => { const rr = Math.max(r, 0.55); return (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y) <= rr * rr; });
+    const out = [];
+    for (const rv of rivers) {
+      let seg = [];
+      for (const p of rv) { if (isDry(p)) { if (seg.length > 1) out.push(seg); seg = []; } else seg.push(p); }
+      if (seg.length > 1) out.push(seg);
+    }
+    rivers.length = 0; rivers.push(...out);
   }
 
   // ---- settlements ----
@@ -546,6 +568,7 @@ export function completeEdit(ed, data) {
   if (!ed.biome) ed.biome = new Uint8Array(ed.GW * ed.GH).fill(255);
   if (!ed.realmPaint) ed.realmPaint = new Int16Array(ed.GW * ed.GH).fill(-2);
   if (!ed.towns) { ed.towns = data.towns.map(t => ({ gx: t.gx, gy: t.gy, name: t.name, capital: !!t.capital, rid: t.capital ? t.rid : undefined })); ed.realms = data.realms.map(rl => ({ id: rl.rid, name: rl.name, color: rl.color })); }
+  ed.dry = ed.dry || [];
   ed.rivers = ed.rivers || []; ed.roads = ed.roads || []; ed.labels = ed.labels || []; ed.labelNames = ed.labelNames || {}; ed.nameSeed = ed.nameSeed || '';
   if (!ed.noRiver) ed.noRiver = new Uint8Array(ed.GW * ed.GH);
   return ed;
@@ -554,12 +577,19 @@ export function cloneEdit(ed) {
   return { ...ed, h: Float32Array.from(ed.h), ridge: Float32Array.from(ed.ridge), eCurve: ed.eCurve.slice(), biome: Uint8Array.from(ed.biome),
     realmPaint: Int16Array.from(ed.realmPaint), towns: ed.towns.map(t => ({ ...t })), realms: ed.realms.map(rl => ({ ...rl })),
     rivers: (ed.rivers || []).map(r => ({ ...r, pts: r.pts.map(p => [...p]) })), roads: (ed.roads || []).map(r => ({ ...r, pts: r.pts.map(p => [...p]) })),
-    labels: (ed.labels || []).map(l => ({ ...l })), labelNames: { ...(ed.labelNames || {}) }, noRiver: ed.noRiver ? Uint8Array.from(ed.noRiver) : null };
+    labels: (ed.labels || []).map(l => ({ ...l })), labelNames: { ...(ed.labelNames || {}) }, noRiver: ed.noRiver ? Uint8Array.from(ed.noRiver) : null, dry: (ed.dry || []).map(d => [...d]) };
 }
 
 // one dab of a brush at grid position (gx, gy). radius in cells, strength 0..1
 export function applyBrush(ed, tool, gx, gy, radius, strength, value) {
   const { h, ridge, sea, GW, GH } = ed, span = Math.max(0.05, ed.hmax - sea);
+  if (tool === 'dry') {
+    // remember the exact spot, so even a hair-thin brush can dry a river (no snapping to the terrain grid)
+    ed.dry = ed.dry || [];
+    const last = ed.dry[ed.dry.length - 1];
+    if (!last || Math.hypot(last[0] - gx, last[1] - gy) > radius * 0.3 || last[2] !== radius) ed.dry.push([+gx.toFixed(2), +gy.toFixed(2), +radius.toFixed(2)]);
+    return;
+  }
   const x0 = Math.max(0, Math.floor(gx - radius)), x1 = Math.min(GW - 1, Math.ceil(gx + radius));
   const y0 = Math.max(0, Math.floor(gy - radius)), y1 = Math.min(GH - 1, Math.ceil(gy + radius));
   let avgH = 0, avgR = 0, cnt = 0;
@@ -587,7 +617,7 @@ export function applyBrush(ed, tool, gx, gy, radius, strength, value) {
       case 'sea': if (h[i] > sea - span * 0.12) h[i] -= (h[i] - (sea - span * 0.12)) * Math.min(1, s * 1.5); ridge[i] *= 1 - 0.5 * s; break;
       case 'biome': if (f > 0.12) ed.biome[i] = value; break;
       case 'realm': if (f > 0.12) ed.realmPaint[i] = value; break;
-      case 'dry': if (f > 0.1) ed.noRiver[i] = 1; break;
+      case 'dry': break; // handled below with exact points
       case 'wet': if (f > 0.1) ed.noRiver[i] = 0; break;
     }
   }
@@ -626,7 +656,7 @@ export async function editToBlob(ed, o) {
   const qh = new Uint16Array(N), qr = new Uint16Array(N);
   for (let i = 0; i < N; i++) { qh[i] = Math.round((ed.h[i] - lo) / span * 65535); qr[i] = Math.round(Math.max(0, ed.ridge[i]) / rspan * 65535); }
   const head = new TextEncoder().encode(JSON.stringify({ v: 3, GW, GH, o, lo, span, rspan, sea: ed.sea, hmax: ed.hmax, eCurve: ed.eCurve, towns: ed.towns, realms: ed.realms,
-    rivers: ed.rivers || [], roads: ed.roads || [], labels: ed.labels || [], labelNames: ed.labelNames || {}, nameSeed: ed.nameSeed || '', noRoads: !!ed.noRoads }));
+    rivers: ed.rivers || [], roads: ed.roads || [], labels: ed.labels || [], labelNames: ed.labelNames || {}, nameSeed: ed.nameSeed || '', noRoads: !!ed.noRoads, dry: ed.dry || [], townSeed: ed.townSeed || '' }));
   const pad = new Uint8Array((4 - (head.length % 4)) % 4);
   let blob = new Blob([new Uint32Array([head.length]), head, pad, qh, qr, ed.realmPaint, ed.biome, ed.noRiver || new Uint8Array(N)]);
   if (typeof CompressionStream !== 'undefined') blob = await new Response(blob.stream().pipeThrough(new CompressionStream('gzip'))).blob();
@@ -647,7 +677,8 @@ export async function editFromBlob(blob) {
   const h = new Float32Array(N), ridge = new Float32Array(N);
   for (let i = 0; i < N; i++) { h[i] = head.lo + qh[i] / 65535 * head.span; ridge[i] = qr[i] / 65535 * head.rspan; }
   return { o: head.o, edit: { GW, GH, h, ridge, realmPaint, biome, noRiver, sea: head.sea, hmax: head.hmax, eCurve: head.eCurve, towns: head.towns, realms: head.realms,
-    rivers: head.rivers || [], roads: head.roads || [], labels: head.labels || [], labelNames: head.labelNames || {}, nameSeed: head.nameSeed || '', noRoads: !!head.noRoads } };
+    rivers: head.rivers || [], roads: head.roads || [], labels: head.labels || [], labelNames: head.labelNames || {}, nameSeed: head.nameSeed || '', noRoads: !!head.noRoads,
+    dry: head.dry || [], townSeed: head.townSeed || '' } };
 }
 
 // ---------------- Rendering ----------------

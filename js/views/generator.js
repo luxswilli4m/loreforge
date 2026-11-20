@@ -33,6 +33,10 @@ const TOOLS = [
   ['Water & routes', [['river', '〰️', 'Draw river'], ['dry', '🏜️', 'Dry up rivers'], ['road', '🛣️', 'Draw road'], ['erase', '✂️', 'Erase drawn']]],
   ['Places & labels', [['town', '🏘️', 'Towns'], ['label', '🏷️', 'Labels']]],
 ];
+// brush sizes run from a hair (0.1) to huge (40) on a curved slider, so small sizes get plenty of room
+const sizeToSlider = v => Math.round(Math.log(v / 0.1) / Math.log(400) * 100);
+const sliderToSize = s => +(0.1 * Math.pow(400, s / 100)).toFixed(s < 30 ? 2 : 1);
+const fmtSize = v => v < 1 ? v.toFixed(2).replace(/0$/, '') : v < 10 ? v.toFixed(1) : Math.round(v);
 const BRUSH_TOOLS = ['raise', 'lower', 'mountain', 'smooth', 'flatten', 'land', 'sea', 'biome', 'realm', 'dry'];
 const TOOL_HELP = {
   raise: 'Drag to raise the ground. Lift the sea floor to make new land.', lower: 'Drag to lower the ground — carve valleys, bays and lakes.',
@@ -89,7 +93,7 @@ export function render(main) {
   const mark = document.createElement('div'); mark.className = 'town-mark';
   const zw = document.createElement('div'); zw.className = 'gen-zoom';
   const det = document.createElement('canvas'); det.className = 'gen-detail';
-  zw.append(canvas, det, ov, cov, cur, mark);
+  zw.append(canvas, det, ov, cov, mark);
 
   function styleButtons(o) {
     return MODE_STYLES[memo.mode].map(s => `<button class="swatch ${o.style === s ? 'on' : ''}" data-style="${s}" title="${esc(STYLE_HINT[s] || STYLE_LABEL[s])}"><span style="background:${STYLE_SWATCH[s]}"></span>${STYLE_LABEL[s]}</button>`).join('');
@@ -170,7 +174,7 @@ export function render(main) {
     const tools = TOOLS.map(([g, list]) => `<div class="tg-label">${g}</div><div class="tools">${list.map(([id, ic, lb]) =>
       `<button class="tool ${t.tool === id ? 'on' : ''}" data-tool="${id}" title="${esc(TOOL_HELP[id])}"><span>${ic}</span>${lb}</button>`).join('')}</div>`).join('');
     const brush = BRUSH_TOOLS.includes(t.tool) ? `
-      <label>Brush size <span class="val">${t.size}</span></label><input type="range" data-t="size" min="0.5" max="40" step="0.5" value="${t.size}">
+      <label>Brush size <span class="val">${fmtSize(t.size)}</span></label><input type="range" data-t="size" data-log min="0" max="100" step="1" value="${sizeToSlider(t.size)}">
       ${['biome', 'realm', 'dry'].includes(t.tool) ? '' : `<label>Strength <span class="val">${Math.round(t.strength * 100)}%</span></label><input type="range" data-t="strength" min="0.05" max="1" step="0.05" value="${t.strength}">`}` : '';
     const riverOpt = t.tool === 'river' ? `<label>River size at the mouth</label><select data-t="riverW">${[[1, 'Stream'], [2.2, 'River'], [4, 'Great river']].map(([v, l]) => `<option value="${v}" ${+t.riverW === v ? 'selected' : ''}>${l}</option>`).join('')}</select>` : '';
     const labelOpt = t.tool === 'label' ? `<label>New label size</label><select data-t="labelSize">${[[0.7, 'Small'], [1, 'Medium'], [1.5, 'Large'], [2.2, 'Huge']].map(([v, l]) => `<option value="${v}" ${+t.labelSize === v ? 'selected' : ''}>${l}</option>`).join('')}</select>` : '';
@@ -186,7 +190,8 @@ export function render(main) {
     const town = t.tool === 'town' ? (tw ? `<div class="sel-town">
         <label>Town name</label><input id="tw-name" value="${esc(tw.name)}">
         <label class="check"><input type="checkbox" id="tw-cap" ${tw.capital ? 'checked' : ''}> Capital of its own realm</label>
-        <div class="row" style="margin-top:8px"><button id="tw-done" class="small">Done</button><button id="tw-del" class="danger small">Delete town</button></div></div>`
+        <div class="row" style="margin-top:8px"><button id="tw-done" class="small">Done</button><button id="tw-del" class="danger small">Delete town</button></div>
+        ${cityViewHTML(tw)}</div>`
       : `<p class="small muted" style="margin:8px 0 0">${ed.towns.length} towns · ${ed.realms.length} realms</p>`) : '';
     const realms = `<details class="realm-list" ${t.tool === 'realm' ? 'open' : ''}><summary>Realms (${ed.realms.length})</summary>${ed.realms.map(rl =>
       `<div class="row realm-row"><input type="color" data-rc="${rl.id}" value="${rl.color}"><input data-rn="${rl.id}" value="${esc(rl.name)}"></div>`).join('') || '<p class="small muted">Make a town a capital to found a realm.</p>'}</details>`;
@@ -200,6 +205,26 @@ export function render(main) {
       <label>Style</label><div class="swatches">${styleButtons(o)}</div>
       ${layersHTML(o)}
       ${undoRow()}`;
+  }
+
+  // the saved map's pin for a town (matched by name), so a town can open or get its own city map
+  function townPin(tw) {
+    const m = editMapId && getMap(editMapId);
+    if (!m) return null;
+    const nm = tw.name.toLowerCase();
+    return m.pins.find(p => (p.label || getEntry(p.entryId)?.name || '').toLowerCase() === nm) || null;
+  }
+  function cityViewHTML(tw) {
+    if (!editMapId) return `<div class="city-view"><b>🏰 City view</b><p class="small muted" style="margin:4px 0 0">Save this map first, then each town can have its own city map.</p></div>`;
+    const pin = townPin(tw), sub = pin && getMap(pin.submapId);
+    if (sub) return `<div class="city-view"><b>🏰 City view</b><img ${A.src(sub.image)} alt="">
+      <div class="row" style="gap:6px;flex-wrap:wrap"><button class="small primary" data-cv="open" data-map="${sub.id}">Open ↘</button>${sub.gen?.edit ? `<button class="small" data-cv="edit" data-map="${sub.id}">✏️ Edit city</button>` : ''}</div></div>`;
+    return `<div class="city-view"><b>🏰 City view</b><p class="small muted" style="margin:4px 0 6px">${pin ? 'No city map yet.' : 'Save the map once more to give this new town a pin.'}</p>
+      ${pin ? `<button class="small primary" data-cv="gen" data-pin="${pin.id}">🏰 Generate a city map</button>` : ''}</div>`;
+  }
+  async function leaveTo(hash) {
+    if (dirty && !confirm('You have unsaved changes to this map. Leave without saving? (Cancel to stay and save first.)')) return;
+    go(hash);
   }
 
   function cityEditHTML() {
@@ -241,7 +266,7 @@ export function render(main) {
       </div>
     </div>`;
   const ctl = main.querySelector('#ctl'), pv = main.querySelector('#pv'), busyEl = main.querySelector('#busy'), fur = main.querySelector('#fur');
-  pv.prepend(zw);
+  pv.prepend(zw); pv.append(cur); // the brush ring lives in screen space so it stays crisp at any zoom
 
   const drawControls = () => {
     ctl.innerHTML = controlsHTML();
@@ -383,7 +408,8 @@ export function render(main) {
   const snap = () => memo.mode === 'world' ? cloneEdit(ed) : cloneCity(ced);
   const restore = st => { if (memo.mode === 'world') ed = st; else ced = st; };
   const pushUndo = () => { undoStack.push(snap()); if (undoStack.length > 30) undoStack.shift(); redoStack = []; };
-  const changed = () => { if (memo.mode === 'world') edVersion++; else { cVersion++; ced.o = { ...ced.o }; } schedule(60); };
+  let dirty = false;
+  const changed = () => { dirty = true; if (memo.mode === 'world') edVersion++; else { cVersion++; ced.o = { ...ced.o }; } schedule(60); };
   function startEditing() {
     if (!data) return;
     if (memo.mode === 'world') {
@@ -466,9 +492,10 @@ export function render(main) {
     const rc = canvas.getBoundingClientRect(), [lw] = lay();
     const showCur = memo.mode === 'world' ? BRUSH_TOOLS.includes(memo.tool.tool) : ['bld-add', 'bld-del', 'bld-paint', 'tree-add', 'tree-del'].includes(memo.ctool.tool);
     if (showCur) {
-      const d = memo.mode === 'world' ? memo.tool.size * 2 / gdim()[0] * lw : memo.ctool.size * 2 * cu() / canvas.width * lw;
-      cur.style.width = cur.style.height = d + 'px';
-      cur.style.left = (ev.clientX - rc.left) / rc.width * lw + 'px'; cur.style.top = (ev.clientY - rc.top) / rc.width * lw + 'px';
+      const d = memo.mode === 'world' ? memo.tool.size * 2 / gdim()[0] * rc.width : memo.ctool.size * 2 * cu() / canvas.width * rc.width;
+      const pr = pv.getBoundingClientRect();
+      cur.style.width = cur.style.height = Math.max(4, d) + 'px';
+      cur.style.left = (ev.clientX - pr.left) + 'px'; cur.style.top = (ev.clientY - pr.top) + 'px';
       cur.style.display = 'block';
     } else cur.style.display = 'none';
     if (memo.mode === 'city') {
@@ -483,7 +510,7 @@ export function render(main) {
     const t = memo.tool;
     const [gx, gy] = gridPos(ev);
     if (stroke.kind === 'brush') {
-      const dist = Math.hypot(gx - stroke.x, gy - stroke.y), step = Math.max(0.6, t.size * 0.25);
+      const dist = Math.hypot(gx - stroke.x, gy - stroke.y), step = t.tool === 'dry' ? Math.max(0.12, t.size * 0.3) : Math.max(0.6, t.size * 0.25);
       for (let s2 = step; s2 <= dist; s2 += step) {
         const f = s2 / dist;
         dab(stroke.x + (gx - stroke.x) * f, stroke.y + (gy - stroke.y) * f);
@@ -665,9 +692,9 @@ export function render(main) {
     if (editing()) {
       if (t.dataset.t || t.dataset.ct) {
         const key = t.dataset.t || t.dataset.ct, tool = t.dataset.t ? memo.tool : memo.ctool;
-        tool[key] = t.type === 'range' ? +t.value : t.value;
+        tool[key] = t.dataset.log != null ? sliderToSize(+t.value) : t.type === 'range' ? +t.value : t.value;
         const val = t.previousElementSibling?.querySelector?.('.val');
-        if (val) val.textContent = key === 'strength' ? Math.round(+t.value * 100) + '%' : t.value;
+        if (val) val.textContent = key === 'strength' ? Math.round(+t.value * 100) + '%' : t.dataset.log != null ? fmtSize(tool[key]) : t.value;
         return;
       }
       if (t.id === 'c-roof') { memo.ctool.roof = t.value; ctl.querySelectorAll('[data-roof]').forEach(x => x.classList.remove('on')); return; }
@@ -742,6 +769,9 @@ export function render(main) {
     else if (b.id === 'redo') redo();
     else if (b.id === 'reset') { if (confirm('Throw away every hand edit and go back to the generated map?')) { discardEdits(); drawControls(); regen(true); } }
     else if (b.id === 'tw-done') { selTown = -1; drawControls(); }
+    else if (b.dataset.cv === 'open') leaveTo(`#/map/${b.dataset.map}`);
+    else if (b.dataset.cv === 'edit') leaveTo(`#/generate?edit=${b.dataset.map}`);
+    else if (b.dataset.cv === 'gen') { const tw = ed.towns[selTown]; leaveTo(`#/generate?mode=city&name=${encodeURIComponent(tw?.name || '')}&parent=${editMapId}&pin=${b.dataset.pin}`); }
     else if (b.id === 'tw-del' && selTown >= 0) { pushUndo(); makeCapital(ed.towns[selTown], false); ed.towns.splice(selTown, 1); selTown = -1; drawControls(); changed(); }
     else if (b.dataset.mode) {
       if (b.dataset.mode === memo.mode) return;
@@ -900,6 +930,7 @@ export function render(main) {
     const res = isWorld ? renderWorld(data.gen, full, memo.world.style, { layers: memo.world.layers }) : renderCity(data.gen, full, memo.city.style);
     const pic = await A.storeImage(full, { quality: 0.88 });
     const shots = pendingShots; pendingShots = [];
+    dirty = false;
     // keep the editable terrain with world maps so they can be reopened in the editor later
     let gen = null;
     if (isWorld) {

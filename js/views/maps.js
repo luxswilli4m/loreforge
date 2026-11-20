@@ -128,7 +128,7 @@ export function renderMap(main, id) {
       const sel = p.id === selected;
       return `<g class="pin" data-pin="${p.id}" transform="translate(${p.x},${p.y}) scale(${s})">
         ${sel ? '<circle r="15" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="4 3"/>' : ''}
-        <title>${esc(label)}</title>
+        <title>${esc(label)}</title><circle r="15" fill="transparent"/>
         <circle class="pin-body" r="${p.quiet && !sel ? 6 : p.submapId ? 9 : 7}" fill="${col}" fill-opacity="${p.quiet ? 0.8 : 1}" stroke="${p.quiet ? '#fff' : '#000'}" stroke-width="2"/>
         ${p.submapId ? '<circle r="3" fill="#000"/>' : ''}
         ${label && (!p.quiet || sel) ? `<text class="pin-label" x="12" y="5">${esc(label)}</text>` : ''}
@@ -194,7 +194,16 @@ export function renderMap(main, id) {
     const p = m.pins.find(x => x.id === selected);
     const entries = [...W().entries].sort((a, b) => a.name.localeCompare(b.name));
     const others = W().maps.filter(x => x.id !== m.id);
+    const sub = p && getMap(p.submapId);
     side.innerHTML = p ? `
+      <div class="card side-box city-card">
+        <h4>🏰 ${sub ? 'Opens' : 'City view'}</h4>
+        ${sub ? `<a href="#/map/${sub.id}" class="city-thumb"><img ${A.src(sub.image)} alt=""><span>${esc(sub.name)}</span></a>
+          <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:8px"><a class="btn primary" href="#/map/${sub.id}">Enter ↘</a>
+            ${sub.gen?.edit ? `<a class="btn" href="#/generate?edit=${sub.id}">✏️ Edit</a>` : ''}<button class="small" id="p-unsub">Detach</button></div>`
+        : `<p class="small muted" style="margin:0 0 8px">Give ${esc(p.label || getEntry(p.entryId)?.name || 'this place')} its own city or local map.</p>
+          <div class="row" style="gap:6px;flex-wrap:wrap"><button class="primary" id="p-gencity">🏰 Generate a city map</button><button id="p-newsub">⬆ Upload a map</button></div>`}
+      </div>
       <div class="card side-box">
         <h4>Pin</h4>
         <label>Label</label><input id="p-label" value="${esc(p.label)}" placeholder="${esc(getEntry(p.entryId)?.name || 'Pin name')}">
@@ -203,7 +212,6 @@ export function renderMap(main, id) {
         <button class="small" id="p-newentry" style="margin-top:6px">＋ New entry for this pin</button>
         <label>Opens map</label>
         <select id="p-sub"><option value="">— none —</option>${others.map(x => `<option value="${x.id}" ${x.id === p.submapId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>
-        <div class="row" style="margin-top:6px;gap:6px;flex-wrap:wrap"><button class="small" id="p-gencity">🏰 Generate a city map</button><button class="small" id="p-newsub">⬆ Upload a map</button></div>
         <label class="check"><input type="checkbox" id="p-quiet" ${p.quiet ? '' : 'checked'}> Show label on the map</label>
         <label>Colour</label>
         <div class="row" style="gap:4px">${PIN_COLORS.map(c => `<button class="icon" data-col="${c}" style="flex:0;padding:0;width:24px;height:24px;border-radius:50%;background:${c};border:2px solid ${c === p.color ? '#fff' : '#000'}"></button>`).join('')}
@@ -236,8 +244,9 @@ export function renderMap(main, id) {
       $s('#p-entry').onchange = e => { p.entryId = e.target.value; save(); drawPins(); drawSide(); };
       $s('#p-sub').onchange = e => { p.submapId = e.target.value; save(); drawPins(); drawSide(); };
       $s('#p-newentry').onclick = () => newEntryDialog('location', ent => { p.entryId = ent.id; if (!p.label) p.label = ''; save(); drawPins(); drawSide(); toast(`Created ${ent.name}`); });
-      $s('#p-gencity').onclick = () => go(`#/generate?mode=city&name=${encodeURIComponent(p.label || getEntry(p.entryId)?.name || '')}&parent=${m.id}&pin=${p.id}`);
-      $s('#p-newsub').onclick = async () => { const sub = await newMapDialog(m.id, p); if (sub) { drawPins(); drawSide(); toast('Deeper map added — click “Enter map”'); } };
+      if ($s('#p-unsub')) $s('#p-unsub').onclick = () => { p.submapId = ''; save(); drawPins(); drawSide(); };
+      if ($s('#p-gencity')) $s('#p-gencity').onclick = () => go(`#/generate?mode=city&name=${encodeURIComponent(p.label || getEntry(p.entryId)?.name || '')}&parent=${m.id}&pin=${p.id}`);
+      if ($s('#p-newsub')) $s('#p-newsub').onclick = async () => { const sub = await newMapDialog(m.id, p); if (sub) { drawPins(); drawSide(); toast('Deeper map added — click “Enter map”'); } };
       $s('#p-quiet').onchange = e => { p.quiet = !e.target.checked; save(); drawPins(); };
       side.querySelectorAll('[data-col]').forEach(b => b.onclick = () => { p.color = b.dataset.col; save(); drawPins(); drawSide(); });
       $s('#p-del').onclick = () => { m.pins = m.pins.filter(x => x !== p); selected = null; save(); drawPins(); drawSide(); };
