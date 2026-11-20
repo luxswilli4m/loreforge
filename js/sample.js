@@ -107,6 +107,14 @@ export function sampleWorld() {
           { id: 'b7', text: 'Sela reveals a clue about @[Drowned Crown](crown)', done: false },
         ], notes: '**Secret:** Sela knows where the Ember fleet sank.', recap: '' },
     ],
+    quests: [
+      { id: 'q1', title: 'The Drowned Crown', status: 'active', giver: '@[Captain Mira Vex](mira)', reward: 'A share of the Ember treasure', summary: 'Find the lost crown before @[Ashen Hand](ashen) gets it.',
+        desc: 'The crown sank with the Ember fleet. @[Sela of the Thorn](sela) may know where.', created: Date.now(), updated: Date.now(),
+        objectives: [{ id: 'o1', text: 'Meet @[Captain Mira Vex](mira)', done: true }, { id: 'o2', text: 'Find @[Sela of the Thorn](sela) in the @[Whisperwood](whisper)', done: false }, { id: 'o3', text: 'Locate the wreck of the Ember fleet', done: false }] },
+      { id: 'q2', title: 'Rats in the Sump', status: 'rumoured', giver: '', reward: '50 gp', summary: 'Dock workers whisper about something big under @[Saltmere](saltmere).', desc: '', created: Date.now(), updated: Date.now(), objectives: [] },
+    ],
+    tables: [{ id: 't1', name: 'Saltmere street encounters', rows: [{ w: 3, text: '1d4 drunk sailors looking for a fight' }, { w: 2, text: 'A pickpocket from the Ashen Hand' }, { w: 2, text: 'A street preacher warning of the drowned king' }, { w: 1, text: 'The Warden’s guards demanding papers' }, { w: 1, text: 'A gull steals something shiny' }] }],
+    party: [{ id: 'pc1', name: 'Thorin', ac: '18', hp: '34', init: 0, pp: '12' }, { id: 'pc2', name: 'Lyra', ac: '14', hp: '24', init: 3, pp: '15' }, { id: 'pc3', name: 'Pip', ac: '15', hp: '22', init: 4, pp: '14' }],
     journals: [
       { id: 'j1', title: 'A Brief History of Vael', category: 'History', created: Date.now(), updated: Date.now(),
         body: '# The Ember Kings\nFor four centuries the Ember Kings ruled from the @[The Greyspine](greyspine).\n\n# The Fall\nAll of it ended on the @[Night of Broken Tides](tides).' },

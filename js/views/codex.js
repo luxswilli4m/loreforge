@@ -5,15 +5,19 @@ import * as entries from './entries.js';
 import * as journals from './journals.js';
 import * as campaign from './campaign.js';
 import * as maps from './maps.js';
+import * as quests from './quests.js';
+import * as library from './library.js';
 
 const state = { mode: 'az', q: '', off: new Set(), collapsed: new Set() };
 
 const KINDS = [
   ...Object.entries(TYPES).map(([k, t]) => ({ k, label: t.plural, icon: t.icon, color: t.color })),
   { k: 'journal', label: 'Journals', icon: '✒️', color: 'var(--muted)' },
+  { k: 'quest', label: 'Quests', icon: '🧭', color: 'var(--accent)' },
   { k: 'session', label: 'Sessions', icon: '🎲', color: 'var(--accent)' },
   { k: 'map', label: 'Maps', icon: '🗺️', color: 'var(--muted)' },
   { k: 'event', label: 'Timeline events', icon: '⏳', color: 'var(--muted)' },
+  { k: 'doc', label: 'Library', icon: '🏛️', color: 'var(--muted)' },
 ];
 const kindInfo = Object.fromEntries(KINDS.map(k => [k.k, k]));
 
@@ -24,6 +28,8 @@ function allItems() {
     ...w.journals.map(j => ({ key: `journal:${j.id}`, kind: 'journal', name: j.title, sub: j.category, tags: [j.category], href: `#/journal/${j.id}`, edit: `#/journal/${j.id}/edit`, html: () => journals.readHTML(j), text: j.body })),
     ...w.sessions.map(s => ({ key: `session:${s.id}`, kind: 'session', name: `Session ${s.number}: ${s.title}`, sortName: s.title, sub: s.status, tags: [], href: `#/session/${s.id}`, html: () => campaign.readHTML(s), text: s.notes + ' ' + s.recap })),
     ...w.maps.map(m => ({ key: `map:${m.id}`, kind: 'map', name: m.name, sub: `${m.pins.length} pins`, tags: [], href: `#/map/${m.id}`, html: () => maps.peekHTML(m), text: '' })),
+    ...w.quests.map(q => ({ key: `quest:${q.id}`, kind: 'quest', name: q.title, sub: q.status, tags: [q.status], href: `#/quest/${q.id}`, html: () => quests.readHTML(q), text: q.summary + ' ' + q.desc })),
+    ...w.library.map(d => ({ key: `doc:${d.id}`, kind: 'doc', name: d.name, sub: d.cat, tags: [d.cat], href: `#/doc/${d.id}`, html: () => '<div id="codex-doc"><p class="muted">Opening…</p></div>', after: () => library.viewerHTML(d, '70vh').then(h => { const el = document.getElementById('codex-doc'); if (el) el.innerHTML = h; }), text: '' })),
     ...w.events.map(ev => ({ key: `event:${ev.id}`, kind: 'event', name: ev.title, sub: formatDate(ev.date), tags: [], href: '#/timeline', html: () => eventHTML(ev), text: ev.desc })),
   ];
 }
@@ -112,6 +118,7 @@ export function render(main) {
         ${it.edit ? `<a class="btn small" href="${it.edit}">✎ Edit</a>` : ''}
         <a class="btn small" href="${it.href}">Open full page →</a></div>
       <div class="codex-body">${it.html()}</div>`;
+    it.after?.();
     art.scrollTop = 0;
   }
 
@@ -145,7 +152,7 @@ export function render(main) {
     if (cat) { state.mode = 'category'; state.off = new Set(KINDS.map(k => k.k).filter(k => k !== cat.dataset.cat)); render(main); return; }
     const a = e.target.closest('a[href^="#/"]');
     if (!a || e.ctrlKey || e.metaKey || a.classList.contains('btn')) return;
-    const m = a.getAttribute('href').match(/^#\/(entry|journal|session|map)\/([a-z0-9]+)$/);
+    const m = a.getAttribute('href').match(/^#\/(entry|journal|session|map|quest|doc)\/([a-z0-9]+)$/);
     if (m) { e.preventDefault(); select(`${m[1]}:${m[2]}`); drawList(); }
   });
 

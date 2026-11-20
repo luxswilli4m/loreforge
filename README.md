@@ -12,6 +12,16 @@ It combines a **world wiki** (entries, maps, relationship graphs, a shareable pl
 
 **Interactive maps.** Upload any map image, then pan and zoom. Drop pins linked to entries, nest maps (a pin on the world map can open a city map, which opens a dungeon map), calibrate the scale against the map's scale bar, and measure routes with travel times on foot, horseback, wagon and ship.
 
+**GM Screen.** A dice roller that understands rolls like `2d6+3`, `4d6kh3`, `adv` and `dis`, and highlights natural 20s and 1s. An initiative tracker with HP bars, damage and healing, conditions and a round counter; you can add creatures from your World Bible or your whole party at once. A party sheet, quick generators (NPC, tavern, loot, weather, plot hook, names) that save to the World Bible in one click, and your own weighted random tables. Press **D** anywhere for a floating dice tray.
+
+**Quests.** A drag-and-drop board (Rumoured / Active / Completed / Failed). Each quest has objectives, a quest giver, a reward and details, with @links throughout.
+
+**Library.** Drop in PDF rulebooks, adventures, handouts and images, then read them in the app or Ctrl+click to open them in the side panel next to your notes.
+
+**Safety nets.** Automatic snapshots every 30 minutes (the last 6 are kept) that you can restore, full backups that include Library files, and a reminder when you haven't backed up in two weeks.
+
+**Little things.** ⭐ Pin favourite entries to the sidebar, 🎲 get name suggestions when creating entries, and press **?** for keyboard shortcuts.
+
 **Map generator.** Create fantasy maps from a seed, in Parchment, Atlas or Night style.
 - *World maps:* continents, archipelagos or coastal regions, with mountain ranges, forests, rivers, lakes, biomes, realms and their borders, towns, capitals, roads, and named seas, mountains and forests.
 - *City maps:* villages up to capital cities, with walls and gates, districts, building lots, a market square, castle, temple, gardens, a river with bridges, and harbour docks.
@@ -70,7 +80,8 @@ js/
   sample.js       demo world
   gen/            map generators (core helpers, world.js, city.js, names.js)
   theme.js        themes, torn edges, backgrounds
-  views/          home, entries, codex, maps, generator, graph, campaign, timeline, journals, settings, appearance
+  tools/          dice, generators, dice tray
+  views/          home, entries, codex, maps, generator, graph, campaign, quests, timeline, journals, gm, library, settings, appearance
 ```
 
 Inspired by the ideas behind tools like World Anvil, vvd and ScribesBlade. This is an independent open-source project.

@@ -1,6 +1,7 @@
 import { state, createWorld, openWorld, deleteWorld, importWorld, W, TYPES, formatDate, dateKey } from '../store.js';
 import { esc, promptDialog, confirmDialog, pickFile, readText, toast, go, typeColor, typeBadge } from '../util.js';
 import { sampleWorld } from '../sample.js';
+import { downloadBackup } from './settings.js';
 
 export function renderPicker(main) {
   const worlds = state.worlds;
@@ -62,6 +63,7 @@ export function render(main) {
   main.innerHTML = `
     <div class="page-head"><h1>${esc(w.name)}</h1>
       <a class="btn" href="#/settings">Edit world</a></div>
+    ${w.entries.length >= 5 && (!w.lastExport || Date.now() - w.lastExport > 14 * 864e5) ? `<div class="backup-nag">💾 <span>${w.lastExport ? `It’s been ${Math.floor((Date.now() - w.lastExport) / 864e5)} days since your last backup.` : 'You haven’t exported a backup of this world yet.'} Your world only lives in this browser.</span><button class="primary small" id="nagexp">Back up now</button></div>` : ''}
     ${w.description ? `<p class="muted" style="max-width:75ch">${esc(w.description)}</p>` : ''}
     <p><span class="muted">Today in-world:</span> <b>${esc(formatDate(cal.current, true))}</b></p>
     <div class="stats">
@@ -85,6 +87,10 @@ export function render(main) {
             : `<p class="muted small">No planned sessions. <a href="#/campaign">Plan one</a>.</p>`}
         </div>
         <div class="card side-box">
+          <h4>Active quests</h4>
+          ${w.quests.filter(q => q.status === 'active').slice(0, 4).map(q => `<p style="margin:0 0 6px"><a href="#/quest/${q.id}">🧭 ${esc(q.title)}</a> <span class="muted small">${q.objectives.filter(o => o.done).length}/${q.objectives.length}</span></p>`).join('') || '<p class="muted small" style="margin:0">None yet. <a href="#/quests">Start one</a>.</p>'}
+        </div>
+        <div class="card side-box">
           <h4>Latest world events</h4>
           ${[...w.events].sort((a, b) => dateKey(b.date) - dateKey(a.date)).slice(0, 4).map(ev =>
             `<p style="margin:0 0 8px"><span class="tl-date">${esc(formatDate(ev.date))}</span><br>${esc(ev.title)}</p>`).join('') || '<p class="muted small">Nothing on the timeline yet.</p>'}
@@ -92,8 +98,10 @@ export function render(main) {
         </div>
         <div class="card side-box">
           <h4>Tips</h4>
-          <p class="small muted" style="margin:0">Type <b>@</b> in any text box to link an entry. <b>Ctrl+click</b> any link to open it in a side panel. <b>Ctrl+K</b> searches everything.</p>
+          <p class="small muted" style="margin:0">Type <b>@</b> in any text box to link an entry. <b>Ctrl+click</b> any link to open it in a side panel. <b>Ctrl+K</b> searches everything, <b>D</b> rolls dice, and <b>?</b> shows every shortcut.</p>
         </div>
       </div>
     </div>`;
+  const nag = main.querySelector('#nagexp');
+  if (nag) nag.onclick = async () => { await downloadBackup(); render(main); };
 }

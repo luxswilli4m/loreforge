@@ -1,4 +1,4 @@
-import { state, loadWorlds, openWorld, saveNow, W, TYPES, getEntry, getSession, getJournal, getMap } from './store.js';
+import { state, loadWorlds, openWorld, saveNow, W, TYPES, getEntry, getSession, getJournal, getMap, getQuest, getDoc } from './store.js';
 import { $, esc, openModal, closeModal, typeColor, plain } from './util.js';
 import * as home from './views/home.js';
 import * as entries from './views/entries.js';
@@ -12,6 +12,11 @@ import * as generator from './views/generator.js';
 import * as codex from './views/codex.js';
 import * as appearance from './views/appearance.js';
 import { applyTheme, applyBackground, getPrefs } from './theme.js';
+import * as gm from './views/gm.js';
+import * as quests from './views/quests.js';
+import * as library from './views/library.js';
+import { initTray } from './tools/tray.js';
+import { newEntryDialog } from './views/entries.js';
 
 const NAV = [
   { href: '#/', icon: '🏠', label: 'Overview', match: /^$/ },
@@ -23,7 +28,10 @@ const NAV = [
   null,
   { href: '#/campaign', icon: '🎲', label: 'Campaign', match: /^(campaign|session)/ },
   { href: '#/timeline', icon: '⏳', label: 'Timeline', match: /^timeline/ },
+  { href: '#/quests', icon: '🧭', label: 'Quests', match: /^(quests|quest)(\/|$)/ },
   { href: '#/journals', icon: '✒️', label: 'Journals', match: /^(journals|journal)/ },
+  { href: '#/gm', icon: '🛡️', label: 'GM Screen', match: /^gm/ },
+  { href: '#/library', icon: '🏛️', label: 'Library', match: /^(library|doc)/ },
   null,
   { href: '#/settings', icon: '⚙️', label: 'World settings', match: /^settings/ },
   { href: '#/appearance', icon: '🎨', label: 'Appearance', match: /^appearance/ },
@@ -37,7 +45,9 @@ function renderNav(path) {
   const nav = $('#nav');
   if (!W()) { nav.innerHTML = ''; $('#world-name').textContent = ''; return; }
   $('#world-name').textContent = W().name;
-  nav.innerHTML = NAV.map(n => n ? `<a href="${n.href}" class="${n.match.test(path) ? 'active' : ''}"><span>${n.icon}</span>${n.label}</a>` : '<div class="nav-sep"></div>').join('');
+  const favs = W().entries.filter(e => e.fav).sort((a, b) => a.name.localeCompare(b.name));
+  nav.innerHTML = NAV.map(n => n ? `<a href="${n.href}" class="${n.match.test(path) ? 'active' : ''}"><span>${n.icon}</span>${n.label}</a>` : '<div class="nav-sep"></div>').join('')
+    + (favs.length ? `<div class="nav-sep"></div><div class="nav-pins-head">⭐ Pinned</div>${favs.map(e => `<a href="#/entry/${e.id}" class="nav-pin ${path === 'entry/' + e.id ? 'active' : ''}"><span class="type-dot" style="--tc:${typeColor(e.type)}"></span>${esc(e.name)}</a>`).join('')}` : '');
 }
 
 export function route() {
@@ -75,6 +85,11 @@ export function route() {
     generate: () => generator.render(main),
     codex: () => codex.render(main),
     appearance: () => appearance.render(main),
+    gm: () => gm.render(main),
+    quests: () => quests.renderList(main),
+    quest: () => quests.renderQuest(main, a),
+    library: () => library.renderList(main),
+    doc: () => library.renderDoc(main, a),
   }[view];
   cleanup = r ? r() : home.render(main);
 }
@@ -87,6 +102,12 @@ export function openPeek(hash) {
   else if (view === 'session' && getSession(id)) html = campaign.readHTML(getSession(id));
   else if (view === 'journal' && getJournal(id)) html = journals.readHTML(getJournal(id));
   else if (view === 'map' && getMap(id)) html = maps.peekHTML(getMap(id));
+  else if (view === 'quest' && getQuest(id)) html = quests.readHTML(getQuest(id));
+  else if (view === 'doc' && getDoc(id)) {
+    const d = getDoc(id);
+    html = `<h2>${esc(d.name)}</h2><div id="peek-doc"><p class="muted">Opening…</p></div>`;
+    library.viewerHTML(d, 'calc(100vh - 220px)').then(h => { const el = document.getElementById('peek-doc'); if (el) el.innerHTML = h; });
+  }
   else return false;
   $('#peek-body').innerHTML = html + `<p style="margin-top:20px"><a class="btn" href="${hash}">Open full page →</a></p>`;
   $('#peek-wrap').classList.remove('hidden');
@@ -116,6 +137,8 @@ function openSearch() {
       ...w.sessions.map(x => ({ href: `#/session/${x.id}`, name: x.title, sub: 'Session', color: 'var(--accent)', text: x.title + ' ' + plain(x.notes) })),
       ...w.journals.map(x => ({ href: `#/journal/${x.id}`, name: x.title, sub: 'Journal', color: 'var(--muted)', text: x.title + ' ' + plain(x.body) })),
       ...w.maps.map(x => ({ href: `#/map/${x.id}`, name: x.name, sub: 'Map', color: 'var(--muted)', text: x.name })),
+      ...w.quests.map(x => ({ href: `#/quest/${x.id}`, name: x.title, sub: 'Quest', color: 'var(--accent)', text: x.title + ' ' + plain(x.summary) + ' ' + plain(x.desc) })),
+      ...w.library.map(x => ({ href: `#/doc/${x.id}`, name: x.name, sub: 'Library · ' + x.cat, color: 'var(--muted)', text: x.name + ' ' + x.cat })),
     ];
     results = s ? all.filter(r => r.text.toLowerCase().includes(s))
       .sort((a, b) => (b.name.toLowerCase().includes(s) - a.name.toLowerCase().includes(s))).slice(0, 12) : all.slice(0, 8);
@@ -154,3 +177,21 @@ window.addEventListener('beforeunload', () => { saveNow(); });
   route();
   setTimeout(() => applyBackground(W()), 60);
 })();
+
+// ---------- Dice tray & keyboard shortcuts ----------
+const tray = initTray();
+function shortcutsHelp() {
+  openModal(`<h2>Keyboard shortcuts</h2><table class="fields-table">
+    ${[['Ctrl / ⌘ + K', 'Search everything'], ['N', 'New World Bible entry'], ['D', 'Open / close the dice tray'], ['?', 'This list'], ['Ctrl / ⌘ + click a link', 'Open it in the side panel'],
+      ['@ (while typing)', 'Link an entry'], ['Esc', 'Close dialogs and menus'], ['Right-click (World Web)', 'Connect, add notes, create entries'], ['Shift + drag (World Web)', 'Connect two nodes']]
+      .map(([k, v]) => `<tr><td><kbd>${k}</kbd></td><td>${v}</td></tr>`).join('')}</table>
+    <div class="modal-actions"><button class="primary" onclick="document.getElementById('modal-root').innerHTML=''">Got it</button></div>`);
+}
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return;
+  if ($('#modal-root').innerHTML) return;
+  if (e.key === 'd' || e.key === 'D') { e.preventDefault(); tray.toggle(); }
+  else if ((e.key === 'n' || e.key === 'N') && W()) { e.preventDefault(); newEntryDialog('character'); }
+  else if (e.key === '?') { e.preventDefault(); shortcutsHelp(); }
+});

@@ -1,4 +1,4 @@
-import { dbAll, dbPut, dbDel } from './db.js';
+import { dbAll, dbPut, dbDel, assetGet, assetPut } from './db.js';
 
 export const TYPES = {
   character: { label: 'Character', plural: 'Characters', icon: '🧙', color: 'var(--c-character)', hex: '#e07a5f',
@@ -25,6 +25,33 @@ export function save() {
   state.world.updated = Date.now();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => dbPut(state.world).catch(e => console.error('Save failed', e)), 250);
+  if (Date.now() - lastSnapCheck > 5 * 60e3) { lastSnapCheck = Date.now(); setTimeout(() => snapshot().catch(console.error), 2000); }
+}
+
+// ---------- automatic snapshots (kept in this browser, newest first) ----------
+let lastSnapCheck = Date.now();
+const SNAP_EVERY = 30 * 60e3, SNAP_KEEP = 6;
+export async function snapshot(force = false) {
+  const w = state.world; if (!w) return;
+  const key = 'snap:' + w.id;
+  const list = (await assetGet(key)) || [];
+  if (!force && list[0] && Date.now() - list[0].t < SNAP_EVERY) return;
+  list.unshift({ t: Date.now(), json: JSON.stringify(w), counts: { entries: w.entries.length, maps: w.maps.length, sessions: w.sessions.length, quests: (w.quests || []).length } });
+  while (list.length > SNAP_KEEP) list.pop();
+  await assetPut(key, list);
+}
+export const listSnapshots = async id => (await assetGet('snap:' + id)) || [];
+export async function restoreSnapshot(t) {
+  const w = state.world;
+  const s = (await listSnapshots(w.id)).find(x => x.t === t);
+  if (!s) return false;
+  await snapshot(true); // keep the current state too, in case
+  const data = normalizeWorld(JSON.parse(s.json));
+  data.id = w.id;
+  for (const k of Object.keys(w)) delete w[k];
+  Object.assign(w, data);
+  await saveNow();
+  return true;
 }
 export function saveNow() {
   clearTimeout(saveTimer);
@@ -40,18 +67,20 @@ export async function loadWorlds() {
 export function normalizeWorld(w) {
   const base = blankWorld(w.name || 'Untitled world');
   const out = Object.assign(base, w);
-  for (const k of ['entries', 'maps', 'relations', 'events', 'arcs', 'sessions', 'journals']) {
+  for (const k of ['entries', 'maps', 'relations', 'events', 'arcs', 'sessions', 'journals', 'quests', 'tables', 'library', 'party']) {
     if (!Array.isArray(out[k])) out[k] = [];
   }
   out.calendar = Object.assign(blankWorld('').calendar, w.calendar || {});
   out.settings = Object.assign(blankWorld('').settings, w.settings || {});
+  out.combat = Object.assign({ round: 1, turn: 0, list: [] }, w.combat || {});
   return out;
 }
 
 export function blankWorld(name) {
   return {
     id: uid(), name, description: '', created: Date.now(), updated: Date.now(),
-    entries: [], maps: [], relations: [], events: [], arcs: [], sessions: [], journals: [],
+    entries: [], maps: [], relations: [], events: [], arcs: [], sessions: [], journals: [], quests: [], tables: [], library: [], party: [],
+    combat: { round: 1, turn: 0, list: [] },
     calendar: {
       months: [
         { name: 'Frostwane', days: 30 }, { name: 'Thawmoon', days: 30 }, { name: 'Seedtide', days: 30 },
@@ -85,6 +114,7 @@ export function openWorld(id) {
   if (i >= 0) {
     state.world = state.worlds[i] = normalizeWorld(state.worlds[i]);
     localStorage.setItem('loreforge:last', id);
+    setTimeout(() => snapshot().catch(console.error), 1500);
   }
   return state.world;
 }
@@ -96,6 +126,8 @@ export const getMap = id => W()?.maps.find(m => m.id === id);
 export const getSession = id => W()?.sessions.find(s => s.id === id);
 export const getJournal = id => W()?.journals.find(j => j.id === id);
 export const getArc = id => W()?.arcs.find(a => a.id === id);
+export const getQuest = id => W()?.quests.find(q => q.id === id);
+export const getDoc = id => W()?.library.find(d => d.id === id);
 
 export function newEntry(type = 'character', name = 'New entry') {
   const e = { id: uid(), type, name, summary: '', body: '', secret: '', tags: [], image: '', fields: [], created: Date.now(), updated: Date.now() };
@@ -129,6 +161,7 @@ export function backlinks(id) {
   for (const e of w.entries) if (e.id !== id && mentionsIn(e.body + ' ' + e.summary + ' ' + e.secret).has(id)) out.push({ kind: 'entry', item: e });
   for (const s of w.sessions) if (mentionsIn(s.notes + ' ' + s.beats.map(b => b.text).join(' ')).has(id)) out.push({ kind: 'session', item: s });
   for (const j of w.journals) if (mentionsIn(j.body).has(id)) out.push({ kind: 'journal', item: j });
+  for (const q of w.quests) if (mentionsIn([q.giver, q.summary, q.desc, ...q.objectives.map(o => o.text)].join(' ')).has(id)) out.push({ kind: 'quest', item: q });
   for (const ev of w.events) if (mentionsIn(ev.desc).has(id) || (ev.entryIds || []).includes(id)) out.push({ kind: 'event', item: ev });
   return out;
 }
@@ -168,9 +201,22 @@ export function dayIndex(d) {
 export function exportWorld() {
   return JSON.stringify({ app: 'loreforge', version: 1, world: W() }, null, 1);
 }
+const blobToDataURL = b => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(b); });
+// full backup including Library files (PDFs, images) as embedded data
+export async function exportBackup() {
+  const w = W();
+  const libraryFiles = {};
+  for (const d of w.library || []) { const b = await assetGet('lib:' + d.id); if (b) libraryFiles[d.id] = await blobToDataURL(b); }
+  w.lastExport = Date.now();
+  save();
+  return JSON.stringify({ app: 'loreforge', version: 2, world: w, libraryFiles });
+}
 export async function importWorld(json) {
   const data = JSON.parse(json);
   const world = data.world || data;
   if (!world || !Array.isArray(world.entries)) throw new Error('This file does not look like a Loreforge world.');
+  for (const [id, url] of Object.entries(data.libraryFiles || {})) {
+    try { await assetPut('lib:' + id, await (await fetch(url)).blob()); } catch (e) { console.error('Library file import failed', e); }
+  }
   return createWorld(world.name + (state.worlds.some(w => w.name === world.name) ? ' (imported)' : ''), world);
 }

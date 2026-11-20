@@ -1,4 +1,5 @@
 import { W, TYPES, getEntry, newEntry, deleteEntry, backlinks, mentionsIn, save, uid, formatDate } from '../store.js';
+import { suggestName } from '../tools/generators.js';
 import { esc, md, typeBadge, typeColor, mentionLink, openModal, closeModal, confirmDialog, editorHTML, attachEditor, pickFile, imageToDataURL, toast, go, rerender } from '../util.js';
 
 let listFilter = { q: '', tag: '' };
@@ -42,7 +43,7 @@ function cardHTML(e) {
 
 export function newEntryDialog(type = 'character', after) {
   openModal(`<h2>New entry</h2>
-    <label>Name</label><input id="n" autofocus placeholder="e.g. Captain Mira Vex">
+    <label>Name</label><div class="row"><input id="n" autofocus placeholder="e.g. Captain Mira Vex"><button class="shrink" id="sugg" title="Suggest a name">🎲</button></div>
     <label>Type</label>
     <div class="filters">${Object.entries(TYPES).map(([k, t]) => `<button class="chip ${k === (type || 'character') ? 'on' : ''}" style="--tc:${t.color}" data-t="${k}">${t.icon} ${t.label}</button>`).join('')}</div>
     <div class="modal-actions"><button data-a="no">Cancel</button><button class="primary" data-a="yes">Create</button></div>`, m => {
@@ -62,6 +63,7 @@ export function newEntryDialog(type = 'character', after) {
       if (after) after(ent); else go(`#/entry/${ent.id}/edit`);
     };
     m.querySelector('#n').addEventListener('keydown', e => { if (e.key === 'Enter') create(); });
+    m.querySelector('#sugg').onclick = () => { m.querySelector('#n').value = suggestName(t); m.querySelector('#n').focus(); };
   });
 }
 
@@ -72,8 +74,8 @@ export function readHTML(e, compact = false) {
   const outs = [...mentionsIn(e.body + ' ' + e.summary)].filter(id => id !== e.id && getEntry(id));
   const pins = w.maps.flatMap(m => m.pins.filter(p => p.entryId === e.id).map(p => ({ m, p })));
   const fields = e.fields.filter(f => f.v);
-  const kindHref = { entry: x => `#/entry/${x.id}`, session: x => `#/session/${x.id}`, journal: x => `#/journal/${x.id}`, event: () => '#/timeline' };
-  const kindName = { entry: x => x.name, session: x => `Session ${x.number}: ${x.title}`, journal: x => x.title, event: x => `${x.title} (${formatDate(x.date)})` };
+  const kindHref = { quest: x => `#/quest/${x.id}`, entry: x => `#/entry/${x.id}`, session: x => `#/session/${x.id}`, journal: x => `#/journal/${x.id}`, event: () => '#/timeline' };
+  const kindName = { quest: x => `Quest: ${x.title}`, entry: x => x.name, session: x => `Session ${x.number}: ${x.title}`, journal: x => x.title, event: x => `${x.title} (${formatDate(x.date)})` };
   return `
   <div class="entry-layout">
     <div>
@@ -108,7 +110,8 @@ export function renderView(main, id) {
   if (!e) { main.innerHTML = `<div class="empty"><div class="big">❓</div>Entry not found. <a href="#/entries">Back to World Bible</a></div>`; return; }
   main.innerHTML = `
     <div class="page-head"><div class="breadcrumbs" style="flex:1"><a href="#/entries">World Bible</a> › <a href="#/entries/${e.type}">${TYPES[e.type]?.plural}</a></div>
-      <a class="btn" href="#/graph?focus=${e.id}">🕸️ Graph</a>
+      <button id="fav" title="${e.fav ? 'Unpin from sidebar' : 'Pin to sidebar'}" class="${e.fav ? 'active' : ''}">${e.fav ? '⭐ Pinned' : '☆ Pin'}</button>
+      <a class="btn" href="#/graph?focus=${e.id}">🕸️ Web</a>
       <a class="btn primary" href="#/entry/${e.id}/edit" style="background:var(--accent);color:var(--on-accent)">✎ Edit</a>
       <button class="danger" id="del">Delete</button></div>
     ${readHTML(e)}`;
@@ -116,6 +119,7 @@ export function renderView(main, id) {
     if (await confirmDialog(`Delete “${e.name}”? Links to it elsewhere will show as broken.`)) { deleteEntry(e.id); go(`#/entries/${e.type}`); }
   };
   main.querySelector('#addrel').onclick = () => relationDialog(e);
+  main.querySelector('#fav').onclick = () => { e.fav = !e.fav; save(); rerender(); };
   main.querySelectorAll('[data-delrel]').forEach(b => b.onclick = () => {
     W().relations = W().relations.filter(r => r.id !== b.dataset.delrel); save(); rerender();
   });

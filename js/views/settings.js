@@ -1,5 +1,12 @@
-import { W, save, saveNow, TYPES, exportWorld, deleteWorld, formatDate, dateKey, getEntry } from '../store.js';
+import { W, save, saveNow, TYPES, exportWorld, exportBackup, deleteWorld, formatDate, dateKey, getEntry, listSnapshots, restoreSnapshot, snapshot } from '../store.js';
 import { esc, md, download, slug, confirmDialog, toast, go, typeColor } from '../util.js';
+
+export async function downloadBackup() {
+  const w = W();
+  await saveNow();
+  toast('Preparing backup…');
+  download(`${slug(w.name)}-backup-${new Date().toISOString().slice(0, 10)}.json`, await exportBackup());
+}
 
 export function render(main) {
   const w = W();
@@ -25,11 +32,17 @@ export function render(main) {
       </div>
       <div class="card">
         <h3>Backup & sharing</h3>
-        <p class="muted small">Your world lives only in this browser. Export a backup regularly — and use it to move your world to another computer.</p>
+        <p class="muted small">Your world lives only in this browser. Export a backup regularly — it includes your Library files — and use it to move your world to another computer.</p>
         <div class="row" style="flex-wrap:wrap"><button id="exp">⬇ Export backup (.json)</button></div>
         <p class="muted small" style="margin-top:14px">Publish a read-only wiki for your players: one HTML file you can send, upload, or host. GM secrets and session prep are left out.</p>
         <button class="primary" id="wiki">📜 Export player wiki (.html)</button>
         <p class="muted small" id="usage" style="margin-top:12px"></p>
+      </div>
+      <div class="card">
+        <h3>Snapshots</h3>
+        <p class="muted small">Loreforge quietly saves a snapshot of this world every 30 minutes while you work (the last 6 are kept in this browser). Roll back if something goes wrong.</p>
+        <div id="snaps"><p class="muted small">Loading…</p></div>
+        <button class="small" id="snapnow" style="margin-top:8px">📸 Take a snapshot now</button>
       </div>
       <div class="card" style="border-color:var(--danger)">
         <h3>Danger zone</h3>
@@ -40,13 +53,26 @@ export function render(main) {
   $m('#wn').oninput = e => { w.name = e.target.value || 'Untitled world'; document.querySelector('#world-name').textContent = w.name; save(); };
   $m('#wd').oninput = e => { w.description = e.target.value; save(); };
   main.querySelectorAll('[data-sp]').forEach(i => i.oninput = () => { sp[i.dataset.sp] = Math.max(0.1, +i.value || 1); save(); });
-  $m('#exp').onclick = async () => { await saveNow(); download(`${slug(w.name)}-backup-${new Date().toISOString().slice(0, 10)}.json`, exportWorld()); };
+  $m('#exp').onclick = () => downloadBackup();
   $m('#wiki').onclick = () => { download(`${slug(w.name)}-wiki.html`, buildWiki(), 'text/html'); toast('Wiki exported'); };
   $m('#del').onclick = async () => {
     if (await confirmDialog(`Permanently delete “${w.name}”? This can’t be undone unless you have a backup.`)) {
       await deleteWorld(w.id); localStorage.removeItem('loreforge:last'); go('#/worlds');
     }
   };
+  const drawSnaps = async () => {
+    const list = await listSnapshots(w.id);
+    const el = $m('#snaps'); if (!el) return;
+    el.innerHTML = list.length ? list.map(s => `<div class="table-row"><span><b>${new Date(s.t).toLocaleString()}</b><br><span class="muted small">${s.counts.entries} entries · ${s.counts.maps} maps · ${s.counts.sessions} sessions</span></span><span style="flex:1"></span><button class="small" data-restore="${s.t}">Restore</button></div>`).join('')
+      : '<p class="muted small">No snapshots yet.</p>';
+  };
+  drawSnaps();
+  $m('#snapnow').onclick = async () => { await snapshot(true); toast('Snapshot saved'); drawSnaps(); };
+  $m('#snaps').addEventListener('click', async e => {
+    const b = e.target.closest('[data-restore]'); if (!b) return;
+    if (!(await confirmDialog('Restore this snapshot? Your current version is snapshotted first, so you can undo this.', 'Restore'))) return;
+    if (await restoreSnapshot(+b.dataset.restore)) { toast('Snapshot restored'); go('#/'); }
+  });
   navigator.storage?.estimate?.().then(e => { $m('#usage') && ($m('#usage').textContent = `World size: ${(exportWorld().length / 1048576).toFixed(1)} MB · browser storage used ${(e.usage / 1048576).toFixed(1)} MB`); });
 }
 
