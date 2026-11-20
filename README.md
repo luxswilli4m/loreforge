@@ -123,5 +123,5 @@ The generator fills the screen: scroll to zoom, drag to move (Space, middle or r
 
 **Timeline overview:** switch the Timeline to ⟷ Overview for a big horizontal chart with era bands, events above the line and sessions below. Scroll to zoom from millennia down to days, drag to move, hover anywhere to read the date and hover an event for its details. The calendar zooms out (click its title) from month → year (all months) → twelve-year view.
 
-**🌌 Cosmos:** a spinnable 3D star chart of worlds, moons, stars, planes and demiplanes with animated portals, routes, orbits and bonds. Hover for names, click for details and the maps attached to each world, double-click to fly to it, Shift-drag to reposition it.
+**🌌 Cosmos:** a spinnable 3D star chart of worlds, moons, stars, planes and demiplanes with animated portals, routes, orbits and bonds. Hover for names, click for details and the maps attached to each world, double-click to fly to it, Shift-drag to reposition it. In the editor, search to attach maps, link or create a World Bible entry, and pick a Type (or name your own custom type).
 

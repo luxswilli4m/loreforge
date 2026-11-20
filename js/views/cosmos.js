@@ -1,6 +1,6 @@
 // Cosmos: a spinnable 3D star chart of worlds, moons, stars and planes, with portals between them.
 // Bodies can open their maps; everything lives in world.cosmos = { bodies: [], links: [] }.
-import { W, uid, save, getMap, getEntry } from '../store.js';
+import { W, uid, save, getMap, getEntry, newEntry, TYPES } from '../store.js';
 import { esc, md, openModal, closeModal, confirmDialog, editorHTML, attachEditor, typeColor, toast } from '../util.js';
 import * as A from '../assets.js';
 
@@ -11,6 +11,7 @@ const COLORS = ['#e9c46a', '#5fa8d3', '#81b29a', '#e07a5f', '#c77dff', '#9aa4b8'
 const cam = { yaw: 0.6, pitch: 0.35, dist: 420, tx: 0, ty: 0, tz: 0, spin: true };
 let selected = null; // { kind: 'body' | 'link', id }
 
+const kindOf = b => { const k = KINDS[b.kind] || KINDS.other; return b.typeName ? ['✦', b.typeName] : k; };
 const bodyR = b => b.kind === 'star' ? 10 + b.size * 2.6 : b.kind === 'moon' ? 3 + b.size * 1.1 : 4 + b.size * 2;
 
 export function render(main) {
@@ -207,7 +208,7 @@ export function render(main) {
     cv.style.cursor = hover ? 'pointer' : 'grab';
     if (hover) {
       tip.classList.remove('hidden');
-      if (hover.body) { const b = hover.body, k = KINDS[b.kind] || KINDS.other; tip.innerHTML = `<b>${k[0]} ${esc(b.name)}</b><br><span class="muted small">${k[1]}${b.mapIds?.length ? ` · ${b.mapIds.length} map${b.mapIds.length > 1 ? 's' : ''}` : ''}</span>`; }
+      if (hover.body) { const b = hover.body, k = kindOf(b); tip.innerHTML = `<b>${k[0]} ${esc(b.name)}</b><br><span class="muted small">${k[1]}${b.mapIds?.length ? ` · ${b.mapIds.length} map${b.mapIds.length > 1 ? 's' : ''}` : ''}</span>`; }
       else { const l = hover.link, k = LINKS[l.kind] || LINKS.route, na = cz.bodies.find(b => b.id === l.a)?.name, nb = cz.bodies.find(b => b.id === l.b)?.name;
         tip.innerHTML = `<b>${k[0]} ${esc(l.label || k[1])}</b><br><span class="muted small">${esc(na || '?')} ↔ ${esc(nb || '?')}</span>`; }
       tip.style.left = Math.min(stage.clientWidth - 230, mx + 14) + 'px'; tip.style.top = (my + 14) + 'px';
@@ -233,7 +234,7 @@ export function render(main) {
     const sel = selected?.kind === 'body' ? cz.bodies.find(b => b.id === selected.id) : null;
     const lnk = selected?.kind === 'link' ? cz.links.find(l => l.id === selected.id) : null;
     if (sel) {
-      const k = KINDS[sel.kind] || KINDS.other, ent = getEntry(sel.entryId);
+      const k = kindOf(sel), ent = getEntry(sel.entryId);
       const maps = (sel.mapIds || []).map(getMap).filter(Boolean);
       const conns = cz.links.filter(l => l.a === sel.id || l.b === sel.id);
       side.innerHTML = `<h4>${k[0]} ${esc(k[1])}</h4>
@@ -263,7 +264,7 @@ export function render(main) {
       side.querySelector('#l-del').onclick = () => { cz.links = cz.links.filter(l => l !== lnk); save(); selected = null; drawSide(); };
     } else {
       side.innerHTML = `<h4>🌌 ${esc(w.name)} — the cosmos</h4>
-        ${cz.bodies.length ? `<ul class="link-list">${cz.bodies.map(b => `<li><a href="#" data-sel-body="${b.id}"><span class="cz-dot" style="background:${esc(b.color)}"></span>${(KINDS[b.kind] || KINDS.other)[0]} ${esc(b.name)}</a>${b.mapIds?.length ? ` <span class="muted small">· ${b.mapIds.length} map${b.mapIds.length > 1 ? 's' : ''}</span>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">Nothing charted yet.</p>'}
+        ${cz.bodies.length ? `<ul class="link-list">${cz.bodies.map(b => `<li><a href="#" data-sel-body="${b.id}"><span class="cz-dot" style="background:${esc(b.color)}"></span>${kindOf(b)[0]} ${esc(b.name)}</a>${b.mapIds?.length ? ` <span class="muted small">· ${b.mapIds.length} map${b.mapIds.length > 1 ? 's' : ''}</span>` : ''}</li>`).join('')}</ul>` : '<p class="small muted">Nothing charted yet.</p>'}
         <label>Key</label>
         <p class="small" style="margin:0">${Object.values(LINKS).map(([i, n, c]) => `<span style="color:${c}">━</span> ${i} ${n}`).join(' &nbsp; ')}</p>
         <p class="small muted">A gold dot on a world means it has maps attached. Click any world to see them.</p>`;
@@ -278,41 +279,125 @@ export function render(main) {
   function bodyDialog(body) {
     const isNew = !body;
     const n = cz.bodies.length;
-    const d = body ? JSON.parse(JSON.stringify(body)) : { id: uid(), name: '', kind: 'planet', color: COLORS[n % COLORS.length], size: 4, rings: false, mapIds: [], entryId: '', desc: '', ...randomSpot() };
-    const entries = [...w.entries].sort((a, b) => a.name.localeCompare(b.name));
+    const d = body ? JSON.parse(JSON.stringify(body)) : { id: uid(), name: '', kind: 'planet', typeName: '', color: COLORS[n % COLORS.length], size: 4, rings: false, mapIds: [], entryId: '', desc: '', ...randomSpot() };
+    d.mapIds = d.mapIds || [];
+    let custom = !!d.typeName;
     openModal(`<h2>${isNew ? 'Add to the cosmos' : 'Edit ' + esc(body.name)}</h2>
       <label>Name</label><input id="bn" value="${esc(d.name)}" placeholder="e.g. Vael, the Feywild, the Silver Moon" autofocus>
-      <div class="row"><div><label>Kind</label><select id="bk">${Object.entries(KINDS).map(([k, [i, l]]) => `<option value="${k}" ${d.kind === k ? 'selected' : ''}>${i} ${l}</option>`).join('')}</select></div>
-        <div style="flex:0 0 80px"><label>Colour</label><input type="color" id="bc" value="${esc(d.color)}"></div></div>
+      <div class="row"><div><label>Type</label><select id="bt">${Object.entries(KINDS).map(([k, [i, l]]) => `<option value="${k}" ${!custom && d.kind === k ? 'selected' : ''}>${i} ${l}</option>`).join('')}
+          <option value="__custom" ${custom ? 'selected' : ''}>✦ Custom…</option></select></div>
+        <div style="flex:0 0 84px"><label>Colour</label><input type="color" id="bc" value="${esc(d.color)}"></div></div>
+      <div id="bcustom" class="row ${custom ? '' : 'hidden'}"><div><label>Custom type name</label><input id="btn" value="${esc(d.typeName || '')}" placeholder="e.g. Shard, Dreamscape, Prison plane"></div>
+        <div><label>Looks like</label><select id="blook">${Object.entries(KINDS).filter(([k]) => k !== 'other').map(([k, [i, l]]) => `<option value="${k}" ${d.kind === k ? 'selected' : ''}>${i} ${l}</option>`).join('')}</select></div></div>
       <label>Size <span class="val" id="bsv">${d.size}</span></label><input type="range" id="bs" min="1" max="10" value="${d.size}">
       <label class="check"><input type="checkbox" id="br" ${d.rings ? 'checked' : ''}> Rings</label>
+
       <label>Maps of this place</label>
-      <div class="cz-mappick">${w.maps.map(m => `<label class="check"><input type="checkbox" data-map="${m.id}" ${d.mapIds.includes(m.id) ? 'checked' : ''}> ${esc(m.name)}</label>`).join('') || '<p class="small muted">No maps yet.</p>'}</div>
-      <label>World Bible entry</label><select id="be"><option value="">— none —</option>${entries.map(e => `<option value="${e.id}" ${d.entryId === e.id ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select>
+      <div class="picker" id="mp"><div class="chips" id="mchips"></div><input class="pick-search" id="msearch" placeholder="🔍 Search your maps to attach…" autocomplete="off"><div class="pick-results hidden" id="mres"></div></div>
+
+      <label>World Bible entry</label>
+      <div class="picker" id="ep"><div id="echip"></div><input class="pick-search" id="esearch" placeholder="🔍 Search entries to link…" autocomplete="off"><div class="pick-results hidden" id="eres"></div></div>
+
       <label>Notes</label>${editorHTML('bd', d.desc, 4, 'What is this place like? Type @ to link entries.')}
       <div class="modal-actions"><button data-a="no">Cancel</button><button class="primary" data-a="yes">${isNew ? 'Add' : 'Save'}</button></div>`, m => {
       attachEditor(m.querySelector('#bd'), v => d.desc = v);
-      m.querySelector('#bs').oninput = e => { m.querySelector('#bsv').textContent = e.target.value; };
+      const $ = q => m.querySelector(q);
+      $('#bs').oninput = e => { $('#bsv').textContent = e.target.value; };
+      $('#bt').onchange = e => { custom = e.target.value === '__custom'; $('#bcustom').classList.toggle('hidden', !custom); if (!custom) d.kind = e.target.value; else $('#btn').focus(); };
+      $('#bn').addEventListener('input', () => drawEntry());
+
+      // ---- maps: chips + search ----
+      const drawMaps = () => {
+        $('#mchips').innerHTML = d.mapIds.map(getMap).filter(Boolean).map(mp => `<span class="chip"><img ${A.src(mp.image)} alt="">${esc(mp.name)}<button type="button" data-unmap="${mp.id}" title="Remove">✕</button></span>`).join('')
+          || '<span class="small muted">No maps attached yet.</span>';
+      };
+      const searchMaps = () => {
+        const q = $('#msearch').value.trim().toLowerCase();
+        const hits = w.maps.filter(mp => !d.mapIds.includes(mp.id) && (!q || mp.name.toLowerCase().includes(q))).slice(0, 8);
+        $('#mres').innerHTML = hits.length ? hits.map(mp => `<button type="button" class="pick-row" data-addmap="${mp.id}"><img ${A.src(mp.image)} alt=""><span>${esc(mp.name)}${getMap(mp.parentId) ? `<small>inside ${esc(getMap(mp.parentId).name)}</small>` : ''}</span></button>`).join('')
+          : `<p class="small muted" style="margin:6px">${w.maps.length ? 'No other maps match.' : 'You have no maps yet.'}</p>`;
+        $('#mres').classList.remove('hidden');
+      };
+      $('#msearch').addEventListener('focus', searchMaps);
+      $('#msearch').addEventListener('input', searchMaps);
+
+      // ---- World Bible entry: link an existing one or create it ----
+      const drawEntry = () => {
+        const ent = getEntry(d.entryId);
+        if (ent) {
+          $('#echip').innerHTML = `<span class="chip big"><span class="type-dot" style="--tc:${typeColor(ent.type)}"></span>${TYPES[ent.type]?.icon || ''} ${esc(ent.name)}<button type="button" data-unent title="Unlink">✕</button></span>`;
+          $('#esearch').classList.add('hidden'); return;
+        }
+        $('#esearch').classList.remove('hidden');
+        const nm = $('#bn').value.trim();
+        const same = nm && w.entries.find(e => e.name.toLowerCase() === nm.toLowerCase());
+        $('#echip').innerHTML = same ? `<div class="pick-hint">📖 There’s already an entry called <b>${esc(same.name)}</b>. <button type="button" class="small primary" data-linkent="${same.id}">Link it</button></div>`
+          : nm ? `<div class="pick-hint">Not in the World Bible yet. <button type="button" class="small" data-newent>＋ Create “${esc(nm)}”</button></div>` : '';
+      };
+      const searchEntries = () => {
+        const q = $('#esearch').value.trim().toLowerCase(), nm = $('#bn').value.trim();
+        const hits = w.entries.filter(e => !q || e.name.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 8);
+        $('#eres').innerHTML = hits.map(e => `<button type="button" class="pick-row" data-linkent="${e.id}"><span class="type-dot" style="--tc:${typeColor(e.type)}"></span><span>${TYPES[e.type]?.icon || ''} ${esc(e.name)}<small>${esc(TYPES[e.type]?.label || '')}</small></span></button>`).join('')
+          + `<button type="button" class="pick-row new" data-newent>＋ Create a new entry${(q || nm) ? ` “${esc($('#esearch').value.trim() || nm)}”` : ''}</button>`;
+        $('#eres').classList.remove('hidden');
+      };
+      $('#esearch').addEventListener('focus', searchEntries);
+      $('#esearch').addEventListener('input', searchEntries);
+      const newEntryFlow = () => {
+        const name = $('#esearch').value.trim() || $('#bn').value.trim() || 'New place';
+        const typeChoices = Object.entries(TYPES).map(([k, t]) => `<option value="${k}" ${k === 'location' ? 'selected' : ''}>${t.icon} ${t.label}</option>`).join('');
+        // small inline form instead of another dialog, so nothing typed so far is lost
+        $('#eres').innerHTML = `<div class="pick-new"><label>New entry name</label><input id="nen" value="${esc(name)}">
+          <label>Entry type</label><select id="net">${typeChoices}</select>
+          <div class="row" style="gap:6px;margin-top:8px"><button type="button" class="small primary" data-makeent>Create &amp; link</button><button type="button" class="small" data-cancelent>Cancel</button></div></div>`;
+        $('#eres').classList.remove('hidden'); $('#echip').innerHTML = '';
+        $('#nen').focus();
+      };
       m.addEventListener('click', e => {
+        const t = e.target.closest('[data-unmap],[data-addmap],[data-unent],[data-linkent],[data-newent],[data-makeent],[data-cancelent]');
+        if (t) {
+          e.preventDefault();
+          if (t.dataset.unmap) { d.mapIds = d.mapIds.filter(x => x !== t.dataset.unmap); drawMaps(); }
+          else if (t.dataset.addmap) { d.mapIds.push(t.dataset.addmap); $('#msearch').value = ''; drawMaps(); searchMaps(); }
+          else if (t.dataset.unent != null) { d.entryId = ''; drawEntry(); }
+          else if (t.dataset.linkent) { d.entryId = t.dataset.linkent; $('#esearch').value = ''; $('#eres').classList.add('hidden'); drawEntry(); }
+          else if (t.dataset.newent != null) newEntryFlow();
+          else if (t.dataset.cancelent != null) { $('#eres').classList.add('hidden'); drawEntry(); }
+          else if (t.dataset.makeent != null) {
+            const ent = newEntry($('#net').value, $('#nen').value.trim() || 'New place');
+            if (d.desc) { ent.summary = d.desc.split('\n')[0].slice(0, 200); ent.body = d.desc; }
+            const kf = ent.fields.find(f => f.k === 'Kind');
+            if (kf) kf.v = custom ? ($('#btn').value.trim() || 'Custom') : (KINDS[$('#bt').value] || KINDS.other)[1];
+            ent.tags = [...(ent.tags || []), 'cosmos'];
+            save();
+            d.entryId = ent.id; $('#esearch').value = ''; $('#eres').classList.add('hidden'); drawEntry();
+            toast(`Created “${ent.name}” in the World Bible`);
+          }
+          return;
+        }
+        // clicking elsewhere closes result lists
+        if (!e.target.closest('#mp')) $('#mres').classList.add('hidden');
+        if (!e.target.closest('#ep')) $('#eres').classList.add('hidden');
         const a = e.target.dataset.a; if (!a) return;
         if (a === 'yes') {
-          d.name = m.querySelector('#bn').value.trim() || 'Unnamed world';
-          d.kind = m.querySelector('#bk').value; d.color = m.querySelector('#bc').value; d.size = +m.querySelector('#bs').value;
-          d.rings = m.querySelector('#br').checked; d.entryId = m.querySelector('#be').value;
-          d.mapIds = [...m.querySelectorAll('[data-map]')].filter(x => x.checked).map(x => x.dataset.map);
+          d.name = $('#bn').value.trim() || 'Unnamed world';
+          if (custom) { d.typeName = $('#btn').value.trim() || 'Custom'; d.kind = $('#blook').value; }
+          else { d.typeName = ''; d.kind = $('#bt').value; }
+          d.color = $('#bc').value; d.size = +$('#bs').value; d.rings = $('#br').checked;
           if (isNew) cz.bodies.push(d); else Object.assign(body, d);
           save(); selected = { kind: 'body', id: d.id };
         }
         closeModal();
         if (a === 'yes' && isNew && cz.bodies.length === 1) render(main); else drawSide();
       });
+      drawMaps(); drawEntry();
     });
   }
   function linkDialog(link, fromId) {
     if (cz.bodies.length < 2) { toast('Add at least two worlds or planes first'); return; }
     const isNew = !link;
     const d = link ? { ...link } : { id: uid(), a: fromId || cz.bodies[0].id, b: cz.bodies.find(b => b.id !== (fromId || cz.bodies[0].id))?.id, kind: 'portal', label: '', desc: '' };
-    const opts = sel => cz.bodies.map(b => `<option value="${b.id}" ${sel === b.id ? 'selected' : ''}>${(KINDS[b.kind] || KINDS.other)[0]} ${esc(b.name)}</option>`).join('');
+    const opts = sel => cz.bodies.map(b => `<option value="${b.id}" ${sel === b.id ? 'selected' : ''}>${kindOf(b)[0]} ${esc(b.name)}</option>`).join('');
     openModal(`<h2>${isNew ? 'New connection' : 'Edit connection'}</h2>
       <div class="row"><div><label>From</label><select id="la">${opts(d.a)}</select></div><div><label>To</label><select id="lb">${opts(d.b)}</select></div></div>
       <label>Kind</label><select id="lk">${Object.entries(LINKS).map(([k, [i, l]]) => `<option value="${k}" ${d.kind === k ? 'selected' : ''}>${i} ${l}</option>`).join('')}</select>
