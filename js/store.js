@@ -74,6 +74,9 @@ export function normalizeWorld(w) {
   out.calendar = Object.assign(blankWorld('').calendar, w.calendar || {});
   out.settings = Object.assign(blankWorld('').settings, w.settings || {});
   out.combat = Object.assign({ round: 1, turn: 0, list: [] }, w.combat || {});
+  out.cosmos = { bodies: [], links: [], ...(w.cosmos || {}) };
+  if (!Array.isArray(out.cosmos.bodies)) out.cosmos.bodies = [];
+  if (!Array.isArray(out.cosmos.links)) out.cosmos.links = [];
   return out;
 }
 

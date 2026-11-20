@@ -121,3 +121,7 @@ The generator fills the screen: scroll to zoom, drag to move (Space, middle or r
 
 **More generator tools:** a landmass template picker (Continent, Large continent, Twin continents, Old world, Pangea, High/Low island, Volcano, Atoll, Archipelago, Shattered, Fractious, Mediterranean, Peninsula, Isthmus, Coastal region, Desert continent) with live previews, plus **Import heightmap** from any greyscale picture. A **Pastel political** style (Azgaar-like), a **Layers** panel (realm colours, borders, mountains, forests, rivers, roads, towns and each kind of label), hand-drawn rivers and roads, a dry-up-rivers brush, custom and renamed labels, and Regenerate buttons for names, borders, towns and automatic roads. **Whole world** maps wrap east–west with polar ice and can be viewed as a spinning **🌐 globe**.
 
+**Timeline overview:** switch the Timeline to ⟷ Overview for a big horizontal chart with era bands, events above the line and sessions below. Scroll to zoom from millennia down to days, drag to move, hover anywhere to read the date and hover an event for its details. The calendar zooms out (click its title) from month → year (all months) → twelve-year view.
+
+**🌌 Cosmos:** a spinnable 3D star chart of worlds, moons, stars, planes and demiplanes with animated portals, routes, orbits and bonds. Hover for names, click for details and the maps attached to each world, double-click to fly to it, Shift-drag to reposition it.
+

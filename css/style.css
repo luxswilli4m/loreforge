@@ -440,3 +440,39 @@ label.check { display: flex; align-items: center; gap: 7px; color: var(--text); 
 .globe-head h2 { margin: 0; }
 .globe-wrap { display: flex; justify-content: center; background: radial-gradient(circle at 50% 50%, #1a1f3a, #07080f 70%); border-radius: 12px; padding: 14px; margin-top: 10px; }
 .globe-wrap canvas { cursor: grab; touch-action: none; }
+
+/* timeline overview & calendar zoom */
+.tl-chart-card { padding: 10px; margin-bottom: 14px; }
+.tl-chart-tools { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+.tl-chart-tools span { flex: 1; }
+.tl-chart { position: relative; height: max(380px, 58vh); border-radius: 10px; overflow: hidden; background: rgba(0,0,0,.18); }
+.tl-chart canvas { display: block; touch-action: none; }
+.tl-tip { position: absolute; max-width: 260px; padding: 8px 10px; background: rgba(20,18,28,.96); border: 1px solid var(--line); border-radius: 8px; font-size: .85em; pointer-events: none; z-index: 2; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.tl-under { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.tl-under .side-box { margin: 0; }
+.cal-nav { align-items: center; }
+.cal-title { flex: 1; flex-direction: column; gap: 0; background: transparent; border: 0; padding: 4px; text-transform: uppercase; letter-spacing: .06em; font-size: .82em; }
+.cal-title:hover { background: rgba(255,255,255,.05); }
+.cal-title small { text-transform: none; letter-spacing: 0; color: var(--muted); font-size: .9em; }
+.cal-year { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-top: 8px; }
+.cal-cell { flex-direction: column; gap: 2px; padding: 8px 4px; font-size: .78em; justify-content: center; }
+.cal-cell small { color: var(--accent-2); font-size: .85em; }
+.cal-cell.has { border-color: var(--accent); }
+.cal-cell.today { outline: 2px solid var(--accent); }
+
+/* cosmos */
+.cosmos-shell { display: grid; grid-template-columns: 1fr 320px; gap: 14px; height: calc(100vh - 150px); min-height: 460px; }
+.cosmos-stage { position: relative; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); background: #04050b; }
+.cosmos-stage canvas { display: block; touch-action: none; cursor: grab; }
+.cosmos-side { margin: 0; overflow-y: auto; }
+.cosmos-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 30px; color: #dfe6ff; pointer-events: none; }
+.cosmos-empty .big { font-size: 3em; }
+.cosmos-empty button { pointer-events: auto; }
+.cz-hint { flex: 1; }
+.cz-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; box-shadow: 0 0 6px currentColor; }
+.cz-maps { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.cz-map { display: flex; flex-direction: column; gap: 3px; text-decoration: none; color: inherit; font-size: .8em; border: 1px solid var(--line); border-radius: 8px; padding: 4px; }
+.cz-map:hover { border-color: var(--accent); }
+.cz-map img { width: 100%; aspect-ratio: 16/10; object-fit: cover; border-radius: 5px; }
+.cz-mappick { max-height: 150px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+@media (max-width: 1000px) { .cosmos-shell { grid-template-columns: 1fr; height: auto; } .cosmos-stage { height: 60vh; } }
