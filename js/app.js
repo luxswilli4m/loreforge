@@ -8,11 +8,13 @@ import * as campaign from './views/campaign.js';
 import * as timeline from './views/timeline.js';
 import * as journals from './views/journals.js';
 import * as settings from './views/settings.js';
+import * as generator from './views/generator.js';
 
 const NAV = [
   { href: '#/', icon: '🏠', label: 'Overview', match: /^$/ },
   { href: '#/entries', icon: '📚', label: 'World Bible', match: /^(entries|entry)/ },
-  { href: '#/maps', icon: '🗺️', label: 'Maps', match: /^(maps|map)/ },
+  { href: '#/maps', icon: '🗺️', label: 'Maps', match: /^(maps|map)(\/|$)/ },
+  { href: '#/generate', icon: '✨', label: 'Map generator', match: /^generate/ },
   { href: '#/graph', icon: '🕸️', label: 'Relationships', match: /^graph/ },
   null,
   { href: '#/campaign', icon: '🎲', label: 'Campaign', match: /^(campaign|session)/ },
@@ -61,6 +63,7 @@ export function route() {
     journals: () => journals.renderList(main),
     journal: () => b === 'edit' ? journals.renderEdit(main, a) : journals.renderView(main, a),
     settings: () => settings.render(main),
+    generate: () => generator.render(main),
   }[view];
   cleanup = r ? r() : home.render(main);
 }

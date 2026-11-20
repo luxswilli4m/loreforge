@@ -30,7 +30,7 @@ async function newMapDialog(parentId = '', pin = null) {
 export function renderList(main) {
   const maps = W().maps;
   main.innerHTML = `
-    <div class="page-head"><h1>Maps</h1><button class="primary" id="new">⬆ Upload a map</button></div>
+    <div class="page-head"><h1>Maps</h1><a class="btn" href="#/generate">✨ Generate a map</a><button class="primary" id="new">⬆ Upload a map</button></div>
     ${maps.length ? `<div class="grid">${maps.map(m => {
       const parent = getMap(m.parentId);
       return `<a class="card entry-card" href="#/map/${m.id}" style="text-decoration:none;color:inherit;--tc:var(--accent)">
@@ -38,7 +38,7 @@ export function renderList(main) {
         <h3>${esc(m.name)}</h3>
         <p>${m.pins.length} pins${parent ? ` · inside ${esc(parent.name)}` : ''}${m.scale.pxPerUnit ? ' · scaled' : ''}</p></a>`;
     }).join('')}</div>`
-      : `<div class="empty"><div class="big">🗺️</div>Upload a world, region, city or dungeon map. Pins can link to entries or open deeper maps.</div>`}`;
+      : `<div class="empty"><div class="big">🗺️</div>Upload a world, region, city or dungeon map — or <a href="#/generate">generate one</a>. Pins can link to entries or open deeper maps.</div>`}`;
   main.querySelector('#new').onclick = async () => { const m = await newMapDialog(); if (m) go(`#/map/${m.id}`); };
 }
 
@@ -117,9 +117,10 @@ export function renderMap(main, id) {
       const sel = p.id === selected;
       return `<g class="pin" data-pin="${p.id}" transform="translate(${p.x},${p.y}) scale(${s})">
         ${sel ? '<circle r="15" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="4 3"/>' : ''}
-        <circle class="pin-body" r="${p.submapId ? 9 : 7}" fill="${col}" stroke="#000" stroke-width="2"/>
+        <title>${esc(label)}</title>
+        <circle class="pin-body" r="${p.quiet && !sel ? 6 : p.submapId ? 9 : 7}" fill="${col}" fill-opacity="${p.quiet ? 0.8 : 1}" stroke="${p.quiet ? '#fff' : '#000'}" stroke-width="2"/>
         ${p.submapId ? '<circle r="3" fill="#000"/>' : ''}
-        ${label ? `<text class="pin-label" x="12" y="5">${esc(label)}</text>` : ''}
+        ${label && (!p.quiet || sel) ? `<text class="pin-label" x="12" y="5">${esc(label)}</text>` : ''}
       </g>`;
     }).join('');
   }
@@ -177,7 +178,8 @@ export function renderMap(main, id) {
         <button class="small" id="p-newentry" style="margin-top:6px">＋ New entry for this pin</button>
         <label>Opens map</label>
         <select id="p-sub"><option value="">— none —</option>${others.map(x => `<option value="${x.id}" ${x.id === p.submapId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>
-        <button class="small" id="p-newsub" style="margin-top:6px">⬆ Upload a deeper map (city, dungeon…)</button>
+        <div class="row" style="margin-top:6px;gap:6px;flex-wrap:wrap"><button class="small" id="p-gencity">🏰 Generate a city map</button><button class="small" id="p-newsub">⬆ Upload a map</button></div>
+        <label class="check"><input type="checkbox" id="p-quiet" ${p.quiet ? '' : 'checked'}> Show label on the map</label>
         <label>Colour</label>
         <div class="row" style="gap:4px">${PIN_COLORS.map(c => `<button class="icon" data-col="${c}" style="flex:0;padding:0;width:24px;height:24px;border-radius:50%;background:${c};border:2px solid ${c === p.color ? '#fff' : '#000'}"></button>`).join('')}
           <button class="small shrink" data-col="">auto</button></div>
@@ -207,7 +209,9 @@ export function renderMap(main, id) {
       $s('#p-entry').onchange = e => { p.entryId = e.target.value; save(); drawPins(); drawSide(); };
       $s('#p-sub').onchange = e => { p.submapId = e.target.value; save(); drawPins(); drawSide(); };
       $s('#p-newentry').onclick = () => newEntryDialog('location', ent => { p.entryId = ent.id; if (!p.label) p.label = ''; save(); drawPins(); drawSide(); toast(`Created ${ent.name}`); });
+      $s('#p-gencity').onclick = () => go(`#/generate?mode=city&name=${encodeURIComponent(p.label || getEntry(p.entryId)?.name || '')}&parent=${m.id}&pin=${p.id}`);
       $s('#p-newsub').onclick = async () => { const sub = await newMapDialog(m.id, p); if (sub) { drawPins(); drawSide(); toast('Deeper map added — click “Enter map”'); } };
+      $s('#p-quiet').onchange = e => { p.quiet = !e.target.checked; save(); drawPins(); };
       side.querySelectorAll('[data-col]').forEach(b => b.onclick = () => { p.color = b.dataset.col; save(); drawPins(); drawSide(); });
       $s('#p-del').onclick = () => { m.pins = m.pins.filter(x => x !== p); selected = null; save(); drawPins(); drawSide(); };
     } else {

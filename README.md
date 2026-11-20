@@ -12,6 +12,11 @@ It combines a **world wiki** (entries, maps, relationship graphs, a shareable pl
 
 **Interactive maps.** Upload any map image, then pan and zoom. Drop pins linked to entries, nest maps (a pin on the world map can open a city map, which opens a dungeon map), calibrate the scale against the map's scale bar, and measure routes with travel times on foot, horseback, wagon and ship.
 
+**Map generator.** Create fantasy maps from a seed, in Parchment, Atlas or Night style.
+- *World maps:* continents, archipelagos or coastal regions, with mountain ranges, forests, rivers, lakes, biomes, realms and their borders, towns, capitals, roads, and named seas, mountains and forests.
+- *City maps:* villages up to capital cities, with walls and gates, districts, building lots, a market square, castle, temple, gardens, a river with bridges, and harbour docks.
+- Saving a map can drop pins on every town or landmark and create World Bible entries for towns (Locations) and realms (Factions), linked by relationships. From any pin, "Generate a city map" makes a city that opens from that pin.
+
 **Relationship graph.** A live, draggable web of your world built from named relationships ("rules", "ally of"…) and @mentions. Filter by type.
 
 **Campaigns and sessions.** Group sessions into arcs. Plan each session as a checklist of beats you tick off at the table, with prep notes, a recap, and an auto-generated list of the NPCs and places featured.
@@ -59,7 +64,8 @@ js/
   db.js           IndexedDB storage
   util.js         markdown, @mention editor, dialogs
   sample.js       demo world
-  views/          home, entries, maps, graph, campaign, timeline, journals, settings
+  gen/            map generators (core helpers, world.js, city.js, names.js)
+  views/          home, entries, maps, generator, graph, campaign, timeline, journals, settings
 ```
 
 Inspired by the ideas behind tools like World Anvil, vvd and ScribesBlade. This is an independent open-source project.
