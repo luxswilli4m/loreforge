@@ -387,7 +387,8 @@ const STYLES = {
 };
 export const STYLE_NAMES = { parchment: 'Parchment', atlas: 'Atlas', night: 'Night (gold ink)' };
 
-export function renderWorld(data, canvas, styleName = 'parchment') {
+export function renderWorld(data, canvas, styleName = 'parchment', ropts = {}) {
+  const furniture = ropts.furniture !== false;
   const S = STYLES[styleName] || STYLES.parchment;
   const { GW: gw, GH: gh, h, sea, e, isOcean, lake, dLand, biome, owner } = data;
   const N = gw * gh;
@@ -651,10 +652,12 @@ export function renderWorld(data, canvas, styleName = 'parchment') {
   }
 
   // --- map furniture ---
-  drawCompass(ctx, compass[0], compass[1], compass[2], ink, paperC, rgba(hexToRgb('#b5483f')));
-  drawScaleBar(ctx, 60 * k, H - 62 * k, W / data.o.widthMiles, 'miles', ink, paperC, k * 1.2);
-  drawCartouche(ctx, 44 * k, 44 * k, title, `${data.realms.length} realms · ${data.towns.length} settlements`, ink, paperC, k);
-  drawFrame(ctx, W, H, ink, rgba(S.paper), k);
+  if (furniture) {
+    drawCompass(ctx, compass[0], compass[1], compass[2], ink, paperC, rgba(hexToRgb('#b5483f')));
+    drawScaleBar(ctx, 60 * k, H - 62 * k, W / data.o.widthMiles, 'miles', ink, paperC, k * 1.2);
+    drawCartouche(ctx, 44 * k, 44 * k, title, `${data.realms.length} realms · ${data.towns.length} settlements`, ink, paperC, k);
+    drawFrame(ctx, W, H, ink, rgba(S.paper), k);
+  }
 
   return {
     pins: data.towns.map(tw => ({ name: tw.name, capital: tw.capital, port: tw.port, realm: data.realms[tw.realm]?.name || '', x: (tw.gx + 0.5) * cs, y: (tw.gy + 0.5) * cs })),

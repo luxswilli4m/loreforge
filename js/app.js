@@ -9,23 +9,29 @@ import * as timeline from './views/timeline.js';
 import * as journals from './views/journals.js';
 import * as settings from './views/settings.js';
 import * as generator from './views/generator.js';
+import * as codex from './views/codex.js';
+import * as appearance from './views/appearance.js';
+import { applyTheme, applyBackground, getPrefs } from './theme.js';
 
 const NAV = [
   { href: '#/', icon: '🏠', label: 'Overview', match: /^$/ },
   { href: '#/entries', icon: '📚', label: 'World Bible', match: /^(entries|entry)/ },
+  { href: '#/codex', icon: '📜', label: 'Encyclopedia', match: /^codex/ },
   { href: '#/maps', icon: '🗺️', label: 'Maps', match: /^(maps|map)(\/|$)/ },
   { href: '#/generate', icon: '✨', label: 'Map generator', match: /^generate/ },
-  { href: '#/graph', icon: '🕸️', label: 'Relationships', match: /^graph/ },
+  { href: '#/graph', icon: '🕸️', label: 'World Web', match: /^graph/ },
   null,
   { href: '#/campaign', icon: '🎲', label: 'Campaign', match: /^(campaign|session)/ },
   { href: '#/timeline', icon: '⏳', label: 'Timeline', match: /^timeline/ },
   { href: '#/journals', icon: '✒️', label: 'Journals', match: /^(journals|journal)/ },
   null,
   { href: '#/settings', icon: '⚙️', label: 'World settings', match: /^settings/ },
+  { href: '#/appearance', icon: '🎨', label: 'Appearance', match: /^appearance/ },
   { href: '#/worlds', icon: '🌍', label: 'Switch world', match: /^worlds/ },
 ];
 
 let cleanup = null;
+let lastWorldId = null;
 
 function renderNav(path) {
   const nav = $('#nav');
@@ -42,7 +48,10 @@ export function route() {
   cleanup = null;
   closeModal();
 
-  if (!W() && view !== 'worlds') {
+  // a world-specific background (one of its maps) follows the open world
+  const wid = W()?.id || '';
+  if (wid !== lastWorldId) { lastWorldId = wid; if (getPrefs().bg.kind === 'map') applyBackground(W()); }
+  if (!W() && view !== 'worlds' && view !== 'appearance') {
     renderNav('worlds');
     cleanup = home.renderPicker(main);
     return;
@@ -64,6 +73,8 @@ export function route() {
     journal: () => b === 'edit' ? journals.renderEdit(main, a) : journals.renderView(main, a),
     settings: () => settings.render(main),
     generate: () => generator.render(main),
+    codex: () => codex.render(main),
+    appearance: () => appearance.render(main),
   }[view];
   cleanup = r ? r() : home.render(main);
 }
@@ -78,10 +89,10 @@ export function openPeek(hash) {
   else if (view === 'map' && getMap(id)) html = maps.peekHTML(getMap(id));
   else return false;
   $('#peek-body').innerHTML = html + `<p style="margin-top:20px"><a class="btn" href="${hash}">Open full page →</a></p>`;
-  $('#peek').classList.remove('hidden');
+  $('#peek-wrap').classList.remove('hidden');
   return true;
 }
-$('#peek-close').onclick = () => $('#peek').classList.add('hidden');
+$('#peek-close').onclick = () => $('#peek-wrap').classList.add('hidden');
 
 document.addEventListener('click', e => {
   const a = e.target.closest('a[href^="#/"]');
@@ -131,21 +142,15 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && $('#modal-root').innerHTML) closeModal();
 });
 
-// ---------- Accessibility prefs ----------
-export function applyPrefs() {
-  const p = JSON.parse(localStorage.getItem('loreforge:prefs') || '{}');
-  document.documentElement.style.setProperty('--fs', (p.fontSize || 15) + 'px');
-  document.body.classList.toggle('easy-read', !!p.easyRead);
-  document.body.classList.toggle('light', !!p.light);
-}
 
 window.addEventListener('hashchange', route);
 window.addEventListener('beforeunload', () => { saveNow(); });
 
 (async function init() {
-  applyPrefs();
+  applyTheme();
   await loadWorlds();
   const last = localStorage.getItem('loreforge:last');
   if (last && state.worlds.some(w => w.id === last)) openWorld(last);
   route();
+  setTimeout(() => applyBackground(W()), 60);
 })();

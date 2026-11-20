@@ -1,17 +1,8 @@
 import { W, save, saveNow, TYPES, exportWorld, deleteWorld, formatDate, dateKey, getEntry } from '../store.js';
 import { esc, md, download, slug, confirmDialog, toast, go, typeColor } from '../util.js';
 
-function prefs() { return JSON.parse(localStorage.getItem('loreforge:prefs') || '{}'); }
-function setPrefs(p) {
-  localStorage.setItem('loreforge:prefs', JSON.stringify(p));
-  document.documentElement.style.setProperty('--fs', (p.fontSize || 15) + 'px');
-  document.body.classList.toggle('easy-read', !!p.easyRead);
-  document.body.classList.toggle('light', !!p.light);
-}
-
 export function render(main) {
   const w = W();
-  const p = prefs();
   const sp = w.settings.speeds;
   main.innerHTML = `
     <div class="page-head"><h1>World settings</h1></div>
@@ -28,10 +19,9 @@ export function render(main) {
         <div class="row"><div><label>🛒 Wagon</label><input type="number" data-sp="wagon" value="${sp.wagon}"></div><div><label>⛵ Ship</label><input type="number" data-sp="ship" value="${sp.ship}"></div></div>
       </div>
       <div class="card">
-        <h3>Display</h3>
-        <label>Text size: <span id="fsv">${p.fontSize || 15}px</span></label><input type="range" id="fs" min="13" max="21" value="${p.fontSize || 15}">
-        <label class="row" style="color:var(--text)"><input type="checkbox" id="er" ${p.easyRead ? 'checked' : ''} class="shrink"> Easy-read font (Atkinson Hyperlegible)</label>
-        <label class="row" style="color:var(--text)"><input type="checkbox" id="lt" ${p.light ? 'checked' : ''} class="shrink"> Light “parchment” theme</label>
+        <h3>Look & feel</h3>
+        <p class="muted small">Themes, torn-paper edges, backgrounds, text size and the easy-read font live on the Appearance page.</p>
+        <a class="btn" href="#/appearance">🎨 Open Appearance</a>
       </div>
       <div class="card">
         <h3>Backup & sharing</h3>
@@ -50,9 +40,6 @@ export function render(main) {
   $m('#wn').oninput = e => { w.name = e.target.value || 'Untitled world'; document.querySelector('#world-name').textContent = w.name; save(); };
   $m('#wd').oninput = e => { w.description = e.target.value; save(); };
   main.querySelectorAll('[data-sp]').forEach(i => i.oninput = () => { sp[i.dataset.sp] = Math.max(0.1, +i.value || 1); save(); });
-  $m('#fs').oninput = e => { const q = prefs(); q.fontSize = +e.target.value; setPrefs(q); $m('#fsv').textContent = q.fontSize + 'px'; };
-  $m('#er').onchange = e => { const q = prefs(); q.easyRead = e.target.checked; setPrefs(q); };
-  $m('#lt').onchange = e => { const q = prefs(); q.light = e.target.checked; setPrefs(q); };
   $m('#exp').onclick = async () => { await saveNow(); download(`${slug(w.name)}-backup-${new Date().toISOString().slice(0, 10)}.json`, exportWorld()); };
   $m('#wiki').onclick = () => { download(`${slug(w.name)}-wiki.html`, buildWiki(), 'text/html'); toast('Wiki exported'); };
   $m('#del').onclick = async () => {

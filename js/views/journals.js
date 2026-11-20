@@ -48,7 +48,7 @@ export function renderEdit(main, id) {
   main.innerHTML = `
     <div class="page-head"><input id="t" value="${esc(j.title)}" style="flex:1;font-size:1.6em;font-family:var(--display);font-weight:700">
       <select id="c" style="width:auto">${CATS.map(c => `<option ${c === j.category ? 'selected' : ''}>${c}</option>`).join('')}</select>
-      <a class="btn primary" href="#/journal/${j.id}" style="background:var(--accent);color:#1a1408">✓ Done</a></div>
+      <a class="btn primary" href="#/journal/${j.id}" style="background:var(--accent);color:var(--on-accent)">✓ Done</a></div>
     <div class="prose" style="max-width:85ch">${editorHTML('body', j.body, 26, 'Start writing… type @ to link characters, places and more.')}</div>
     <p class="muted small">Formatting: **bold**, *italic*, # Heading, - list, > quote. Saves automatically.</p>`;
   main.querySelector('#t').oninput = e => { j.title = e.target.value || 'Untitled journal'; touch(); };

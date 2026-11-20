@@ -103,6 +103,42 @@ export function promptDialog(title, value = '', placeholder = '') {
   });
 }
 
+// ---------- Context menu ----------
+let ctxEl = null;
+const ctxOutside = e => { if (ctxEl && !ctxEl.contains(e.target)) closeContextMenu(); };
+const ctxKey = e => { if (e.key === 'Escape') closeContextMenu(); };
+export function closeContextMenu() {
+  if (!ctxEl) return;
+  ctxEl.remove(); ctxEl = null;
+  document.removeEventListener('mousedown', ctxOutside, true);
+  document.removeEventListener('keydown', ctxKey);
+}
+// items: [{ label, icon, action, danger, hint }] | '-' | { header }
+export function contextMenu(x, y, items) {
+  closeContextMenu();
+  const m = document.createElement('div');
+  m.className = 'ctx-menu';
+  m.innerHTML = items.map((it, i) => it === '-' ? '<div class="ctx-sep"></div>'
+    : it.header ? `<div class="ctx-head">${esc(it.header)}</div>`
+    : `<button data-i="${i}" class="${it.danger ? 'danger' : ''}"><span class="ctx-ic">${it.icon || ''}</span><span>${esc(it.label)}</span>${it.hint ? `<kbd>${esc(it.hint)}</kbd>` : ''}</button>`).join('');
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.min(x, innerWidth - r.width - 8) + 'px';
+  m.style.top = Math.min(y, innerHeight - r.height - 8) + 'px';
+  m.addEventListener('click', e => {
+    const b = e.target.closest('button[data-i]'); if (!b) return;
+    const it = items[+b.dataset.i];
+    closeContextMenu();
+    it.action?.();
+  });
+  m.addEventListener('contextmenu', e => e.preventDefault());
+  ctxEl = m;
+  setTimeout(() => { document.addEventListener('mousedown', ctxOutside, true); document.addEventListener('keydown', ctxKey); }, 0);
+}
+
+export const REL_SUGGESTIONS = ['ally of', 'enemy of', 'member of', 'leader of', 'rules', 'lives in', 'parent of', 'child of', 'sibling of', 'married to',
+  'rival of', 'owns', 'serves', 'located in', 'part of', 'worships', 'created', 'mentor of', 'hunts', 'guards', 'owes a debt to', 'in love with', 'betrayed', 'trades with'];
+
 // ---------- Files & images ----------
 export function pickFile(accept) {
   return new Promise(resolve => {

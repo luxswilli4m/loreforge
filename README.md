@@ -17,7 +17,11 @@ It combines a **world wiki** (entries, maps, relationship graphs, a shareable pl
 - *City maps:* villages up to capital cities, with walls and gates, districts, building lots, a market square, castle, temple, gardens, a river with bridges, and harbour docks.
 - Saving a map can drop pins on every town or landmark and create World Bible entries for towns (Locations) and realms (Factions), linked by relationships. From any pin, "Generate a city map" makes a city that opens from that pin.
 
-**Relationship graph.** A live, draggable web of your world built from named relationships ("rules", "ally of"…) and @mentions. Filter by type.
+**World Web.** A live web of your world built from named, directional connections ("rules", "ally of"…) and @mentions. Right-click a node to connect it to another node (click the target or search for it), create a new connected entry, add a dated note, focus on it, pin it or delete it. Right-click a connection to rename, reverse or delete it, and right-click empty space to add an entry there. Shift+drag from node to node also connects them. Nodes you arrange stay where you put them.
+
+**Encyclopedia.** Every entry, journal, session, map and timeline event in one index. Sort it A–Z (with a letter bar), by category or by tag, filter it, and search it. Articles open in a reading pane, and links inside an article open within the Encyclopedia.
+
+**Appearance.** Five vibes (Tavern, Parchment, Arcane, Verdant, Ember) and torn-paper panels with adjustable tear depth and opacity. By default the background is a freshly generated fantasy map; you can also choose a preset, one of your own maps, or an uploaded image, then darken or soften it.
 
 **Campaigns and sessions.** Group sessions into arcs. Plan each session as a checklist of beats you tick off at the table, with prep notes, a recap, and an auto-generated list of the NPCs and places featured.
 
@@ -33,7 +37,7 @@ It combines a **world wiki** (entries, maps, relationship graphs, a shareable pl
 
 **Backups.** Export and import your whole world as a `.json` file, which is also how you move it to another computer.
 
-**Accessibility.** Adjustable text size, an easy-read font (Atkinson Hyperlegible) and a light parchment theme.
+**Accessibility.** Adjustable text size and an easy-read font (Atkinson Hyperlegible).
 
 ## Using it
 
@@ -65,7 +69,8 @@ js/
   util.js         markdown, @mention editor, dialogs
   sample.js       demo world
   gen/            map generators (core helpers, world.js, city.js, names.js)
-  views/          home, entries, maps, generator, graph, campaign, timeline, journals, settings
+  theme.js        themes, torn edges, backgrounds
+  views/          home, entries, codex, maps, generator, graph, campaign, timeline, journals, settings, appearance
 ```
 
 Inspired by the ideas behind tools like World Anvil, vvd and ScribesBlade. This is an independent open-source project.

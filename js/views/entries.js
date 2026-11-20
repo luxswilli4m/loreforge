@@ -109,7 +109,7 @@ export function renderView(main, id) {
   main.innerHTML = `
     <div class="page-head"><div class="breadcrumbs" style="flex:1"><a href="#/entries">World Bible</a> › <a href="#/entries/${e.type}">${TYPES[e.type]?.plural}</a></div>
       <a class="btn" href="#/graph?focus=${e.id}">🕸️ Graph</a>
-      <a class="btn primary" href="#/entry/${e.id}/edit" style="background:var(--accent);color:#1a1408">✎ Edit</a>
+      <a class="btn primary" href="#/entry/${e.id}/edit" style="background:var(--accent);color:var(--on-accent)">✎ Edit</a>
       <button class="danger" id="del">Delete</button></div>
     ${readHTML(e)}`;
   main.querySelector('#del').onclick = async () => {
@@ -147,7 +147,7 @@ export function renderEdit(main, id) {
   const touch = () => { e.updated = Date.now(); save(); };
   main.innerHTML = `
     <div class="page-head"><h1>Editing</h1><span class="muted small">Saves automatically</span>
-      <a class="btn primary" href="#/entry/${e.id}" style="background:var(--accent);color:#1a1408">✓ Done</a></div>
+      <a class="btn primary" href="#/entry/${e.id}" style="background:var(--accent);color:var(--on-accent)">✓ Done</a></div>
     <div class="entry-layout">
       <div>
         <label>Name</label><input id="name" value="${esc(e.name)}" style="font-size:1.3em;font-family:var(--display);font-weight:700">
