@@ -108,7 +108,11 @@ function loadImage(input) {
 export function worldAssetIds(w) {
   const ids = new Set();
   for (const e of w.entries || []) if (isAsset(e.image)) ids.add(idOf(e.image));
-  for (const m of w.maps || []) { if (isAsset(m.image)) ids.add(idOf(m.image)); if (isAsset(m.gen?.edit)) ids.add(idOf(m.gen.edit)); }
+  for (const m of w.maps || []) {
+    if (isAsset(m.image)) ids.add(idOf(m.image));
+    if (isAsset(m.gen?.edit)) ids.add(idOf(m.gen.edit));
+    for (const sh of m.shots || []) if (isAsset(sh.image)) ids.add(idOf(sh.image));
+  }
   return [...ids];
 }
 

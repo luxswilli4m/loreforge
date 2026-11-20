@@ -254,17 +254,41 @@ export function segIntersect(a, b, c, d) {
   return { p: [a[0] + r[0] * t, a[1] + r[1] * t], angle: Math.atan2(r[1], r[0]) };
 }
 
-// Voronoi cells via half-plane clipping (fine for a few hundred sites)
+// Voronoi cells via half-plane clipping. A grid finds nearby sites first, and stops as soon as
+// no farther site could still cut the cell — exact, and fast enough for thousands of sites.
 export function voronoi(points, bounds) {
   const [x0, y0, x1, y1] = bounds;
+  const n = points.length;
+  if (!n) return [];
+  const g = Math.max(1, Math.sqrt((x1 - x0) * (y1 - y0) / n) * 1.2);
+  const gw = Math.max(1, Math.ceil((x1 - x0) / g)), gh = Math.max(1, Math.ceil((y1 - y0) / g));
+  const buckets = Array.from({ length: gw * gh }, () => []);
+  const bx = x => Math.max(0, Math.min(gw - 1, Math.floor((x - x0) / g))), by = y => Math.max(0, Math.min(gh - 1, Math.floor((y - y0) / g)));
+  points.forEach((p, i) => buckets[by(p[1]) * gw + bx(p[0])].push(i));
+  const maxRing = Math.max(gw, gh);
   return points.map((p, i) => {
     let cell = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
-    for (let j = 0; j < points.length && cell.length; j++) {
-      if (j === i) continue;
-      const q = points[j];
-      const mx = (p[0] + q[0]) / 2, my = (p[1] + q[1]) / 2;
-      // quick reject: if bisector is farther than any cell vertex, skip
-      cell = clipHalf(cell, mx, my, p[0] - q[0], p[1] - q[1]);
+    const cx = bx(p[0]), cy = by(p[1]);
+    for (let ring = 0; ring <= maxRing && cell.length; ring++) {
+      // once every cell corner is closer than half the distance to this ring, nothing further can clip it
+      if (ring >= 2) {
+        let far = 0;
+        for (const v of cell) far = Math.max(far, (v[0] - p[0]) ** 2 + (v[1] - p[1]) ** 2);
+        const minD = (ring - 1) * g;
+        if (minD * minD > far * 4) break;
+      }
+      for (let yy = cy - ring; yy <= cy + ring; yy++) {
+        if (yy < 0 || yy >= gh) continue;
+        for (let xx = cx - ring; xx <= cx + ring; xx++) {
+          if (xx < 0 || xx >= gw || (Math.abs(xx - cx) !== ring && Math.abs(yy - cy) !== ring)) continue;
+          for (const j of buckets[yy * gw + xx]) {
+            if (j === i) continue;
+            const q = points[j];
+            cell = clipHalf(cell, (p[0] + q[0]) / 2, (p[1] + q[1]) / 2, p[0] - q[0], p[1] - q[1]);
+            if (!cell.length) break;
+          }
+        }
+      }
     }
     return cell;
   });

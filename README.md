@@ -115,3 +115,7 @@ Any map, generated or uploaded, has a 🖌️ **Draw** mode: pen, marker, line, 
 
 The generator fills the screen: scroll to zoom, drag to move (Space, middle or right mouse button while editing). City maps can show more countryside (**Area shown**: close up → whole valley) and can be edited by hand: add, remove and repaint buildings, plant or clear trees, draw a new town wall (gates open where roads cross), draw, colour and remove roads.
 
+**Map size:** world maps come in km presets (Region 400 × 250 up to Whole world 16,000 × 8,000) or any custom size; cities from Close up (0.8 × 0.64 km) to Whole valley (6 × 4.5 km) or custom. Zooming in redraws the visible part at full sharpness. In the generator the frame, title, compass and scale bar stay pinned to the edges of the view (the scale bar follows the zoom), and **📸 Snapshot** saves exactly what's inside the frame as a picture attached to the map.
+
+**Map folders:** every map card has a 📁 folder showing the map and its snapshots. Snapshots have names and captions with @ links, so they appear on the entries they mention.
+

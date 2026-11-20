@@ -181,6 +181,7 @@ export function backlinks(id) {
   for (const j of w.journals) if (mentionsIn(j.body).has(id)) out.push({ kind: 'journal', item: j });
   for (const q of w.quests) if (mentionsIn([q.giver, q.summary, q.desc, ...q.objectives.map(o => o.text)].join(' ')).has(id)) out.push({ kind: 'quest', item: q });
   for (const ev of w.events) if (mentionsIn(ev.desc).has(id) || (ev.entryIds || []).includes(id)) out.push({ kind: 'event', item: ev });
+  for (const m of w.maps) for (const sh of m.shots || []) if (mentionsIn((sh.caption || '') + ' ' + sh.name).has(id)) out.push({ kind: 'shot', item: { ...sh, mapId: m.id, mapName: m.name } });
   return out;
 }
 

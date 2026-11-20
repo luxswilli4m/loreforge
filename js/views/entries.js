@@ -75,8 +75,8 @@ export function readHTML(e, compact = false) {
   const outs = [...mentionsIn(e.body + ' ' + e.summary)].filter(id => id !== e.id && getEntry(id));
   const pins = w.maps.flatMap(m => m.pins.filter(p => p.entryId === e.id).map(p => ({ m, p })));
   const fields = e.fields.filter(f => f.v);
-  const kindHref = { quest: x => `#/quest/${x.id}`, entry: x => `#/entry/${x.id}`, session: x => `#/session/${x.id}`, journal: x => `#/journal/${x.id}`, event: () => '#/timeline' };
-  const kindName = { quest: x => `Quest: ${x.title}`, entry: x => x.name, session: x => `Session ${x.number}: ${x.title}`, journal: x => x.title, event: x => `${x.title} (${formatDate(x.date)})` };
+  const kindHref = { quest: x => `#/quest/${x.id}`, entry: x => `#/entry/${x.id}`, session: x => `#/session/${x.id}`, journal: x => `#/journal/${x.id}`, event: () => '#/timeline', shot: x => `#/gallery/${x.mapId}?shot=${x.id}` };
+  const kindName = { quest: x => `Quest: ${x.title}`, entry: x => x.name, session: x => `Session ${x.number}: ${x.title}`, journal: x => x.title, event: x => `${x.title} (${formatDate(x.date)})`, shot: x => `📸 ${x.name} (${x.mapName})` };
   return `
   <div class="entry-layout">
     <div>

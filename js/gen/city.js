@@ -3,8 +3,9 @@ import { rng, makeNoise, chaikin, tracePath, polyArea, centroid, clipHalf, inset
   Labeler, haloText, spaced, mix, rgba, hexToRgb, drawCompass, drawScaleBar, drawFrame, drawCartouche, paperGrain } from './core.js';
 import { districtName, templeName } from './names.js';
 
-export const CITY_DEFAULTS = { seed: 'saltmere', name: '', size: 'town', area: 'normal', walls: true, river: true, coast: false, castle: true, temple: true, style: 'parchment' };
-export const CITY_AREAS = [['close', 'Close up'], ['normal', 'Normal'], ['wide', 'Wide'], ['vast', 'Whole valley']];
+export const CITY_DEFAULTS = { seed: 'saltmere', name: '', size: 'town', extent: 'standard', mapW: 1.5, mapH: 1.2, walls: true, river: true, coast: false, castle: true, temple: true, style: 'parchment' };
+// how much ground the map covers (km)
+export const CITY_EXTENTS = [['close', 'Close up', 0.8, 0.64], ['standard', 'Town & fields', 1.5, 1.2], ['wide', 'Wide', 3, 2.4], ['valley', 'Whole valley', 6, 4.5], ['custom', 'Custom…', 0, 0]];
 const AREA_F = { close: 1.3, normal: 1, wide: 0.72, vast: 0.52 };
 export const CITY_W = 2000, CITY_H = 1600;
 const SIZES = { village: 9, town: 22, city: 40, capital: 64 };
@@ -13,10 +14,16 @@ export function generateCity(opts) {
   const o = { ...CITY_DEFAULTS, ...opts };
   const r = rng(o.seed + ':city');
   const nz = makeNoise(r);
-  const W = CITY_W, H = CITY_H;
   const nInner = SIZES[o.size] || 22;
   const walls = o.walls && o.size !== 'village';
-  const R = H * (o.size === 'village' ? 0.22 : o.size === 'town' ? 0.27 : 0.31) * (AREA_F[o.area] || 1);
+  let W = CITY_W, H = CITY_H, R, u = 1;
+  if (o.mapW && o.mapH) {
+    // real-world size: everything is laid out at a fixed 1.3 px per metre, then drawn smaller (u) to fit a sensible picture size
+    const wm = Math.max(200, o.mapW * 1000), hm = Math.max(200, o.mapH * 1000);
+    W = Math.round(wm * 1.3); H = Math.round(hm * 1.3);
+    R = 70 * Math.sqrt(nInner) * 1.3;
+    u = Math.min(1, 3000 / Math.max(W, H));
+  } else R = H * (o.size === 'village' ? 0.22 : o.size === 'town' ? 0.27 : 0.31) * (AREA_F[o.area] || 1);
   const cx = W / 2 + r.range(-40, 40), cy = (o.coast ? H * 0.43 : H / 2) + r.range(-30, 30);
   const s = R / Math.sqrt(nInner);
 
@@ -45,6 +52,8 @@ export function generateCity(opts) {
     const j = s * 0.18;
     const p = [cx + Math.cos(a) * rad + r.range(-j, j), cy + Math.sin(a) * rad + r.range(-j, j)];
     if (p[0] < -s || p[1] < -s || p[0] > W + s || p[1] > H + s) continue;
+    // fields get bigger the further they are from town
+    if (rad > R * 3 && r() > Math.pow(R * 3 / rad, 1.6)) continue;
     pts.push(p);
   }
   const cells = voronoi(pts, [-10, -10, W + 10, H + 10]).map((poly, i) => ({ poly, site: pts[i], c: centroid(poly), area: Math.abs(polyArea(poly)) }));
@@ -265,7 +274,7 @@ export function generateCity(opts) {
   const rv = rng(o.seed + ':v');
   for (const b of buildings) b.v = rv();
   for (const t of trees) t.v = rv();
-  return { o, W, H, R, s, cx, cy, cells, wall: walls ? wall : null, gates, roads, roadW, river, riverW, shore, buildings, fields, trees, bridges, docks, castle, labels, walls, roadColors: [] };
+  return { o, W, H, u, R, s, cx, cy, cells, wall: walls ? wall : null, gates, roads, roadW, river, riverW, shore, buildings, fields, trees, bridges, docks, castle, labels, walls, roadColors: [] };
 }
 
 const CSTYLES = {
@@ -281,21 +290,51 @@ const CSTYLES = {
 
 export const CITY_STYLE_NAMES = { parchment: 'Parchment', atlas: 'Atlas', night: 'Night', storybook: 'Storybook', quill: 'Ink & Quill' };
 
-export function renderCity(data, canvas, styleName = 'parchment') {
-  if (styleName === 'storybook') return renderCityStorybook(data, canvas);
+// canvas for the whole map, or (view) just one part of it magnified for sharp zooming
+// (view coordinates are in picture pixels; the map is laid out in design pixels, u picture px each)
+function setupCanvas(canvas, data, view) {
+  const ctx = canvas.getContext('2d'), u = data.u || 1;
+  if (view) {
+    canvas.width = Math.max(1, Math.round(view.w * view.s)); canvas.height = Math.max(1, Math.round(view.h * view.s));
+    ctx.setTransform(view.s * u, 0, 0, view.s * u, -view.x * view.s, -view.y * view.s);
+    ctx.imageSmoothingQuality = 'high';
+  } else { canvas.width = Math.round(data.W * u); canvas.height = Math.round(data.H * u); ctx.setTransform(u, 0, 0, u, 0, 0); }
+  return ctx;
+}
+// the slow per-pixel background is drawn once per map and style, then reused
+function cachedRaster(data, key, paint) {
+  if (!Object.prototype.hasOwnProperty.call(data, '_raster')) Object.defineProperty(data, '_raster', { value: {}, enumerable: false, writable: true });
+  if (!data._raster[key]) {
+    const u = data.u || 1, W = Math.round(data.W * u), H = Math.round(data.H * u);
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const cx = c.getContext('2d'), img = cx.createImageData(W, H);
+    paint(img, W, H, u);
+    cx.putImageData(img, 0, 0);
+    data._raster[key] = c;
+  }
+  return data._raster[key];
+}
+
+export function cityFrameStyle(styleName) {
+  if (styleName === 'storybook') return { ink: 'rgb(42,38,44)', paper: 'rgb(250,244,226)', back: 'rgb(140,168,92)' };
+  const S = CSTYLES[styleName] || CSTYLES.parchment;
+  return { ink: rgba(S.ink), paper: rgba(S.paper), back: rgba(S.paper) };
+}
+
+export function renderCity(data, canvas, styleName = 'parchment', ropts = {}) {
+  if (styleName === 'storybook') return renderCityStorybook(data, canvas, ropts);
   const S = CSTYLES[styleName] || CSTYLES.parchment;
   const { W, H } = data;
-  canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d');
+  const ctx = setupCanvas(canvas, data, ropts.view);
   const r = rng(data.o.seed + ':crender');
   const ink = rgba(S.ink), paper = rgba(S.paper);
   const k = 1;
 
   // paper
-  const img = ctx.createImageData(W, H);
-  for (let i = 0; i < W * H; i++) { img.data[i * 4] = S.paper[0]; img.data[i * 4 + 1] = S.paper[1]; img.data[i * 4 + 2] = S.paper[2]; img.data[i * 4 + 3] = 255; }
-  paperGrain(img, W, H, r, S.grain, S.vignette);
-  ctx.putImageData(img, 0, 0);
+  ctx.drawImage(cachedRaster(data, styleName, (img, w, h) => {
+    for (let i = 0; i < w * h; i++) { img.data[i * 4] = S.paper[0]; img.data[i * 4 + 1] = S.paper[1]; img.data[i * 4 + 2] = S.paper[2]; img.data[i * 4 + 3] = 255; }
+    paperGrain(img, w, h, rng(data.o.seed + ':grain'), S.grain, S.vignette);
+  }), 0, 0, W, H);
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
 
   // fields with furrows
@@ -432,18 +471,22 @@ export function renderCity(data, canvas, styleName = 'parchment') {
     }
   }
 
-  return finishCity(ctx, data, S, ink, paper);
+  return finishCity(ctx, data, S, ink, paper, ropts);
 }
 
 
 function finishCity(ctx, data, S, ink, paper, opts = {}) {
   const { W, H } = data;
+  const furniture = opts.furniture !== false;
   // labels
   const L = new Labeler(W, H, 24);
   const title = data.o.name || 'Unnamed Town';
-  L.add([30, 30, 30 + Math.min(700, 60 + title.length * 26), 140]);
-  L.add([W - 240, H - 260, W - 20, H - 20]);
-  L.add([30, H - 100, 360, H - 20]);
+  if (furniture) {
+    const iu = 1 / (data.u || 1);
+    L.add([30 * iu, 30 * iu, (30 + Math.min(700, 60 + title.length * 26)) * iu, 140 * iu]);
+    L.add([W - 240 * iu, H - 260 * iu, W - 20 * iu, H - 20 * iu]);
+    L.add([30 * iu, H - 100 * iu, 360 * iu, H - 20 * iu]);
+  }
   const pins = [];
   for (const lb of data.labels) {
     const size = lb.kind === 'landmark' ? 20 : 18;
@@ -461,42 +504,49 @@ function finishCity(ctx, data, S, ink, paper, opts = {}) {
       break;
     }
     spaced(ctx, 0);
-    pins.push({ name: lb.name, x: lb.p[0], y: lb.p[1], kind: lb.kind });
+    pins.push({ name: lb.name, x: lb.p[0] * (data.u || 1), y: lb.p[1] * (data.u || 1), kind: lb.kind });
   }
 
-  const pxPerFoot = data.s / 230;
-  drawCompass(ctx, W - 130, H - 140, 70, ink, paper, rgba(hexToRgb('#b5483f')));
-  drawScaleBar(ctx, 56, H - 56, pxPerFoot, 'feet', ink, paper, 1.1);
-  const sizeLabel = { village: 'Village', town: 'Town', city: 'City', capital: 'Capital city' }[data.o.size] || 'Town';
-  drawCartouche(ctx, 40, 40, title, `${sizeLabel} · ${data.buildings.length} buildings`, ink, paper, 1);
-  if (!opts.noFrame) drawFrame(ctx, W, H, ink, paper, 1);
+  const pxPerFoot = data.s / 230 * (data.u || 1);
+  if (furniture) {
+    // furniture is drawn at picture size, not shrunk with the map
+    const u = data.u || 1;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const W = Math.round(data.W * u), H = Math.round(data.H * u);
+    drawCompass(ctx, W - 130, H - 140, 70, ink, paper, rgba(hexToRgb('#b5483f')));
+    drawScaleBar(ctx, 56, H - 56, pxPerFoot, 'feet', ink, paper, 1.1);
+    drawCartouche(ctx, 40, 40, title, citySubtitle(data), ink, paper, 1);
+    if (!opts.noFrame) drawFrame(ctx, W, H, ink, paper, 1);
+  }
   return { pins, pxPerUnit: pxPerFoot, unit: 'feet' };
 }
 
+export const citySubtitle = d => `${({ village: 'Village', town: 'Town', city: 'City', capital: 'Capital city' })[d.o.size] || 'Town'} · ${d.buildings.length} buildings`;
+
 // ---------------- Storybook: bright, hand-painted look (coloured roofs, cobbles, lush trees, painted water) ----------------
 const ROOFS = [[204, 92, 70], [186, 80, 64], [222, 132, 74], [214, 168, 106], [196, 112, 84], [104, 122, 156], [76, 142, 142], [146, 100, 146], [226, 150, 96]];
-function renderCityStorybook(data, canvas) {
+function renderCityStorybook(data, canvas, ropts = {}) {
   const { W, H } = data;
-  canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d');
+  const ctx = setupCanvas(canvas, data, ropts.view);
   const r = rng(data.o.seed + ':sb');
   const nz = makeNoise(rng(data.o.seed + ':sbn'));
   const INK = [42, 38, 44], ink = rgba(INK);
   const S = { ink: INK, paper: [250, 244, 226], label: [40, 36, 44], halo: [252, 248, 238] };
 
-  // grass ground: coarse blotches + fine tiled texture
+  // grass ground: coarse blotches + fine tiled texture (cached)
+  ctx.drawImage(cachedRaster(data, 'storybook', (img, W, H, u) => {
+  const d = img.data;
   const cg = 8, gw = Math.ceil(W / cg) + 1, gh = Math.ceil(H / cg) + 1, coarse = new Float32Array(gw * gh);
-  for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) coarse[y * gw + x] = nz.fbm(x * cg / 260, y * cg / 260, 4);
+  for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) coarse[y * gw + x] = nz.fbm(x * cg / (260 * u), y * cg / (260 * u), 4);
   const fine = new Float32Array(128 * 128);
   for (let y = 0; y < 128; y++) for (let x = 0; x < 128; x++) fine[y * 128 + x] = nz.fbm(x / 9 + 50, y / 9, 2);
-  const img = ctx.createImageData(W, H), d = img.data;
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const cv = coarse[((y / cg) | 0) * gw + ((x / cg) | 0)], fv = fine[((y & 127) << 7) | (x & 127)];
     const t = Math.max(0, Math.min(1, 0.5 + cv * 1.3));
     const o = (y * W + x) * 4;
     d[o] = 118 + t * 50 + fv * 14; d[o + 1] = 152 + t * 36 + fv * 14; d[o + 2] = 80 + t * 22 + fv * 8; d[o + 3] = 255;
   }
-  ctx.putImageData(img, 0, 0);
+  }), 0, 0, W, H);
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   const shadow = 'rgba(20,24,10,.32)';
 
@@ -711,9 +761,9 @@ function renderCityStorybook(data, canvas) {
   // gentle vignette
   const vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.4, W / 2, H / 2, Math.max(W, H) * 0.72);
   vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(20,30,10,.28)');
-  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+  if (ropts.furniture !== false) { ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H); }
 
-  return finishCity(ctx, data, S, ink, rgba(S.paper));
+  return finishCity(ctx, data, S, ink, rgba(S.paper), ropts);
 }
 
 // ---------------- City editing ----------------

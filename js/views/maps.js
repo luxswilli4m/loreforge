@@ -35,13 +35,16 @@ export function renderList(main) {
     <div class="page-head"><h1>Maps</h1><a class="btn" href="#/generate">✨ Generate a map</a><button class="primary" id="new">⬆ Upload a map</button></div>
     ${maps.length ? `<div class="grid">${maps.map(m => {
       const parent = getMap(m.parentId);
-      return `<a class="card entry-card" href="#/map/${m.id}" style="text-decoration:none;color:inherit;--tc:var(--accent)">
+      const n = (m.shots || []).length;
+      return `<a class="card entry-card map-card" href="#/map/${m.id}" style="text-decoration:none;color:inherit;--tc:var(--accent)">
         <img class="thumb" ${A.src(m.image)} alt="">
         <h3>${esc(m.name)}</h3>
-        <p>${m.pins.length} pins${parent ? ` · inside ${esc(parent.name)}` : ''}${m.scale.pxPerUnit ? ' · scaled' : ''}</p></a>`;
+        <p>${m.pins.length} pins${parent ? ` · inside ${esc(parent.name)}` : ''}${m.scale.pxPerUnit ? ' · scaled' : ''}</p>
+        <span class="map-folder" data-folder="${m.id}" title="Open this map’s folder: the map and its snapshots">📁${n ? `<b>${n}</b>` : ''}</span></a>`;
     }).join('')}</div>`
       : `<div class="empty"><div class="big">🗺️</div>Upload a world, region, city or dungeon map — or <a href="#/generate">generate one</a>. Pins can link to entries or open deeper maps.</div>`}`;
   main.querySelector('#new').onclick = async () => { const m = await newMapDialog(); if (m) go(`#/map/${m.id}`); };
+  main.querySelectorAll('[data-folder]').forEach(el => el.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); go(`#/gallery/${el.dataset.folder}`); }));
 }
 
 export function peekHTML(m) {
@@ -219,6 +222,7 @@ export function renderMap(main, id) {
         <label>Parent map</label>
         <select id="m-parent"><option value="">— none (top level) —</option>${others.filter(x => !chain(x).some(c => c.id === m.id)).map(x => `<option value="${x.id}" ${x.id === m.parentId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>
         ${m.gen?.edit ? `<button class="primary" id="m-edit" style="margin-top:12px;width:100%">✏️ Edit terrain, towns &amp; style</button>` : ''}
+        <a class="btn" href="#/gallery/${m.id}" style="margin-top:8px;width:100%;justify-content:center">📁 Folder${(m.shots || []).length ? ` · ${m.shots.length} snapshot${m.shots.length > 1 ? 's' : ''}` : ''}</a>
         <div class="row" style="margin-top:12px"><button id="m-replace">Replace image</button><button class="danger" id="m-del">Delete map</button></div>
       </div>
       <div class="card side-box">

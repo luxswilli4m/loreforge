@@ -17,6 +17,7 @@ import * as quests from './views/quests.js';
 import * as library from './views/library.js';
 import * as forge from './views/forge.js';
 import * as cloudView from './views/cloud.js';
+import * as gallery from './views/gallery.js';
 import { initCloud, onConflict, connected as cloudConnected, status as syncStatus } from './cloud.js';
 import { initTray } from './tools/tray.js';
 import { initAssets, migrateWorld } from './assets.js';
@@ -97,6 +98,7 @@ export function route() {
     entry: () => b === 'edit' ? entries.renderEdit(main, a) : entries.renderView(main, a),
     maps: () => maps.renderList(main),
     map: () => maps.renderMap(main, a),
+    gallery: () => gallery.render(main, a),
     graph: () => graph.render(main),
     campaign: () => campaign.renderList(main),
     session: () => campaign.renderSession(main, a),

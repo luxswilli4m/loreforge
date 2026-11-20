@@ -5,11 +5,26 @@ import { placeName, realmBase, realmName, seaName, mountainName, forestName } fr
 
 export const WORLD_DEFAULTS = {
   seed: 'vael', name: '', shape: 'continent', land: 0.42, rivers: 0.5, towns: 16, realms: 4,
-  climate: 'temperate', style: 'parchment', widthMiles: 1200,
+  climate: 'temperate', style: 'parchment', size: 'kingdom', mapW: 1200, mapH: 750,
 };
-
-const GW = 320, GH = 200;
-export const OUT_W = 2400, OUT_H = 1500;
+// Map size presets (km). Bigger maps get a finer terrain grid, up to a limit.
+export const WORLD_SIZES = [
+  ['region', 'Region', 400, 250], ['kingdom', 'Kingdom', 1200, 750], ['continent', 'Continent', 4000, 2500],
+  ['subcontinent', 'Great continent', 8000, 5000], ['world', 'Whole world', 16000, 8000], ['custom', 'Custom…', 0, 0],
+];
+export const CELL_PX = 7.5;
+// grid size for a map: older maps (no mapW) keep the original 320 × 200
+export function gridFor(o) {
+  if (!o.mapW || !o.mapH) return { GW: 320, GH: 200 };
+  const aspect = Math.max(0.4, Math.min(3, o.mapW / o.mapH));
+  const area = o.mapW * o.mapH / (1200 * 750);
+  const cells = Math.round(64000 * Math.max(1, Math.min(2.2, Math.pow(area, 0.22))));
+  // even sizes keep the picture a whole number of pixels (7.5 px per cell)
+  const GW = 2 * Math.round(Math.sqrt(cells * aspect) / 2), GH = 2 * Math.round(cells / GW / 2);
+  return { GW, GH };
+}
+// map units for the scale bar: km on new maps, miles on older ones
+export const worldUnits = o => o.mapW ? { per: o.mapW, unit: 'km' } : { per: o.widthMiles || 1200, unit: 'miles' };
 
 const B = { OCEAN: 0, GRASS: 1, FOREST: 2, TAIGA: 3, JUNGLE: 4, DESERT: 5, SAVANNA: 6, TUNDRA: 7, SNOW: 8, SWAMP: 9, LAKE: 10 };
 const REALM_COLORS = ['#b5483f', '#3f6fa8', '#6f9a3c', '#7d5aa0', '#c9762d', '#3a99a8', '#b38a1e', '#8b5470'];
@@ -17,11 +32,11 @@ const REALM_COLORS = ['#b5483f', '#3f6fa8', '#6f9a3c', '#7d5aa0', '#c9762d', '#3
 const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const clamp01 = x => Math.max(0, Math.min(1, x));
 
-export const GRID_W = GW, GRID_H = GH;
-
 // edit (optional): hand-edited state from the map editor — see makeEditState()
 export function generateWorld(opts, edit = null) {
   const o = { ...WORLD_DEFAULTS, ...opts };
+  if (!opts.mapW && opts.widthMiles) { delete o.mapW; delete o.mapH; } // older map: keep its original grid
+  const { GW, GH } = edit?.GW ? edit : gridFor(o);
   const r0 = rng(o.seed);
   const n1 = makeNoise(r0), n2 = makeNoise(r0), n3 = makeNoise(r0);
   const N = GW * GH;
@@ -420,8 +435,9 @@ export { REALM_COLORS };
 
 export function makeEditState(data) {
   return {
+    GW: data.GW, GH: data.GH,
     h: Float32Array.from(data.h), ridge: Float32Array.from(data.ridgeF), sea: data.sea, hmax: data.hmax, eCurve: data.eCurve.slice(),
-    biome: new Uint8Array(GW * GH).fill(255), realmPaint: new Int16Array(GW * GH).fill(-2),
+    biome: new Uint8Array(data.GW * data.GH).fill(255), realmPaint: new Int16Array(data.GW * data.GH).fill(-2),
     towns: data.towns.map(t => ({ gx: t.gx, gy: t.gy, name: t.name, capital: !!t.capital, rid: t.capital ? t.rid : undefined })),
     realms: data.realms.map(rl => ({ id: rl.rid, name: rl.name, color: rl.color })),
   };
@@ -433,7 +449,7 @@ export function cloneEdit(ed) {
 
 // one dab of a brush at grid position (gx, gy). radius in cells, strength 0..1
 export function applyBrush(ed, tool, gx, gy, radius, strength, value) {
-  const { h, ridge, sea } = ed, span = Math.max(0.05, ed.hmax - sea);
+  const { h, ridge, sea, GW, GH } = ed, span = Math.max(0.05, ed.hmax - sea);
   const x0 = Math.max(0, Math.floor(gx - radius)), x1 = Math.min(GW - 1, Math.ceil(gx + radius));
   const y0 = Math.max(0, Math.floor(gy - radius)), y1 = Math.min(GH - 1, Math.ceil(gy + radius));
   let avgH = 0, avgR = 0, cnt = 0;
@@ -467,6 +483,7 @@ export function applyBrush(ed, tool, gx, gy, radius, strength, value) {
 
 // quick low-res look at the edit state while a brush stroke is in progress
 export function drawEditPreview(ed, canvas, data) {
+  const { GW, GH } = ed;
   canvas.width = GW; canvas.height = GH;
   const ctx = canvas.getContext('2d'), img = ctx.createImageData(GW, GH), d = img.data;
   const rc = new Map(ed.realms.map(rl => [rl.id, hexToRgb(rl.color)]));
@@ -490,7 +507,7 @@ export function drawEditPreview(ed, canvas, data) {
 
 // save / load edit state as a compact binary file (heights stored as 16-bit, gzipped where the browser supports it)
 export async function editToBlob(ed, o) {
-  const N = GW * GH;
+  const { GW, GH } = ed, N = GW * GH;
   let lo = Infinity, hi = -Infinity, rhi = 0;
   for (let i = 0; i < N; i++) { if (ed.h[i] < lo) lo = ed.h[i]; if (ed.h[i] > hi) hi = ed.h[i]; if (ed.ridge[i] > rhi) rhi = ed.ridge[i]; }
   const span = Math.max(1e-6, hi - lo), rspan = Math.max(1e-6, rhi);
@@ -508,14 +525,14 @@ export async function editFromBlob(blob) {
   if (b0[0] === 0x1f && b0[1] === 0x8b) buf = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
   const n = new Uint32Array(buf.slice(0, 4))[0];
   const head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, n)));
-  if (head.GW !== GW || head.GH !== GH) throw new Error('Map grid size changed');
+  const { GW, GH } = head;
   let off = 4 + n + ((4 - (n % 4)) % 4);
   const N = GW * GH;
   const take = (Ctor, bytes) => { const a = new Ctor(buf.slice(off, off + bytes)); off += bytes; return a; };
   const qh = take(Uint16Array, N * 2), qr = take(Uint16Array, N * 2), realmPaint = take(Int16Array, N * 2), biome = take(Uint8Array, N);
   const h = new Float32Array(N), ridge = new Float32Array(N);
   for (let i = 0; i < N; i++) { h[i] = head.lo + qh[i] / 65535 * head.span; ridge[i] = qr[i] / 65535 * head.rspan; }
-  return { o: head.o, edit: { h, ridge, realmPaint, biome, sea: head.sea, hmax: head.hmax, eCurve: head.eCurve, towns: head.towns, realms: head.realms } };
+  return { o: head.o, edit: { GW, GH, h, ridge, realmPaint, biome, sea: head.sea, hmax: head.hmax, eCurve: head.eCurve, towns: head.towns, realms: head.realms } };
 }
 
 // ---------------- Rendering ----------------
@@ -573,6 +590,13 @@ STYLES.cells = {
 };
 export const STYLE_NAMES = { parchment: 'Parchment', atlas: 'Atlas', night: 'Night (gold ink)', quill: 'Ink & Quill', storybook: 'Storybook', painted: 'Painted', relief: 'Realistic', cells: 'Political cells' };
 
+// colours for a frame/compass drawn around the view, and the colour beyond the map's edge
+export function worldFrameStyle(styleName) {
+  const S = STYLES[styleName] || STYLES.parchment;
+  const back = styleName === 'painted' ? [236, 240, 244] : S.water[1];
+  return { ink: rgba(S.ink), paper: rgba(S.paper), back: rgba(back) };
+}
+
 const HYPSO = [[0, [118, 158, 92]], [0.18, [148, 176, 104]], [0.36, [196, 190, 128]], [0.55, [186, 150, 104]], [0.74, [150, 120, 94]], [0.9, [172, 164, 160]], [0.98, [240, 240, 244]]];
 function hypso(v) {
   for (let j = 1; j < HYPSO.length; j++) if (v <= HYPSO[j][0]) return mix(HYPSO[j - 1][1], HYPSO[j][1], (v - HYPSO[j - 1][0]) / (HYPSO[j][0] - HYPSO[j - 1][0]));
@@ -584,15 +608,24 @@ export function renderWorld(data, canvas, styleName = 'parchment', ropts = {}) {
   const S = STYLES[styleName] || STYLES.parchment;
   const { GW: gw, GH: gh, h, sea, e, isOcean, lake, dLand, biome, owner } = data;
   const N = gw * gh;
-  const W = OUT_W, H = OUT_H, cs = W / gw, k = W / 2400;
-  canvas.width = W; canvas.height = H;
+  const cs = CELL_PX, k = 1, W = Math.round(gw * cs), H = Math.round(gh * cs);
+  // view: draw only part of the map, magnified (sharp zoom). Otherwise the whole map at 1:1.
+  const view = ropts.view;
   const ctx = canvas.getContext('2d');
+  if (view) {
+    canvas.width = Math.max(1, Math.round(view.w * view.s)); canvas.height = Math.max(1, Math.round(view.h * view.s));
+    ctx.setTransform(view.s, 0, 0, view.s, -view.x * view.s, -view.y * view.s);
+    ctx.imageSmoothingQuality = 'high';
+  } else { canvas.width = W; canvas.height = H; }
   const r = rng(data.o.seed + ':render');
   const ink = rgba(S.ink), paperC = rgba(S.paper);
 
-  // --- per-cell colours ---
   const f = new Float32Array(N);
   for (let i = 0; i < N; i++) f[i] = lake[i] ? -0.004 : h[i] - sea;
+  if (!Object.prototype.hasOwnProperty.call(data, '_raster')) Object.defineProperty(data, '_raster', { value: {}, enumerable: false, writable: true });
+  let raster = data._raster[styleName];
+  if (!raster) {
+  // --- per-cell colours ---
   const LR = new Float32Array(N), LG = new Float32Array(N), LB = new Float32Array(N);
   const WR = new Float32Array(N), WG = new Float32Array(N), WB = new Float32Array(N);
   for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
@@ -670,8 +703,12 @@ export function renderWorld(data, canvas, styleName = 'parchment', ropts = {}) {
       d[o] = R; d[o + 1] = G; d[o + 2] = Bc; d[o + 3] = 255;
     }
   }
-  paperGrain(img, W, H, r, S.grain, S.vignette);
-  ctx.putImageData(img, 0, 0);
+  paperGrain(img, W, H, rng(data.o.seed + ':grain'), S.grain, S.vignette);
+  raster = document.createElement('canvas'); raster.width = W; raster.height = H;
+  raster.getContext('2d').putImageData(img, 0, 0);
+  data._raster[styleName] = raster;
+  }
+  ctx.drawImage(raster, 0, 0);
 
   const toPx = p => [(p[0] + 0.5) * cs, (p[1] + 0.5) * cs];
   const strokeLines = (lines, closedSmooth = true, it = 2) => {
@@ -904,15 +941,17 @@ export function renderWorld(data, canvas, styleName = 'parchment', ropts = {}) {
   ctx.restore();
 
   // --- cloud banks around the edges (painted style) ---
-  if (S.clouds) drawClouds(ctx, W, H, rng(data.o.seed + ':clouds'), k);
+  if (S.clouds && !ropts.noClouds) drawClouds(ctx, W, H, rng(data.o.seed + ':clouds'), k);
 
   // --- furniture boxes so labels avoid them ---
   const L = new Labeler(W, H, 30 * k);
   const title = data.o.name || 'Untitled Realm';
-  L.add([30 * k, 30 * k, 30 * k + Math.min(760, 60 + title.length * 28) * k, 140 * k]);
   const compass = [W - 150 * k, H - 160 * k, 78 * k];
-  L.add([compass[0] - 95 * k, compass[1] - 120 * k, compass[0] + 95 * k, compass[1] + 95 * k]);
-  L.add([40 * k, H - 110 * k, 380 * k, H - 30 * k]);
+  if (furniture) {
+    L.add([30 * k, 30 * k, 30 * k + Math.min(760, 60 + title.length * 28) * k, 140 * k]);
+    L.add([compass[0] - 95 * k, compass[1] - 120 * k, compass[0] + 95 * k, compass[1] + 95 * k]);
+    L.add([40 * k, H - 110 * k, 380 * k, H - 30 * k]);
+  }
 
   // --- towns ---
   const label = (text, x, y, size, opts2 = {}) => {
@@ -969,14 +1008,15 @@ export function renderWorld(data, canvas, styleName = 'parchment', ropts = {}) {
   // --- map furniture ---
   if (furniture) {
     drawCompass(ctx, compass[0], compass[1], compass[2], ink, paperC, rgba(hexToRgb('#b5483f')));
-    drawScaleBar(ctx, 60 * k, H - 62 * k, W / data.o.widthMiles, 'miles', ink, paperC, k * 1.2);
+    const u = worldUnits(data.o);
+    drawScaleBar(ctx, 60 * k, H - 62 * k, W / u.per, u.unit, ink, paperC, k * 1.2);
     drawCartouche(ctx, 44 * k, 44 * k, title, `${data.realms.length} realms · ${data.towns.length} settlements`, ink, paperC, k);
     if (!S.noFrame) drawFrame(ctx, W, H, ink, rgba(S.paper), k);
   }
 
   return {
     pins: data.towns.map(tw => ({ name: tw.name, capital: tw.capital, port: tw.port, realm: data.realms[tw.realm]?.name || '', x: (tw.gx + 0.5) * cs, y: (tw.gy + 0.5) * cs })),
-    pxPerUnit: W / data.o.widthMiles,
+    pxPerUnit: W / worldUnits(data.o).per, unit: worldUnits(data.o).unit,
   };
 }
 
