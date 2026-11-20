@@ -1,0 +1,148 @@
+import { state, loadWorlds, openWorld, saveNow, W, TYPES, getEntry, getSession, getJournal, getMap } from './store.js';
+import { $, esc, openModal, closeModal, typeColor, plain } from './util.js';
+import * as home from './views/home.js';
+import * as entries from './views/entries.js';
+import * as maps from './views/maps.js';
+import * as graph from './views/graph.js';
+import * as campaign from './views/campaign.js';
+import * as timeline from './views/timeline.js';
+import * as journals from './views/journals.js';
+import * as settings from './views/settings.js';
+
+const NAV = [
+  { href: '#/', icon: '🏠', label: 'Overview', match: /^$/ },
+  { href: '#/entries', icon: '📚', label: 'World Bible', match: /^(entries|entry)/ },
+  { href: '#/maps', icon: '🗺️', label: 'Maps', match: /^(maps|map)/ },
+  { href: '#/graph', icon: '🕸️', label: 'Relationships', match: /^graph/ },
+  null,
+  { href: '#/campaign', icon: '🎲', label: 'Campaign', match: /^(campaign|session)/ },
+  { href: '#/timeline', icon: '⏳', label: 'Timeline', match: /^timeline/ },
+  { href: '#/journals', icon: '✒️', label: 'Journals', match: /^(journals|journal)/ },
+  null,
+  { href: '#/settings', icon: '⚙️', label: 'World settings', match: /^settings/ },
+  { href: '#/worlds', icon: '🌍', label: 'Switch world', match: /^worlds/ },
+];
+
+let cleanup = null;
+
+function renderNav(path) {
+  const nav = $('#nav');
+  if (!W()) { nav.innerHTML = ''; $('#world-name').textContent = ''; return; }
+  $('#world-name').textContent = W().name;
+  nav.innerHTML = NAV.map(n => n ? `<a href="${n.href}" class="${n.match.test(path) ? 'active' : ''}"><span>${n.icon}</span>${n.label}</a>` : '<div class="nav-sep"></div>').join('');
+}
+
+export function route() {
+  const path = location.hash.replace(/^#\/?/, '').split('?')[0];
+  const [view, a, b] = path.split('/').map(decodeURIComponent);
+  const main = $('#main');
+  if (typeof cleanup === 'function') { try { cleanup(); } catch (e) { console.error(e); } }
+  cleanup = null;
+  closeModal();
+
+  if (!W() && view !== 'worlds') {
+    renderNav('worlds');
+    cleanup = home.renderPicker(main);
+    return;
+  }
+  renderNav(path);
+  main.scrollTop = 0;
+  const r = {
+    '': () => home.render(main),
+    worlds: () => home.renderPicker(main),
+    entries: () => entries.renderList(main, a),
+    entry: () => b === 'edit' ? entries.renderEdit(main, a) : entries.renderView(main, a),
+    maps: () => maps.renderList(main),
+    map: () => maps.renderMap(main, a),
+    graph: () => graph.render(main),
+    campaign: () => campaign.renderList(main),
+    session: () => campaign.renderSession(main, a),
+    timeline: () => timeline.render(main),
+    journals: () => journals.renderList(main),
+    journal: () => b === 'edit' ? journals.renderEdit(main, a) : journals.renderView(main, a),
+    settings: () => settings.render(main),
+  }[view];
+  cleanup = r ? r() : home.render(main);
+}
+
+// ---------- Side panel (Ctrl/Cmd+click any link) ----------
+export function openPeek(hash) {
+  const [view, id] = hash.replace(/^#\/?/, '').split('?')[0].split('/');
+  let html = '';
+  if (view === 'entry' && getEntry(id)) html = entries.readHTML(getEntry(id), true);
+  else if (view === 'session' && getSession(id)) html = campaign.readHTML(getSession(id));
+  else if (view === 'journal' && getJournal(id)) html = journals.readHTML(getJournal(id));
+  else if (view === 'map' && getMap(id)) html = maps.peekHTML(getMap(id));
+  else return false;
+  $('#peek-body').innerHTML = html + `<p style="margin-top:20px"><a class="btn" href="${hash}">Open full page →</a></p>`;
+  $('#peek').classList.remove('hidden');
+  return true;
+}
+$('#peek-close').onclick = () => $('#peek').classList.add('hidden');
+
+document.addEventListener('click', e => {
+  const a = e.target.closest('a[href^="#/"]');
+  if (a && (e.ctrlKey || e.metaKey)) {
+    if (openPeek(a.getAttribute('href'))) e.preventDefault();
+  }
+});
+
+// ---------- Search ----------
+function openSearch() {
+  if (!W()) return;
+  const m = openModal(`<input id="q" placeholder="Search entries, sessions, journals…" autofocus><div class="search-results" id="sr"></div>
+    <p class="muted small" style="margin:10px 0 0">Enter to open · Ctrl+Enter to open in side panel</p>`);
+  const q = m.querySelector('#q'), sr = m.querySelector('#sr');
+  let results = [], sel = 0;
+  const run = () => {
+    const s = q.value.trim().toLowerCase();
+    const w = W();
+    const all = [
+      ...w.entries.map(e => ({ href: `#/entry/${e.id}`, name: e.name, sub: TYPES[e.type]?.label, color: typeColor(e.type), text: e.name + ' ' + e.summary + ' ' + plain(e.body) + ' ' + e.tags.join(' ') })),
+      ...w.sessions.map(x => ({ href: `#/session/${x.id}`, name: x.title, sub: 'Session', color: 'var(--accent)', text: x.title + ' ' + plain(x.notes) })),
+      ...w.journals.map(x => ({ href: `#/journal/${x.id}`, name: x.title, sub: 'Journal', color: 'var(--muted)', text: x.title + ' ' + plain(x.body) })),
+      ...w.maps.map(x => ({ href: `#/map/${x.id}`, name: x.name, sub: 'Map', color: 'var(--muted)', text: x.name })),
+    ];
+    results = s ? all.filter(r => r.text.toLowerCase().includes(s))
+      .sort((a, b) => (b.name.toLowerCase().includes(s) - a.name.toLowerCase().includes(s))).slice(0, 12) : all.slice(0, 8);
+    sel = 0;
+    draw();
+  };
+  const draw = () => {
+    sr.innerHTML = results.map((r, i) => `<div class="res ${i === sel ? 'sel' : ''}" data-i="${i}"><span class="type-dot" style="--tc:${r.color}"></span><b>${esc(r.name)}</b><span class="muted small">${esc(r.sub || '')}</span></div>`).join('') || '<p class="muted">No matches.</p>';
+  };
+  const go = (i, peek) => { const r = results[i]; if (!r) return; closeModal(); if (peek) openPeek(r.href); else location.hash = r.href; };
+  q.addEventListener('input', run);
+  q.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown') { sel = Math.min(sel + 1, results.length - 1); draw(); e.preventDefault(); }
+    if (e.key === 'ArrowUp') { sel = Math.max(sel - 1, 0); draw(); e.preventDefault(); }
+    if (e.key === 'Enter') go(sel, e.ctrlKey || e.metaKey);
+    if (e.key === 'Escape') closeModal();
+  });
+  sr.addEventListener('click', e => { const d = e.target.closest('.res'); if (d) go(+d.dataset.i, e.ctrlKey || e.metaKey); });
+  run();
+}
+$('#btn-search').onclick = openSearch;
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openSearch(); }
+  if (e.key === 'Escape' && $('#modal-root').innerHTML) closeModal();
+});
+
+// ---------- Accessibility prefs ----------
+export function applyPrefs() {
+  const p = JSON.parse(localStorage.getItem('loreforge:prefs') || '{}');
+  document.documentElement.style.setProperty('--fs', (p.fontSize || 15) + 'px');
+  document.body.classList.toggle('easy-read', !!p.easyRead);
+  document.body.classList.toggle('light', !!p.light);
+}
+
+window.addEventListener('hashchange', route);
+window.addEventListener('beforeunload', () => { saveNow(); });
+
+(async function init() {
+  applyPrefs();
+  await loadWorlds();
+  const last = localStorage.getItem('loreforge:last');
+  if (last && state.worlds.some(w => w.id === last)) openWorld(last);
+  route();
+})();
