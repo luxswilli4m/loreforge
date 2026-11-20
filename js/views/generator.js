@@ -4,8 +4,9 @@ import { openGlobe } from './globe.js';
 import { randomSeed, ensureFonts, drawFrame, drawCompass, drawScaleBar, drawCartouche } from '../gen/core.js';
 import { generateWorld, renderWorld, WORLD_DEFAULTS, WORLD_SIZES, worldUnits, worldFrameStyle, makeEditState, completeEdit, SHAPES, shapePreview, heightsFromImage, LAYERS, cloneEdit, applyBrush, drawEditPreview,
   editToBlob, editFromBlob, BIOME_LABELS, REALM_COLORS } from '../gen/world.js';
-import { generateCity, renderCity, CITY_DEFAULTS, CITY_EXTENTS, cityFrameStyle, citySubtitle, ROOF_SWATCHES, ROAD_SWATCHES, cloneCity, cityBrush, addCityWall, nearestWall, removeCityWall, snapToRoad, addCityRiver, addCityPond, nearestWater, removeCityWater, streetAngle, addCityRoad, nearestRoad, removeCityRoad, cityToBlob, cityFromBlob } from '../gen/city.js';
+import { generateCity, renderCity, CITY_DEFAULTS, CITY_EXTENTS, cityFrameStyle, citySubtitle, ROOF_SWATCHES, ROAD_SWATCHES, cloneCity, cityBrush, addCityWall, nearestWall, removeCityWall, snapToRoad, addCityRiver, addCityPond, nearestWater, removeCityWater, streetAngle, reshapeCityLine, addCityRoad, nearestRoad, removeCityRoad, cityToBlob, cityFromBlob } from '../gen/city.js';
 import { ICONS, ICON_GROUPS, iconThumb, drawIcon } from '../gen/icons.js';
+import { curveFromPts, samplePath, segMid, hitCurve, pullSegment, addElbow, removeElbow, straighten, cloneLine } from '../gen/bend.js';
 import { placeName, realmBase, realmName } from '../gen/names.js';
 import { rng } from '../gen/core.js';
 import * as A from '../assets.js';
@@ -31,7 +32,7 @@ const MODE_STYLES = { world: Object.keys(STYLE_SWATCH), city: ['parchment', 'atl
 const TOOLS = [
   ['Terrain', [['raise', '⬆️', 'Raise'], ['lower', '⬇️', 'Lower'], ['mountain', '🏔️', 'Mountains'], ['smooth', '〰️', 'Smooth'], ['flatten', '▁', 'Flatten'], ['land', '🏝️', 'Add land'], ['sea', '🌊', 'Add sea']]],
   ['Paint', [['biome', '🌲', 'Biome'], ['realm', '🚩', 'Realm']]],
-  ['Water & routes', [['river', '〰️', 'Draw river'], ['dry', '🏜️', 'Dry up rivers'], ['road', '🛣️', 'Draw road'], ['erase', '✂️', 'Erase drawn']]],
+  ['Water & routes', [['river', '〰️', 'Draw river'], ['dry', '🏜️', 'Dry up rivers'], ['road', '🛣️', 'Draw road'], ['bend', '〽️', 'Bend & elbows'], ['erase', '✂️', 'Erase drawn']]],
   ['Places & labels', [['town', '🏘️', 'Towns'], ['label', '🏷️', 'Labels'], ['icon', '🐉', 'Map icons']]],
 ];
 // brush sizes run from a hair (0.1) to huge (40) on a curved slider, so small sizes get plenty of room
@@ -47,6 +48,7 @@ const TOOL_HELP = {
   town: 'Click land to add a town. Drag a town to move it. Click a town to rename it, make it a capital or delete it.',
   river: 'Drag from the source to the sea. Rivers start thin and widen as they go.', dry: 'Drag over generated rivers to dry them up.',
   road: 'Drag to draw a road or trade route.', erase: 'Click a river or road you drew to remove it.',
+  bend: 'Click a road or river to pick it up. Drag the line to bend it; drag a dot to move an end or elbow. Double-click the line to add an elbow, double-click an elbow to remove it. Right-click to let go. (Works on rivers and roads you drew.)',
   icon: 'Pick an icon below, then click the map to drop it. Drag an icon to move it; click one to resize, flip or remove it (Delete key works too).',
   label: 'Click empty space to add your own label. Click an existing label (realm, mountain, forest, sea or yours) to rename it — leave it blank to hide it.',
 };
@@ -56,6 +58,7 @@ const CITY_TOOLS = [
   ['Nature', [['tree-add', '🌳', 'Add trees'], ['tree-del', '🪓', 'Clear trees']]],
   ['Walls & roads', [['wall', '🧱', 'Draw wall'], ['wall-del', '⛏️', 'Remove wall'], ['road', '🛣️', 'Draw road'], ['road-paint', '🖌️', 'Colour road'], ['road-del', '✂️', 'Remove road']]],
   ['Water', [['river', '〰️', 'Draw river'], ['lake', '💧', 'Draw lake'], ['water-del', '🏜️', 'Remove water']]],
+  ['Shape', [['bend', '〽️', 'Bend & elbows']]],
   ['Icons', [['icon', '🐉', 'Map icons']]],
 ];
 const POLY_TOOLS = ['wall', 'road', 'river', 'lake'];
@@ -69,6 +72,7 @@ const CITY_HELP = {
   river: 'Click points along the river’s course; double-click or press Enter to finish. Bridges appear where roads cross.',
   lake: 'Click around the shore of a lake or pond; click the first point again, double-click or press Enter to fill it.',
   'water-del': 'Click a river or lake to drain it (this works on the generated river too).',
+  bend: 'Click a road or river to pick it up. Drag the line to bend it; drag a dot to move an end or elbow. Double-click the line to add an elbow, double-click an elbow to remove it. Right-click to let go. Works on every road and river, including the generated ones.',
   icon: 'Pick an icon below, then click the map to drop it. Drag an icon to move it; click one to resize, flip or remove it (Delete key works too).',
   'road-paint': 'Click a road to give it the colour below.', 'road-del': 'Click a road to remove it.',
 };
@@ -91,7 +95,7 @@ export function render(main) {
   // world editor state
   let ed = null, wEdit = false, selTown = -1, edVersion = 0;
   // city editor state
-  let ced = null, cEdit = false, cVersion = 0, poly = null, selIcon = null;
+  let ced = null, cEdit = false, cVersion = 0, poly = null, selIcon = null, bendSel = null;
   let undoStack = [], redoStack = [];
   let editMapId = q.edit || '';
   let pendingShots = [];
@@ -197,6 +201,8 @@ export function render(main) {
       <button class="small" id="rg-roads" title="Show or hide the automatic roads (your drawn roads stay)">🛣️ ${ed.noRoads ? 'Show' : 'Hide'} auto roads</button></div>`;
     const biome = t.tool === 'biome' ? `<label>Paint with</label><select data-t="biome">${BIOME_LABELS.map(([v, l]) => `<option value="${v}" ${+t.biome === v ? 'selected' : ''}>${l}</option>`).join('')}<option value="255" ${+t.biome === 255 ? 'selected' : ''}>✨ Automatic (let climate decide)</option></select>` : '';
     const realm = t.tool === 'realm' ? `<label>Paint with</label><select data-t="realm">${ed.realms.map(rl => `<option value="${rl.id}" ${+t.realm === rl.id ? 'selected' : ''}>${esc(rl.name)}</option>`).join('')}<option value="-1" ${+t.realm === -1 ? 'selected' : ''}>Unclaimed land</option><option value="-2" ${+t.realm === -2 ? 'selected' : ''}>✨ Automatic (natural borders)</option></select>` : '';
+    const bendOpt = t.tool === 'bend' ? (bendSel ? `<div class="sel-town"><b>${esc(bendSel.label)}</b> <span class="muted small">· ${bendSel.line.ctl.length - 2} elbow${bendSel.line.ctl.length === 3 ? '' : 's'}</span>
+        <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap"><button class="small" id="bd-straight">Straighten bends</button><button class="small" id="bd-done">Let go</button></div></div>` : `<p class="small muted" style="margin:8px 0 0">Click a road or river to start.</p>`) : '';
     const tw = selTown >= 0 ? ed.towns[selTown] : null;
     const town = t.tool === 'town' ? (tw ? `<div class="sel-town">
         <label>Town name</label><input id="tw-name" value="${esc(tw.name)}">
@@ -210,7 +216,7 @@ export function render(main) {
       <div class="edit-head"><b>✏️ Editing ${esc(o.name || 'map')}</b><button class="small" id="enddone">Done</button></div>
       ${tools}
       <p class="small muted tool-help">${esc(TOOL_HELP[t.tool])}</p>
-      ${brush}${biome}${realm}${riverOpt}${labelOpt}${t.tool === 'icon' ? iconPanelHTML(t, o.style) : ''}${town}${drawn}
+      ${brush}${biome}${realm}${riverOpt}${labelOpt}${t.tool === 'icon' ? iconPanelHTML(t, o.style) : ''}${bendOpt}${town}${drawn}
       ${regen}
       ${realms}
       <label>Style</label><div class="swatches">${styleButtons(o)}</div>
@@ -269,12 +275,15 @@ export function render(main) {
     const bld = t.tool === 'bld-add' ? `<label>Layout</label>${seg('uniform', [['1', '▦ Uniform', 'Tight rows along the street, like the town'], ['0', '⁘ Loose', 'Scattered cottages']], t.uniform ? '1' : '0')}` : '';
     const river = t.tool === 'river' ? `<label>River width</label>${seg('riverW', [['0.5', 'Stream'], ['1', 'River'], ['1.7', 'Wide']], String(t.riverW))}` : '';
     const icons = t.tool === 'icon' ? iconPanelHTML(t, o.style) : '';
+    const bendOpt = t.tool === 'bend' ? (bendSel ? `<div class="sel-town"><b>${esc(bendSel.label)}</b> <span class="muted small">· ${bendSel.line.ctl.length - 2} elbow${bendSel.line.ctl.length === 3 ? '' : 's'}</span>
+        <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap"><button class="small" id="bd-straight">Straighten bends</button><button class="small" id="bd-done">Let go</button></div></div>` : `<p class="small muted" style="margin:8px 0 0">Click a road or river to start.</p>`) : '';
+
     const drawing = poly ? `<div class="row" style="margin-top:8px"><button class="small primary" id="c-finish">Finish ${POLY_NAME[t.tool] || 'line'}</button><button class="small" id="c-cancel">Cancel</button></div>` : '';
     return `
       <div class="edit-head"><b>✏️ Editing ${esc(o.name || 'city')}</b><button class="small" id="enddone">Done</button></div>
       ${tools}
       <p class="small muted tool-help">${esc(CITY_HELP[t.tool])}</p>
-      ${bld}${size}${roof}${roadMode}${road}${wall}${river}${icons}${drawing}
+      ${bld}${size}${roof}${roadMode}${road}${wall}${river}${icons}${bendOpt}${drawing}
       <p class="small muted" style="margin:10px 0 0">${ced.buildings.length} buildings · ${ced.roads.length} roads · ${(ced.wall ? 1 : 0) + (ced.walls2?.length || 0)} walls · ${ced.trees.length} trees</p>
       <label>Style</label><div class="swatches">${styleButtons(o)}</div>
       ${undoRow()}`;
@@ -383,9 +392,9 @@ export function render(main) {
   main.querySelector('#z-fit').onclick = fit;
   let pan = null, spaceDown = false;
   pv.addEventListener('pointerdown', ev => {
-    if (ev.button === 2 && editing() && (poly || selIcon)) {
+    if (ev.button === 2 && editing() && (poly || selIcon || bendSel)) {
       ev.preventDefault(); ev.stopPropagation();
-      if (poly) { poly = null; toast('Drawing cancelled'); } else selIcon = null;
+      if (poly) { poly = null; toast('Drawing cancelled'); } else if (bendSel) bendSel = null; else selIcon = null;
       drawPoly(); drawControls(); return;
     }
     const wantPan = ev.button === 1 || ev.button === 2 || spaceDown || (ev.button === 0 && !editing());
@@ -430,7 +439,7 @@ export function render(main) {
     } catch (e) { console.error(e); toast('Something went wrong drawing that map — try another seed'); }
     busy = false; busyEl.classList.remove('on');
     ov.classList.remove('on');
-    if (!stroke) { if (memo.mode === 'city' && poly) drawPoly(); else { clearCov(); drawIconSel(); } }
+    if (!stroke) { if (memo.mode === 'city' && poly) drawPoly(); else { clearCov(); drawIconSel(); drawBend(); } }
     if (view.fitted || prevW !== canvas.width || prevH !== canvas.height) fit(); else { drawFurniture(); scheduleDetail(); }
     drawMark();
     if (pending) { pending = false; regen(); }
@@ -461,8 +470,8 @@ export function render(main) {
     else { ced = null; cEdit = false; poly = null; drawPoly(); cVersion++; }
     undoStack = []; redoStack = [];
   }
-  function undo() { if (!undoStack.length) return; redoStack.push(snap()); restore(undoStack.pop()); selTown = -1; selIcon = null; poly = null; drawPoly(); drawControls(); changed(); }
-  function redo() { if (!redoStack.length) return; undoStack.push(snap()); restore(redoStack.pop()); selTown = -1; selIcon = null; drawControls(); changed(); }
+  function undo() { if (!undoStack.length) return; redoStack.push(snap()); restore(undoStack.pop()); selTown = -1; selIcon = null; bendSel = null; poly = null; drawPoly(); drawControls(); changed(); }
+  function redo() { if (!redoStack.length) return; undoStack.push(snap()); restore(redoStack.pop()); selTown = -1; selIcon = null; bendSel = null; drawControls(); changed(); }
   const relPos = ev => { const rc = canvas.getBoundingClientRect(); return [(ev.clientX - rc.left) / rc.width, (ev.clientY - rc.top) / rc.height]; };
   const gdim = () => { const g = ed || data?.gen; return [g?.GW || 320, g?.GH || 200]; };
   const gridPos = ev => { const [fx, fy] = relPos(ev), [GW, GH] = gdim(); return [fx * GW - 0.5, fy * GH - 0.5]; };
@@ -587,6 +596,118 @@ export function render(main) {
     iconsChanged(); drawControls();
   }
 
+
+  // ---------- bending roads & rivers (world and city) ----------
+  const isWorldM = () => memo.mode === 'world';
+  const bendTool = () => (isWorldM() ? memo.tool : memo.ctool).tool === 'bend';
+  const bTol = px => isWorldM() ? px * (canvas.width / canvas.getBoundingClientRect().width) / (canvas.width / gdim()[0]) : cityTol(px);
+  const bPos = ev => isWorldM() ? gridPos(ev) : cityPos(ev);
+  const bCv = p => { if (isWorldM()) { const k = canvas.width / gdim()[0]; return [(p[0] + 0.5) * k, (p[1] + 0.5) * k]; } const u = cu(); return [p[0] * u, p[1] * u]; };
+  const bStep = () => isWorldM() ? 0.45 : 8;
+  // every line that can be bent, with where its shape is stored
+  function bendRefs() {
+    if (isWorldM()) return [...(ed.rivers || []).map((r, i) => ({ type: 'river', i, obj: r, label: 'River', w: 3, color: 'rgb(60,120,190)' })),
+      ...(ed.roads || []).map((r, i) => ({ type: 'road', i, obj: r, label: 'Road', w: 2.4, color: 'rgb(170,100,50)' }))];
+    const d = ced, out = [];
+    d.roads.forEach((r, i) => out.push({ type: 'road', i, pts: r, label: 'Road', w: d.roadW, color: d.roadColors?.[i] || '#c2beb6' }));
+    if (d.river) out.push({ type: 'mainriver', pts: d.river, label: 'River', w: d.riverW, color: '#5aa2c4' });
+    (d.rivers2 || []).forEach((r, i) => out.push({ type: 'river2', i, pts: r.pts, label: 'River', w: r.w, color: '#5aa2c4' }));
+    return out;
+  }
+  const refPts = ref => ref.obj ? ref.obj.pts : ref.pts;
+  function refLine(ref) {
+    let m = ref.obj ? (ref.obj.ctl ? { ctl: ref.obj.ctl, bend: ref.obj.bend } : null)
+      : ref.type === 'road' ? ced.roadCtl?.[ref.i] : ref.type === 'mainriver' ? ced.riverCtl : ced.rivers2[ref.i].ctl ? { ctl: ced.rivers2[ref.i].ctl, bend: ced.rivers2[ref.i].bend } : null;
+    if (!m || !m.ctl?.length) m = curveFromPts(refPts(ref), isWorldM() ? 0.6 : 10);
+    return cloneLine(m);
+  }
+  // write the new shape back (and the dense path everything else draws from)
+  function applyBend(sel) {
+    const ref = sel.ref, line = cloneLine(sel.line);
+    let pts = samplePath(line, bStep());
+    if (isWorldM()) { pts = pts.map(p => [+p[0].toFixed(2), +p[1].toFixed(2)]); ref.obj.pts = pts; ref.obj.ctl = line.ctl; ref.obj.bend = line.bend; return; }
+    if (ref.type === 'road') { ced.roadCtl = ced.roadCtl || []; ced.roadCtl[ref.i] = line; }
+    else if (ref.type === 'mainriver') ced.riverCtl = line;
+    else { ced.rivers2[ref.i].ctl = line.ctl; ced.rivers2[ref.i].bend = line.bend; }
+    reshapeCityLine(ced, ref, pts);
+  }
+  function drawBend() {
+    if (!bendSel) return;
+    const c = cov.getContext('2d'); c.setTransform(1, 0, 0, 1, 0, 0);
+    const sc = canvas.width / canvas.getBoundingClientRect().width, L = bendSel.line;
+    const pts = samplePath(L, bStep()).map(bCv);
+    c.lineJoin = c.lineCap = 'round';
+    c.beginPath(); pts.forEach((p, i) => i ? c.lineTo(...p) : c.moveTo(...p));
+    c.strokeStyle = 'rgba(0,0,0,.5)'; c.lineWidth = 3.5 * sc; c.setLineDash([8 * sc, 6 * sc]); c.stroke();
+    c.strokeStyle = '#ffd98a'; c.lineWidth = 1.6 * sc; c.stroke(); c.setLineDash([]);
+    // bend handles (middle of each stretch)
+    for (let i = 0; i < L.ctl.length - 1; i++) {
+      const [x, y] = bCv(segMid(L, i)), r = 5 * sc;
+      c.beginPath(); c.moveTo(x, y - r); c.lineTo(x + r, y); c.lineTo(x, y + r); c.lineTo(x - r, y); c.closePath();
+      c.fillStyle = L.bend[i] ? '#d4a24c' : 'rgba(255,255,255,.85)'; c.fill(); c.strokeStyle = '#1a1408'; c.lineWidth = 1.5 * sc; c.stroke();
+    }
+    // ends and elbows
+    L.ctl.forEach((p, i) => {
+      const [x, y] = bCv(p), end = i === 0 || i === L.ctl.length - 1;
+      c.beginPath(); if (end) c.rect(x - 6 * sc, y - 6 * sc, 12 * sc, 12 * sc); else c.arc(x, y, 6.5 * sc, 0, Math.PI * 2);
+      c.fillStyle = end ? '#fff' : '#d4a24c'; c.fill(); c.strokeStyle = '#1a1408'; c.lineWidth = 2 * sc; c.stroke();
+    });
+  }
+  function redrawBend() { clearCov(); drawIconSel(); drawBend(); }
+  // what's under the cursor on the picked-up line
+  function bendHit(p) {
+    const L = bendSel.line, tp = bTol(10);
+    for (let i = 0; i < L.ctl.length; i++) if (Math.hypot(L.ctl[i][0] - p[0], L.ctl[i][1] - p[1]) < tp) return { kind: 'pt', i };
+    for (let i = 0; i < L.ctl.length - 1; i++) { const m = segMid(L, i); if (Math.hypot(m[0] - p[0], m[1] - p[1]) < tp) return { kind: 'seg', seg: i, t: 0.5 }; }
+    const h = hitCurve(L, p);
+    if (h && h.d < bTol(9)) return { kind: 'seg', seg: h.seg, t: h.t };
+    return null;
+  }
+  function pickBendLine(p) {
+    let best = null, bd = bTol(12);
+    for (const ref of bendRefs()) {
+      const pts = refPts(ref);
+      for (let j = 1; j < pts.length; j++) { const d = segD(p, pts[j - 1], pts[j]) - (isWorldM() ? 0 : ref.w / 2); if (d < bd) { bd = d; best = ref; } }
+    }
+    return best;
+  }
+  function bendDown(ev) {
+    const p = bPos(ev);
+    if (bendSel) {
+      const h = bendHit(p);
+      if (h) { pushUndo(); stroke = { kind: 'bend', h, moved: false, sx: ev.clientX, sy: ev.clientY }; return; }
+    }
+    const ref = pickBendLine(p);
+    if (!ref) { if (bendSel) { bendSel = null; redrawBend(); drawControls(); } else toast(isWorldM() ? 'Click right on a river or road you drew' : 'Click right on a road or river'); return; }
+    bendSel = { ref, line: refLine(ref), label: ref.label };
+    redrawBend(); drawControls();
+  }
+  function bendMove(ev) {
+    if (!stroke.moved && Math.hypot(ev.clientX - stroke.sx, ev.clientY - stroke.sy) < 3) return;
+    stroke.moved = true;
+    const p = bPos(ev), h = stroke.h, L = bendSel.line;
+    if (h.kind === 'pt') {
+      const old = L.ctl[h.i], dx = p[0] - old[0], dy = p[1] - old[1];
+      L.ctl[h.i] = [p[0], p[1]];
+      // neighbouring bends move half as much, so the curve keeps its feel
+      for (const k of [h.i - 1, h.i]) if (L.bend[k]) L.bend[k] = [L.bend[k][0] + dx / 2, L.bend[k][1] + dy / 2];
+    } else pullSegment(L, h.seg, h.t, p);
+    redrawBend();
+  }
+  function bendUp() {
+    const s0 = stroke; stroke = null;
+    if (!s0.moved) { undoStack.pop(); return; }
+    applyBend(bendSel); bendSel.line = refLine(bendSel.ref); changed(); drawControls();
+  }
+  function bendDbl(ev) {
+    if (!bendSel) return;
+    const p = bPos(ev), h = bendHit(p); if (!h) return;
+    pushUndo();
+    if (h.kind === 'pt') { if (!removeElbow(bendSel.line, h.i)) { undoStack.pop(); toast('The two ends always stay — drag them to move'); return; } }
+    else addElbow(bendSel.line, h.seg, Math.max(0.05, Math.min(0.95, h.t)));
+    applyBend(bendSel); changed(); redrawBend(); drawControls();
+  }
+
   let stroke = null;
   canvas.addEventListener('pointermove', ev => {
     if (!editing() || pan) return;
@@ -599,6 +720,7 @@ export function render(main) {
       cur.style.left = (ev.clientX - pr.left) + 'px'; cur.style.top = (ev.clientY - pr.top) + 'px';
       cur.style.display = 'block';
     } else cur.style.display = 'none';
+    if (stroke?.kind === 'bend') { bendMove(ev); return; }
     if (stroke?.kind === 'icon') {
       if (!stroke.moved && Math.hypot(ev.clientX - stroke.sx, ev.clientY - stroke.sy) < 3) return;
       stroke.moved = true;
@@ -653,6 +775,8 @@ export function render(main) {
     if (memo.mode === 'city') {
       const t = memo.ctool, p = cityPos(ev);
       if (t.tool === 'icon') { iconDown(ev); return; }
+    if (t.tool === 'bend') { bendDown(ev); return; }
+      if (t.tool === 'bend') { bendDown(ev); return; }
       if (POLY_TOOLS.includes(t.tool)) {
         if (!poly) poly = [];
         if (polyClosed() && poly.length > 2 && Math.hypot(p[0] - poly[0][0], p[1] - poly[0][1]) < cityTol(24)) { finishPoly(); return; }
@@ -719,10 +843,11 @@ export function render(main) {
     drawEditPreview(ed, ov, data?.gen);
     ov.classList.add('on');
   });
-  canvas.addEventListener('dblclick', ev => { if (memo.mode === 'city' && cEdit && poly) { ev.preventDefault(); finishPoly(); } });
+  canvas.addEventListener('dblclick', ev => { if (editing() && bendTool()) { ev.preventDefault(); bendDbl(ev); return; } if (memo.mode === 'city' && cEdit && poly) { ev.preventDefault(); finishPoly(); } });
   const endStroke = () => {
     if (!stroke) return;
     const s0 = stroke; stroke = null;
+    if (s0.kind === 'bend') { stroke = s0; bendUp(); return; }
     if (s0.kind === 'icon') {
       iconList().push(s0.ic);
       if (!s0.moved) undoStack.pop();
@@ -802,6 +927,7 @@ export function render(main) {
     if (!editing() || typing(ev)) return;
     if (poly && ev.key === 'Enter') { ev.preventDefault(); finishPoly(); return; }
     if (selIcon && (ev.key === 'Delete' || ev.key === 'Backspace')) { ev.preventDefault(); pushUndo(); const l = iconList(), i = l.indexOf(selIcon); if (i >= 0) l.splice(i, 1); selIcon = null; drawControls(); iconsChanged(); return; }
+    if (bendSel && ev.key === 'Escape') { bendSel = null; redrawBend(); drawControls(); return; }
     if (selIcon && ev.key === 'Escape') { selIcon = null; drawPoly(); drawControls(); return; }
     if (poly && ev.key === 'Escape') { ev.preventDefault(); ev.stopImmediatePropagation(); poly = null; drawPoly(); drawControls(); return; }
     if (!(ev.ctrlKey || ev.metaKey) || ev.altKey) return;
@@ -878,11 +1004,13 @@ export function render(main) {
   ctl.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
     const o = memo[memo.mode];
-    if (b.dataset.tool) { selIcon = null; memo.tool.tool = b.dataset.tool; if (b.dataset.tool !== 'town') selTown = -1; if (b.dataset.tool === 'realm' && +memo.tool.realm === -2 && ed.realms[0]) memo.tool.realm = ed.realms[0].id; drawControls(); }
-    else if (b.dataset.ctool) { selIcon = null; poly = null; memo.ctool.tool = b.dataset.ctool; drawPoly(); drawControls(); }
+    if (b.dataset.tool) { selIcon = null; bendSel = null; clearCov(); memo.tool.tool = b.dataset.tool; if (b.dataset.tool !== 'town') selTown = -1; if (b.dataset.tool === 'realm' && +memo.tool.realm === -2 && ed.realms[0]) memo.tool.realm = ed.realms[0].id; drawControls(); }
+    else if (b.dataset.ctool) { selIcon = null; bendSel = null; poly = null; memo.ctool.tool = b.dataset.ctool; drawPoly(); drawControls(); }
     else if (b.dataset.seg) { const k = b.dataset.seg, v = b.dataset.v; memo.ctool[k] = k === 'riverW' ? +v : v === '1'; if (poly && k === 'wallClosed') drawPoly(); drawControls(); }
     else if (b.dataset.ilook != null) { const v = b.dataset.ilook; iconTool().iconLook = v; if (selIcon) { pushUndo(); if (v) selIcon.look = v; else delete selIcon.look; iconsChanged(); } drawControls(); }
     else if (b.dataset.icon) { iconTool().icon = b.dataset.icon; selIcon = null; drawPoly(); drawControls(); }
+    else if (b.id === 'bd-straight' && bendSel) { pushUndo(); straighten(bendSel.line); applyBend(bendSel); changed(); redrawBend(); drawControls(); }
+    else if (b.id === 'bd-done') { bendSel = null; redrawBend(); drawControls(); }
     else if (b.id === 'ic-flip' && selIcon) { pushUndo(); selIcon.flip = !selIcon.flip; iconsChanged(); }
     else if (b.id === 'ic-del' && selIcon) { pushUndo(); const l = iconList(), i = l.indexOf(selIcon); if (i >= 0) l.splice(i, 1); selIcon = null; drawControls(); iconsChanged(); }
     else if (b.dataset.roof != null) { memo.ctool.roof = b.dataset.roof; drawControls(); }

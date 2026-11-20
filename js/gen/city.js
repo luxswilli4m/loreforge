@@ -1041,6 +1041,7 @@ export function nearestRoad(d, p, maxD) {
 export function removeCityRoad(d, i) {
   d.roads.splice(i, 1);
   (d.roadColors || []).splice(i, 1);
+  (d.roadCtl || []).splice(i, 1);
   regate(d);
   updateBridges(d);
 }
@@ -1067,3 +1068,15 @@ export async function cityFromBlob(blob) {
 }
 // direction of the nearest street at p (radians), so new houses can line up with it
 export const streetAngle = (d, p) => streetDirFar(d, p);
+
+// a road or river has been bent into a new shape: clear what's now in its way, re-open gates, re-place bridges
+export function reshapeCityLine(d, ref, pts) {
+  let w;
+  if (ref.type === 'road') { d.roads[ref.i] = pts; w = d.roadW / 2 + 1; }
+  else if (ref.type === 'mainriver') { d.river = pts; w = d.riverW / 2 + 2; }
+  else { d.rivers2[ref.i].pts = pts; w = d.rivers2[ref.i].w / 2 + 2; }
+  d.buildings = d.buildings.filter(b => !b.poly.some(q => distToPolyline(q, pts) < w) && distToPolyline(cen(b.poly), pts) > w + 2);
+  d.trees = d.trees.filter(t => distToPolyline(t.p, pts) > w + t.s * 0.4);
+  regate(d);
+  updateBridges(d);
+}

@@ -1,7 +1,7 @@
 // Cosmos: a spinnable 3D star chart of worlds, moons, stars and planes, with portals between them.
 // Bodies can open their maps; everything lives in world.cosmos = { bodies: [], links: [] }.
 import { W, uid, save, getMap, getEntry, newEntry, TYPES } from '../store.js';
-import { esc, md, openModal, closeModal, confirmDialog, editorHTML, attachEditor, typeColor, toast } from '../util.js';
+import { esc, md, openModal, closeModal, confirmDialog, editorHTML, attachEditor, typeColor, toast, contextMenu, closeContextMenu, go } from '../util.js';
 import * as A from '../assets.js';
 
 const KINDS = { star: ['☀️', 'Star'], planet: ['🪐', 'World'], moon: ['🌙', 'Moon'], plane: ['🌀', 'Plane'], demiplane: ['✨', 'Demiplane'], other: ['☄️', 'Other'] };
@@ -28,21 +28,23 @@ export function render(main) {
   // where a body sits in the current view (systems are spread out across the universe view)
   const U = 0.42;
   const P = b => { if (cur !== 'all') return [b.x, b.y, b.z]; const sy = sysOf(b.systemId) || { x: 0, y: 0, z: 0 }; return [sy.x + b.x * U, sy.y + b.y * U, sy.z + b.z * U]; };
-  const sysBar = () => cz.systems.length ? `<div class="cz-systems" id="sysbar">
+  const byName = () => [...cz.systems].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  const sysBar = () => `<div class="cz-systems" id="sysbar">
       <button data-sys="all" class="${cur === 'all' ? 'on' : ''}" title="Every solar system at once">🌌 Universe</button>
-      ${cz.systems.map(x => `<button data-sys="${x.id}" class="${cur === x.id ? 'on' : ''}"><span class="cz-sys-dot" style="background:${esc(x.color || '#f4b740')};color:${esc(x.color || '#f4b740')}"></span>${esc(x.name)}</button>`).join('')}
-      <button id="cz-addsys" title="Start a new, separate solar system">＋ Solar system</button></div>` : '';
+      ${cz.systems.length ? `<div class="sys-pick"><button id="sysbtn" class="${cur !== 'all' ? 'on' : ''}" title="Choose a solar system">${cur !== 'all' && sysOf(cur) ? `<span class="cz-sys-dot" style="background:${esc(sysOf(cur).color || '#f4b740')};color:${esc(sysOf(cur).color || '#f4b740')}"></span>${esc(sysOf(cur).name)}` : '☀️ Solar systems'} ▾</button>
+        <div class="sys-drop hidden" id="sysdrop"><input id="sysq" placeholder="🔍 Search ${cz.systems.length} solar system${cz.systems.length === 1 ? '' : 's'}…" autocomplete="off"><div class="sys-list" id="syslist"></div></div></div>` : ''}
+      <button id="cz-addsys" title="Start a new, separate solar system">＋ Solar system</button></div>`;
   main.innerHTML = `
-    <div class="page-head"><h1>Cosmos</h1><span class="muted small cz-hint">Drag to turn · scroll to zoom · Shift-drag a selected body to move it · double-click to focus</span>
+    <div class="page-head"><h1>Cosmos</h1>${sysBar()}<span style="flex:1"></span>
       <button id="cz-spin">${cam.spin ? '⏸ Pause' : '▶ Spin'}</button><button id="cz-link">＋ Connection</button><button class="primary" id="cz-add">＋ World or plane</button></div>
     <div class="cosmos-shell">
       <div class="cosmos-stage" id="stage"><canvas></canvas><div class="tl-tip hidden" id="tip"></div>
+        <div class="cz-hint-bar">Drag to turn · middle-drag to pan · scroll to zoom · right-click for options · Shift-drag a selected body to move it · double-click to focus</div>
         ${vis().length || cur === 'all' && cz.bodies.length ? '' : `<div class="cosmos-empty"><div class="big">🌌</div><p>Chart the worlds, moons, stars and planes of your setting, and the portals between them.</p>
           <div class="row" style="justify-content:center;gap:8px"><button class="primary" id="cz-example">✨ Start with an example cosmos</button><button id="cz-add2">＋ Add a world</button></div></div>`}
       </div>
       <div class="card side-box cosmos-side" id="side"></div>
     </div>`;
-  main.querySelector('.page-head').insertAdjacentHTML('afterend', sysBar());
   const stage = main.querySelector('#stage'), cv = stage.querySelector('canvas'), tip = main.querySelector('#tip'), side = main.querySelector('#side');
 
   // background stars, fixed in space
@@ -206,13 +208,24 @@ export function render(main) {
   }
   cv.addEventListener('pointerdown', e => {
     const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+    if (e.button === 2) return;
+    closeContextMenu();
     cv.setPointerCapture(e.pointerId);
+    // middle button: slide the view sideways instead of turning it
+    if (e.button === 1) { e.preventDefault(); drag = { x: mx, y: my, pan: true, last: [mx, my], moved: true }; cam.focus = null; cv.style.cursor = 'grabbing'; return; }
     const h = pick(mx, my);
     const movable = cur !== 'all' && e.shiftKey && h?.body && selected?.kind === 'body' && selected.id === h.body.id;
     drag = { x: mx, y: my, yaw: cam.yaw, pitch: cam.pitch, moved: false, body: movable ? h.body : null, last: [mx, my] };
   });
   cv.addEventListener('pointermove', e => {
     const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+    if (drag?.pan) {
+      const k = cam.dist / (Math.min(stage.clientWidth, stage.clientHeight) * 0.9), dx = -(mx - drag.last[0]) * k, dy = (my - drag.last[1]) * k;
+      const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw), cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+      const y1 = dy * cp, z1 = -dy * sp, x0 = dx * cy - z1 * sy, z0 = dx * sy + z1 * cy;
+      cam.tx += x0; cam.ty += y1; cam.tz += z0; drag.last = [mx, my];
+      return;
+    }
     if (drag) {
       if (Math.abs(mx - drag.x) + Math.abs(my - drag.y) > 3) drag.moved = true;
       if (drag.body) {
@@ -242,6 +255,7 @@ export function render(main) {
   });
   cv.addEventListener('pointerup', e => {
     const d = drag; drag = null;
+    if (d?.pan) { cv.style.cursor = 'grab'; return; }
     if (d?.body) { save(); drawSide(); return; }
     if (d?.moved) return;
     const r = cv.getBoundingClientRect(), h = pick(e.clientX - r.left, e.clientY - r.top);
@@ -254,6 +268,61 @@ export function render(main) {
     if (h?.body) { cam.focus = [h.body.x, h.body.y, h.body.z]; cam.dist = Math.max(120, Math.min(cam.dist, 260)); }
     else { cam.focus = [0, 0, 0]; }
   });
+  cv.addEventListener('mousedown', e => { if (e.button === 1) e.preventDefault(); });
+  // right-click: options for a world, a connection, or empty space
+  cv.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    const r = cv.getBoundingClientRect(), h = pick(e.clientX - r.left, e.clientY - r.top);
+    if (h?.body) return bodyMenu(h.body, e.clientX, e.clientY);
+    if (h?.link) {
+      const l = h.link, k = LINKS[l.kind] || LINKS.route;
+      selected = { kind: 'link', id: l.id }; drawSide();
+      return contextMenu(e.clientX, e.clientY, [
+        { header: `${k[0]} ${l.label || k[1]}` },
+        { icon: '✎', label: 'Edit connection…', action: () => linkDialog(l) },
+        { icon: '🗑', label: 'Delete connection', danger: true, action: () => { cz.links = cz.links.filter(x => x !== l); save(); selected = null; drawSide(); } },
+      ]);
+    }
+    contextMenu(e.clientX, e.clientY, [
+      { header: cur === 'all' ? 'The universe' : sysOf(cur)?.name || 'Cosmos' },
+      { icon: '🪐', label: 'Add a world or plane…', action: () => bodyDialog(null) },
+      { icon: '☀️', label: 'New solar system…', action: () => systemDialog(null) },
+      ...(cur !== 'all' ? [{ icon: '🌌', label: 'Show the whole universe', action: () => switchTo('all') }] : []),
+      { icon: '⤢', label: 'Re-centre the view', action: () => { cam.focus = [0, 0, 0]; } },
+    ]);
+  });
+  function addSatellite(parent, kind) {
+    const moon = kind === 'moon';
+    const a = Math.random() * Math.PI * 2, rad = moon ? 24 + bodyR(parent) : 70 + Math.random() * 90;
+    const nb = { id: uid(), name: moon ? `Moon of ${parent.name}` : 'New world', kind: moon ? 'moon' : 'planet', typeName: '', color: moon ? '#c8cdd8' : COLORS[cz.bodies.length % COLORS.length], size: moon ? 2 : 4, rings: false,
+      mapIds: [], entryId: '', desc: '', systemId: parent.systemId, x: parent.x + Math.cos(a) * rad, y: parent.y + (Math.random() - 0.5) * 8, z: parent.z + Math.sin(a) * rad };
+    cz.bodies.push(nb); cz.links.push({ id: uid(), a: parent.id, b: nb.id, kind: 'orbit', label: '', desc: '' });
+    save(); selected = { kind: 'body', id: nb.id }; drawSide();
+    bodyDialog(nb);
+  }
+  function bodyMenu(b, x, y) {
+    selected = { kind: 'body', id: b.id }; drawSide();
+    const ent = getEntry(b.entryId), maps = (b.mapIds || []).map(getMap).filter(Boolean);
+    const others = cz.systems.filter(s2 => s2.id !== b.systemId);
+    contextMenu(x, y, [
+      { header: b.name },
+      { icon: '✎', label: 'Edit…', action: () => bodyDialog(b) },
+      { icon: '🌙', label: 'Add a moon', action: () => addSatellite(b, 'moon') },
+      ...(b.kind === 'star' ? [{ icon: '🪐', label: 'Add a world orbiting it', action: () => addSatellite(b, 'planet') }] : []),
+      { icon: '🔗', label: 'Connect to…', hint: 'portal, route, orbit', action: () => linkDialog(null, b.id) },
+      { icon: '🎯', label: 'Focus', action: () => { if (cur === 'all') switchTo(b.systemId); cam.focus = [b.x, b.y, b.z]; cam.dist = Math.max(120, Math.min(cam.dist, 260)); } },
+      '-',
+      ent ? { icon: '📖', label: `Open “${ent.name}”`, action: () => go(`#/entry/${ent.id}`) }
+        : { icon: '📖', label: 'Add to the World Bible', action: () => { const e2 = newEntry('cosmos', b.name); const kf = e2.fields.find(f => f.k === 'Kind'); if (kf) kf.v = kindOf(b)[1]; e2.summary = (b.desc || '').split('\n')[0].slice(0, 200); b.entryId = e2.id; save(); drawSide(); toast(`Added ${b.name} to the World Bible`); } },
+      ...maps.slice(0, 3).map(m => ({ icon: '🗺️', label: `Open map: ${m.name}`, action: () => go(`#/map/${m.id}`) })),
+      ...(others.length ? ['-', ...others.slice(0, 6).map(s2 => ({ icon: '☀️', label: `Move to ${s2.name}`, action: () => { b.systemId = s2.id; save(); toast(`${b.name} moved to ${s2.name}`); render(main); } }))] : []),
+      '-',
+      { icon: '🗑', label: 'Remove from the cosmos', danger: true, action: async () => {
+        if (!(await confirmDialog(`Remove “${b.name}” from the cosmos? (Its maps are kept.)`))) return;
+        cz.bodies = cz.bodies.filter(x => x !== b); cz.links = cz.links.filter(l => l.a !== b.id && l.b !== b.id); save(); selected = null; drawSide();
+      } },
+    ]);
+  }
   cv.addEventListener('wheel', e => { e.preventDefault(); cam.dist = Math.max(60, Math.min(2200, cam.dist * Math.exp(e.deltaY * 0.0012))); }, { passive: false });
 
   // ---------- side panel ----------
@@ -529,6 +598,22 @@ export function render(main) {
     });
   }
   main.querySelectorAll('[data-sys]').forEach(b => b.onclick = () => switchTo(b.dataset.sys));
+  const sysdrop = main.querySelector('#sysdrop');
+  if (sysdrop) {
+    const drawList = () => {
+      const q = main.querySelector('#sysq').value.trim().toLowerCase();
+      const list = byName().filter(x => !q || x.name.toLowerCase().includes(q));
+      main.querySelector('#syslist').innerHTML = list.map(x => { const n = cz.bodies.filter(b => b.systemId === x.id).length;
+        return `<button class="sys-row ${x.id === cur ? 'on' : ''}" data-pick-sys="${x.id}"><span class="cz-sys-dot" style="background:${esc(x.color || '#f4b740')};color:${esc(x.color || '#f4b740')}"></span>${esc(x.name)}<small>${n}</small></button>`; }).join('')
+        || '<p class="small muted" style="margin:6px">No solar system by that name.</p>';
+    };
+    main.querySelector('#sysbtn').onclick = e => { e.stopPropagation(); sysdrop.classList.toggle('hidden'); if (!sysdrop.classList.contains('hidden')) { drawList(); main.querySelector('#sysq').focus(); } };
+    main.querySelector('#sysq').addEventListener('input', drawList);
+    main.querySelector('#sysq').addEventListener('keydown', e => { if (e.key === 'Enter') { const f = main.querySelector('[data-pick-sys]'); if (f) switchTo(f.dataset.pickSys); } if (e.key === 'Escape') sysdrop.classList.add('hidden'); });
+    sysdrop.addEventListener('click', e => { const b = e.target.closest('[data-pick-sys]'); if (b) switchTo(b.dataset.pickSys); });
+    const closeDrop = e => { if (!document.body.contains(sysdrop)) return document.removeEventListener('pointerdown', closeDrop); if (!e.target.closest('.sys-pick')) sysdrop.classList.add('hidden'); };
+    document.addEventListener('pointerdown', closeDrop);
+  }
   main.querySelector('#cz-addsys')?.addEventListener('click', () => systemDialog(null));
   main.querySelector('#cz-add').onclick = () => bodyDialog(null);
   main.querySelector('#cz-link').onclick = () => linkDialog(null, selected?.kind === 'body' ? selected.id : null);

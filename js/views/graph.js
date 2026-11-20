@@ -6,11 +6,12 @@ import { REL_KINDS, relKind, relColor, familyLink, parentOf, mapHref, relKindPic
 const hidden = new Set();
 let showMentions = true;
 // web settings kept between visits
-const opt = { masters: true, nest: true, rel: 'all', mode: 'web', famFocus: '' };
+const opt = { masters: true, nest: true, rel: 'all', mode: 'web', famFocus: '', depth: 9 };
 const collapsed = new Set();
 const live = new Map(); // id -> {x,y,vx,vy} kept between visits
 
-function pinnedStore() { const w = W(); if (!w.graph) w.graph = { pinned: {} }; if (!w.graph.pinned) w.graph.pinned = {}; return w.graph.pinned; }
+// nodes used to be pinnable; now everything floats, so old pins are cleared
+function pinnedStore() { const w = W(); if (!w.graph) w.graph = {}; if (w.graph.pinned && Object.keys(w.graph.pinned).length) { w.graph.pinned = {}; save(); } w.graph.pinned = w.graph.pinned || {}; return w.graph.pinned; }
 
 // ---------- dialogs shared with other views ----------
 export function connectDialog(fromId, toId, onDone, rel = null) {
@@ -167,6 +168,8 @@ export function render(main) {
       <button class="chip ${opt.masters ? 'on' : ''}" data-o="masters" title="A centre node for the world, a node for each entry type, and every entry hanging off its type">◎ Master nodes</button>
       <button class="chip ${opt.nest ? 'on' : ''}" data-o="nest" title="Towns inside realms, realms inside planets… as sub-nodes">⤷ Places inside places</button>
       <button class="chip ${showMentions ? 'on' : ''}" data-o="mentions">@ mentions</button>
+      <label class="row shrink depth-ctl" style="margin:0 0 0 6px;gap:6px" title="How many levels of sub-nodes to show (towns inside realms inside planets…)">Depth
+        <input type="range" id="depth" min="1" max="6" step="1" value="${Math.min(6, opt.depth)}"><b id="depthv">${opt.depth >= 6 ? 'All' : opt.depth}</b></label>
       <label class="row shrink" style="margin:0 0 0 6px;gap:6px">Relationships
         <select id="relf">${relOpts.map(([k, l]) => `<option value="${k}" ${opt.rel === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`;
     wopts.querySelectorAll('[data-o]').forEach(b => b.onclick = () => {
@@ -175,6 +178,7 @@ export function render(main) {
       drawOpts(); rebuild(); alpha = 1;
     });
     wopts.querySelector('#relf').onchange = e => { opt.rel = e.target.value; rebuild(); alpha = 1; };
+    wopts.querySelector('#depth').oninput = e => { const v = +e.target.value; opt.depth = v >= 6 ? 9 : v; wopts.querySelector('#depthv').textContent = v >= 6 ? 'All' : v; rebuild(); alpha = Math.max(alpha, 0.6); };
   }
   function drawLegend() {
     if (opt.mode === 'family') {
@@ -228,7 +232,9 @@ export function render(main) {
     kidsOf = {};
     for (const [c, p] of Object.entries(parent)) (kidsOf[p] = kidsOf[p] || []).push(c);
     // hide everything under a folded node
-    const folded = id => { let p = parent[id]; for (let i = 0; i < 40 && p; i++) { if (collapsed.has(p)) return true; p = parent[p]; } return false; };
+    const folded = id => { let p = parent[id]; for (let i = 0; i < 40 && p; i++) { if (collapsed.has(p)) return true; p = parent[p]; } return levelOf(id) > opt.depth; };
+    // level 1 = entries sitting right on a master node (or top-level entries), 2 = places inside those, and so on
+    const levelOf = id => { let d = 0, p = id; for (let i = 0; i < 40 && p && p !== ROOT && !p.startsWith('__t:'); i++) { d++; p = parent[p]; } return d; };
     const descCount = {};
     const countDesc = id => { if (descCount[id] != null) return descCount[id]; let n = 0; for (const c of kidsOf[id] || []) n += 1 + countDesc(c); return (descCount[id] = n); };
 
@@ -251,10 +257,10 @@ export function render(main) {
     for (const e of order) {
       if (folded(e.id)) continue;
       const st = nodeState(e.id, byId[parent[e.id]]);
-      const n = Object.assign(st, { id: e.id, e, virt: null, type: e.type, name: e.name, deg: 0, fixed: !!pinned[e.id] });
+      const n = Object.assign(st, { id: e.id, e, virt: null, type: e.type, name: e.name, deg: 0, fixed: false });
       nodes.push(n); byId[e.id] = n;
     }
-    for (const n of nodes) { n.desc = countDesc(n.id); n.hiddenKids = collapsed.has(n.id) ? n.desc : 0; if (n.virt === 'type') n.total = ents.filter(e => e.type === n.type).length; }
+    for (const n of nodes) { n.desc = countDesc(n.id); n.hiddenKids = collapsed.has(n.id) || (!n.virt && levelOf(n.id) >= opt.depth) ? n.desc : 0; if (n.virt === 'type') n.total = ents.filter(e => e.type === n.type).length; }
     tree = [];
     for (const [c, p] of Object.entries(parent)) if (byId[c] && byId[p]) tree.push({ s: byId[c], t: byId[p], tree: true, master: p === ROOT || p.startsWith('__t:') });
     links = [];
@@ -329,6 +335,7 @@ export function render(main) {
         n.x += n.vx; n.y += n.vy;
       }
       alpha *= 0.994;
+      if (dragNode) alpha = Math.max(alpha, 0.35);
     }
     if (opt.mode === 'family') drawFamily(); else draw();
     raf = requestAnimationFrame(tick);
@@ -596,7 +603,8 @@ export function render(main) {
     return best;
   };
 
-  function savePin(n) { if (n.virt) return; n.fixed = true; pinned[n.id] = [Math.round(n.x), Math.round(n.y)]; save(); }
+  // after a drag the node is let go again, and the web settles around it
+  function savePin(n) { alpha = Math.max(alpha, 0.6); }
   function center(n) { view.x = W_ / 2 - n.x * view.k; view.y = H_ / 2 - n.y * view.k; }
 
   function startLink(from) {
@@ -655,8 +663,6 @@ export function render(main) {
       '-',
       ...(kidsOf[e.id]?.length ? [{ icon: collapsed.has(e.id) ? '⊕' : '⊖', label: collapsed.has(e.id) ? 'Unfold sub-nodes' : `Fold its ${n.desc} sub-nodes`, action: () => toggleFold(e.id) }] : []),
       { icon: '🎯', label: selected === n.id ? 'Clear focus' : 'Focus on this', action: () => { selected = selected === n.id ? null : n.id; drawCard(); } },
-      n.fixed ? { icon: '📌', label: 'Unpin (let it float)', action: () => { n.fixed = false; delete pinned[n.id]; save(); alpha = Math.max(alpha, 0.3); } }
-        : { icon: '📌', label: 'Pin here', action: () => savePin(n) },
       '-',
       { icon: '🗑', label: 'Delete entry', danger: true, action: async () => { if (await confirmDialog(`Delete “${e.name}”?`)) { deleteEntry(e.id); live.delete(e.id); delete pinned[e.id]; if (selected === e.id) selected = null; rebuild(); } } },
     ]);
@@ -682,7 +688,7 @@ export function render(main) {
     contextMenu(x, y, [
       { icon: '＋', label: 'New entry here…', action: () => newHere(p) },
       { icon: '⤢', label: 'Fit everything in view', action: fit },
-      { icon: '↺', label: 'Re-layout (unpin all)', action: relayout },
+      { icon: '↺', label: 'Re-layout', action: relayout },
     ]);
   }
   function newHere(p, type = 'character') {
@@ -734,6 +740,7 @@ export function render(main) {
     ]);
   }
   cv.addEventListener('pointerdown', ev => {
+    if (ev.button === 1) { ev.preventDefault(); cv.setPointerCapture(ev.pointerId); moved = false; pan = { sx: ev.clientX, sy: ev.clientY, vx: view.x, vy: view.y, mid: true }; cv.style.cursor = 'grabbing'; return; }
     if (ev.button !== 0) return;
     closeContextMenu();
     cv.setPointerCapture(ev.pointerId);
@@ -758,8 +765,11 @@ export function render(main) {
       cv.style.cursor = h ? 'pointer' : hoverLink ? 'context-menu' : 'grab';
     }
   });
+  cv.addEventListener('auxclick', ev => { if (ev.button === 1) ev.preventDefault(); });
+  cv.addEventListener('mousedown', ev => { if (ev.button === 1) ev.preventDefault(); });
   cv.addEventListener('pointerup', ev => {
     const p = toWorld(ev.clientX, ev.clientY);
+    if (pan?.mid) { pan = null; cv.style.cursor = 'grab'; return; }
     if (opt.mode === 'family') {
       if (pan && !moved) { selected = pan.hit && selected !== pan.hit ? pan.hit : null; drawCard(); }
       pan = null; return;
@@ -825,8 +835,7 @@ export function render(main) {
   }
   if (selected && byId[selected]) setTimeout(() => center(byId[selected]), 50);
   else if (opt.mode === 'family') setTimeout(fitFamily, 30);
-  else { let tries = 0; const autoFit = () => { if (opt.mode !== 'web') return; if (alpha > 0.25 && tries++ < 40) return setTimeout(autoFit, 150); if (!pinnedAny()) fit(); }; setTimeout(autoFit, 400); }
-  function pinnedAny() { return Object.keys(pinned).length > 0; }
+  else { let tries = 0; const autoFit = () => { if (opt.mode !== 'web') return; if (alpha > 0.25 && tries++ < 40) return setTimeout(autoFit, 150); fit(); }; setTimeout(autoFit, 400); }
   tick();
   return () => { cancelAnimationFrame(raf); ro.disconnect(); document.removeEventListener('keydown', onKey); closeContextMenu(); };
 }

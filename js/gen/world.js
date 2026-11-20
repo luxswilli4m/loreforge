@@ -578,7 +578,7 @@ export function completeEdit(ed, data) {
 export function cloneEdit(ed) {
   return { ...ed, h: Float32Array.from(ed.h), ridge: Float32Array.from(ed.ridge), eCurve: ed.eCurve.slice(), biome: Uint8Array.from(ed.biome),
     realmPaint: Int16Array.from(ed.realmPaint), towns: ed.towns.map(t => ({ ...t })), realms: ed.realms.map(rl => ({ ...rl })),
-    rivers: (ed.rivers || []).map(r => ({ ...r, pts: r.pts.map(p => [...p]) })), roads: (ed.roads || []).map(r => ({ ...r, pts: r.pts.map(p => [...p]) })),
+    rivers: (ed.rivers || []).map(r => JSON.parse(JSON.stringify(r))), roads: (ed.roads || []).map(r => JSON.parse(JSON.stringify(r))),
     labels: (ed.labels || []).map(l => ({ ...l })), labelNames: { ...(ed.labelNames || {}) }, noRiver: ed.noRiver ? Uint8Array.from(ed.noRiver) : null, dry: (ed.dry || []).map(d => [...d]), icons: (ed.icons || []).map(i => ({ ...i })) };
 }
 
