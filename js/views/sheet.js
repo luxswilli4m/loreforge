@@ -6,6 +6,7 @@ import { esc, openModal, closeModal, pickFile, toast, contextMenu } from '../uti
 import * as A from '../assets.js';
 import { rollAndLog } from '../tools/dice.js';
 import { CLASS_ART, artURL, guessArt } from '../gen/classArt.js';
+import { openCreator } from './creator.js';
 
 // ---------- rules data ----------
 export const ABIL = [['str', 'Strength'], ['dex', 'Dexterity'], ['con', 'Constitution'], ['int', 'Intelligence'], ['wis', 'Wisdom'], ['cha', 'Charisma']];
@@ -79,6 +80,7 @@ export function ensureSheet(e) {
   for (const k of ['abil', 'coins', 'death', 'spell']) sh[k] = { ...b[k], ...sh[k] };
   if (!sh.spell.slots) sh.spell.slots = {};
   if (!Array.isArray(sh.spell.list)) sh.spell.list = [];
+  sh.attacks = (sh.attacks || []).filter(a => a.name);
   // initiative used to be a number you typed over; it's now Dexterity plus bonuses
   if (sh.initOverride !== undefined) { if (sh.initOverride !== '' && sh.initOverride != null) sh.initBonus = (+sh.initOverride - mod(sh.abil.dex)) || ''; delete sh.initOverride; }
   // speed used to be free text ("30 ft"); it's now kept in feet and shown in the world's units
@@ -98,7 +100,7 @@ export function derive(sh) {
   // armour class: a base (worn armour, or 10 + Dex, or your own number) plus anything that adds or takes away
   const armor = eq('body'), acBase = [];
   if (armor && +armor.ac) { acBase.push([`${armor.name} (${armor.armorType || 'light'} armour)`, +armor.ac]); if (armor.armorType !== 'heavy') acBase.push([armor.armorType === 'medium' ? 'Dexterity (max +2)' : 'Dexterity', armor.armorType === 'medium' ? Math.min(2, m.dex) : m.dex]); }
-  else acBase.push(['Unarmoured', 10], ['Dexterity', m.dex]);
+  else { acBase.push(['Unarmoured', 10], ['Dexterity', m.dex]); if (sh.unarmored && m[sh.unarmored] != null) acBase.push([`Unarmoured defence (${sh.unarmored.toUpperCase()})`, m[sh.unarmored]]); }
   const acAuto = acBase.reduce((t, [, v]) => t + v, 0);
   const own = sh.acOverride !== '' && sh.acOverride != null;
   const acMods = [];
@@ -137,6 +139,13 @@ export function derive(sh) {
     if (!pr) note = [note, 'not proficient'].filter(Boolean).join(', ');
     return { name: i.name, note, hit, mode, pr, dmg: dice ? `${dice}${dmgMod ? (dmgMod > 0 ? '+' : '') + dmgMod : ''}` : '', type: i.dmgType || '', auto: true };
   });
+  // your own attacks (a bite, a spell attack…): built from an ability, proficiency and dice
+  sh.attacks.forEach((a, idx) => {
+    if (!a.name) return;
+    if (a.ab === undefined) { attacks.push({ name: a.name, note: 'custom', hit: parseInt(String(a.hit ?? '').replace('−', '-')) || 0, dmg: a.dmg || '', type: a.type || '', mode: 'normal', custom: idx }); return; }
+    const mm = a.ab ? m[a.ab] : 0, hit = mm + (a.prof ? prof : 0) + (+a.hitBonus || 0), dm = (a.dmgAb ? mm : 0) + (+a.dmgBonus || 0);
+    attacks.push({ name: a.name, hit, dmg: a.dmg ? `${a.dmg}${dm ? (dm > 0 ? '+' : '') + dm : ''}` : '', type: a.type || '', mode: ['str', 'dex'].includes(a.ab) ? armorMode : 'normal', custom: idx });
+  });
   return { m, prof, saves, skills, ac, acAuto, acMod, acMods, acParts, init, initMod, initParts, armorMode, nonArmour, spellsOk: armourRule.spells, passive: 10 + skills.perception, passiveInv: 10 + skills.investigation, passiveIns: 10 + skills.insight,
     dc: sa ? 8 + prof + m[sa] : null, satk: sa ? prof + m[sa] : null, weight, carry: (+sh.abil.str || 10) * 15, attacks, xp: CR_XP[String(sh.cr).trim()] ?? null };
 }
@@ -174,6 +183,7 @@ function itemIcon(i, big) {
 }
 const rarCol = i => RARITY[i.rarity]?.[1] || RARITY.common[1];
 
+const lastAttack = new Map();
 function sheetHTML(e, opts = {}) {
   const sh = ensureSheet(e), d = derive(sh), creature = e.type === 'creature';
   const th = THEMES[sh.theme] || THEMES.parchment;
@@ -206,6 +216,7 @@ function sheetHTML(e, opts = {}) {
         </div>
       </div>
       <div class="cs-themes">
+        ${e.type === 'character' ? '<button class="cs-btn" data-act="builder" title="Pick a class, species, background and scores, and fill in this sheet">🧙 Character builder</button>' : ''}
         <select data-k="theme" title="Sheet theme">${Object.entries(THEMES).map(([k, t]) => `<option value="${k}" ${sh.theme === k ? 'selected' : ''}>${t.label}</option>`).join('')}</select>
         <input type="color" data-k="accent" value="${sh.accent || th.accent}" title="Accent colour"><button class="cs-btn small" data-act="accent-reset" title="Theme’s own accent">↺</button>
       </div>
@@ -258,12 +269,14 @@ function sheetHTML(e, opts = {}) {
         <div class="cs-panel cs-skills"><h5>Skills</h5>${SKILLS.map(skillRow).join('')}</div>
         <div class="cs-panel cs-atkpanel">
         <h5>Attacks</h5>
-        <table class="cs-table"><tr><th>Name</th><th>To hit</th><th>Damage</th><th>Type</th><th></th></tr>
-          ${d.attacks.map(a => `<tr class="auto ${a.pr ? '' : 'nonprof'}"><td>${esc(a.name)} <span class="cs-muted small">(${esc(a.note || 'equipped')})</span></td><td><button class="cs-roll" data-roll="${d20(a.hit, a.mode)}" data-label="${esc(a.name)} to hit">${sgn(a.hit)}</button>${a.mode !== 'normal' ? `<span class="cs-mode ${a.mode}" title="${a.mode}">${a.mode === 'advantage' ? 'ADV' : 'DIS'}</span>` : ''}</td><td>${a.dmg ? `<button class="cs-roll" data-roll="${esc(a.dmg)}" data-label="${esc(a.name)} damage">${esc(a.dmg)}</button>` : '—'}</td><td>${esc(a.type)}</td><td></td></tr>`).join('')}
-          ${sh.attacks.map((a, i) => `<tr><td><input class="cs-in" data-k="attacks.${i}.name" value="${esc(a.name || '')}" placeholder="Bite"></td><td class="cs-rollcell"><input class="cs-in w4" data-k="attacks.${i}.hit" value="${esc(a.hit ?? '')}" placeholder="+5"><button class="cs-roll" data-atk="${i}" data-part="hit" title="Roll to hit">🎲</button></td>
-            <td class="cs-rollcell"><input class="cs-in" data-k="attacks.${i}.dmg" value="${esc(a.dmg || '')}" placeholder="2d6+3"><button class="cs-roll" data-atk="${i}" data-part="dmg" title="Roll damage">🎲</button></td><td><input class="cs-in" data-k="attacks.${i}.type" value="${esc(a.type || '')}" placeholder="piercing"></td><td><button class="cs-x" data-del="attacks" data-i="${i}">✕</button></td></tr>`).join('')}
+        <table class="cs-table cs-atks"><tr><th>Name</th><th>To hit</th><th>Damage</th><th>Type</th><th></th></tr>
+          ${d.attacks.map((a, ix) => `<tr class="${a.pr === false ? 'nonprof' : ''}"><td>${a.custom != null ? `<button class="cs-atkname" data-editatk="${a.custom}" title="Edit this attack">${esc(a.name)}</button>` : esc(a.name)} <span class="cs-muted small">(${esc(a.note || (a.custom != null ? 'custom' : 'equipped'))})</span></td>
+            <td><button class="cs-roll" data-roll="${d20(a.hit, a.mode)}" data-label="${esc(a.name)} to hit" title="Roll just to hit">${sgn(a.hit)}</button>${a.mode !== 'normal' ? `<span class="cs-mode ${a.mode}" title="${a.mode}">${a.mode === 'advantage' ? 'ADV' : 'DIS'}</span>` : ''}</td>
+            <td>${a.dmg ? `<button class="cs-roll" data-roll="${esc(a.dmg)}" data-label="${esc(a.name)} damage" title="Roll just the damage">${esc(a.dmg)}</button>` : '—'}</td><td>${esc(a.type)}</td>
+            <td class="cs-atkact"><button class="cs-btn small cs-attack" data-attack="${ix}" title="Roll to hit and damage together (dice double on a critical)">⚔ Attack</button>${a.custom != null ? `<button class="cs-x" data-delatk="${a.custom}" title="Remove">✕</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="cs-muted small">Equip a weapon, or add a custom attack like a bite or a spell.</td></tr>'}
         </table>
-        <button class="cs-btn small" data-act="add-attack">＋ Attack</button>
+        <div class="cs-lastatk" id="cs-lastatk">${lastAttack.get(e.id) || ''}</div>
+        <button class="cs-btn small" data-act="add-attack">＋ Custom attack</button>
         <h5 style="margin-top:14px">Spellcasting</h5>
         <div class="cs-spellhead"><label>Ability <select data-k="spell.ability"><option value="">—</option>${ABIL.map(([k, l]) => `<option value="${k}" ${sh.spell.ability === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
           <span>Save DC <b data-d="dc">${d.dc ?? '—'}</b></span><span>Spell attack <b data-d="satk">${d.satk == null ? '—' : sgn(d.satk)}</b></span></div>
@@ -282,7 +295,7 @@ function sheetHTML(e, opts = {}) {
       <div class="cs-panel"><h5>Proficiencies <button class="cs-btn small cs-h5btn" data-act="prof-rules" title="What being proficient, or not, does (house rules)">⚙ Rules</button></h5>
         ${WPROF.map(([k, l]) => `<div class="cs-skill"><button class="cs-prof p${sh.wprof?.[k] ? 1 : 0}" data-wprof="${k}" title="Proficient? Click to change"></button><span>${l}</span></div>`).join('')}
         <label class="cs-sub">Tools & other</label>${area('profs', 'Thieves’ tools, lute, navigator’s tools…', 2)}<h5>Languages</h5>${area('languages', 'Common, Elvish…', 2)}<h5>Senses</h5>${area('senses', 'Darkvision 60 ft…', 2)}</div>
-      <div class="cs-panel"><h5>Defences</h5><label class="cs-sub">Resistances</label>${txt('resist', 'e.g. fire, cold')}<label class="cs-sub">Immunities</label>${txt('immune', 'e.g. poison')}<label class="cs-sub">Vulnerabilities</label>${txt('vuln', 'e.g. radiant')}<label class="cs-sub">Condition immunities</label>${txt('condImmune', 'e.g. charmed')}</div>
+      <div class="cs-panel"><h5>Defences</h5><label class="cs-sub">Unarmoured AC also adds</label><select data-k="unarmored"><option value="">Nothing extra</option>${ABIL.map(([k, l]) => `<option value="${k}" ${sh.unarmored === k ? 'selected' : ''}>${l} (like a ${k === 'con' ? 'barbarian' : k === 'wis' ? 'monk' : 'homebrew class'})</option>`).join('')}</select><label class="cs-sub">Resistances</label>${txt('resist', 'e.g. fire, cold')}<label class="cs-sub">Immunities</label>${txt('immune', 'e.g. poison')}<label class="cs-sub">Vulnerabilities</label>${txt('vuln', 'e.g. radiant')}<label class="cs-sub">Condition immunities</label>${txt('condImmune', 'e.g. charmed')}</div>
       ${creature ? '' : `<div class="cs-panel"><h5>Personality traits</h5>${area('traits', '', 2)}<h5>Ideals</h5>${area('ideals', '', 2)}<h5>Bonds</h5>${area('bonds', '', 2)}<h5>Flaws</h5>${area('flaws', '', 2)}</div>`}
       <div class="cs-panel"><h5>Notes</h5>${area('notes', 'Anything else', 8)}</div>
     </div>
@@ -294,7 +307,7 @@ function portraitHTML(e, sh) {
   const p = sh.portrait || {};
   if (p.img) return `<img ${A.src(p.img)} alt="">`;
   const art = p.art || (!p.none && !e.image ? guessArt(sh.cls || sh.ctype || (e.type === 'creature' ? e.name : '')) : '');
-  if (art && artURL(art)) return `<img src="${artURL(art)}" alt="">`;
+  if (art && artURL(art)) return `<img src="${artURL(art, p.label)}" alt="">`;
   if (e.image && !p.none) return `<img ${A.src(e.image)} alt="">`;
   return `<svg class="cs-sil" viewBox="0 0 100 200"><path d="M50 8a17 17 0 1 1 0 34a17 17 0 1 1 0-34M30 48h40l12 50l-10 4l-6-30v50l6 70h-14l-8-60l-8 60h-14l6-70v-50l-6 30l-10-4z"/></svg>`;
 }
@@ -482,6 +495,41 @@ function itemDialog(e, item, onDone) {
   });
 }
 
+// ---------- your own attacks ----------
+function attackDialog(e, atk, onDone) {
+  const sh = e.sheet, isNew = !atk;
+  const a = atk ? { ...atk } : { name: '', ab: 'str', prof: true, hitBonus: '', dmg: '', dmgAb: true, dmgBonus: '', type: '' };
+  if (a.ab === undefined) { a.ab = ''; a.prof = false; a.hitBonus = parseInt(String(a.hit ?? '').replace('−', '-')) || 0; const mm = /^(.*?)([+-]\s*\d+)?$/.exec(String(a.dmg || '')); a.dmg = mm[1].trim(); a.dmgAb = false; a.dmgBonus = mm[2] ? parseInt(mm[2].replace(/\s/g, '')) : ''; }
+  let pool = parseDice(a.dmg);
+  const dmgOpts = DMG_TYPES.map(t => ({ v: t, label: t[0].toUpperCase() + t.slice(1) }));
+  openModal(`<h2>${isNew ? 'New attack' : 'Attack'}</h2>
+    <label>Name</label><input id="a-name" value="${esc(a.name)}" placeholder="e.g. Bite, Fire Bolt, Unarmed strike" autofocus>
+    <div class="row"><div><label>Uses</label><select id="a-ab"><option value="">No ability</option>${ABIL.map(([k, l]) => `<option value="${k}" ${a.ab === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div><label>Extra to hit</label><input id="a-hit" type="number" value="${a.hitBonus ?? ''}" placeholder="0"></div><label class="check" style="align-self:flex-end"><input type="checkbox" id="a-prof" ${a.prof ? 'checked' : ''}> Add proficiency bonus</label></div>
+    <label>Damage <span class="small muted">— click a die to add it, right-click to take one away</span></label>
+    <div class="i-dice">${DMG_DICE.map(n => `<button type="button" class="i-die" data-die="${n}">d${n}<b data-dc="${n}"></b></button>`).join('')}<span class="i-expr" id="a-expr"></span><button type="button" class="small" id="a-dclear">Clear</button></div>
+    <div class="row"><label class="check" style="align-self:flex-end"><input type="checkbox" id="a-dab" ${a.dmgAb ? 'checked' : ''}> Add the ability to damage</label><div><label>Extra damage</label><input id="a-dmgb" type="number" value="${a.dmgBonus ?? ''}" placeholder="0"></div>
+      <div><label>Damage type</label>${comboHTML('a-type', dmgOpts, a.type || '', { custom: true, placeholder: 'Search or type…' })}</div></div>
+    <div class="modal-actions">${isNew ? '' : '<button class="danger" data-a="del">Remove</button><span style="flex:1"></span>'}<button data-a="no">Cancel</button><button class="primary" data-a="yes">${isNew ? 'Add attack' : 'Save'}</button></div>`, m => {
+    const $ = q => m.querySelector(q);
+    const getType = wireCombo(m, 'a-type', dmgOpts);
+    const drawDice = () => { for (const n of DMG_DICE) { const b = m.querySelector(`[data-dc="${n}"]`); b.textContent = pool[n] ? '×' + pool[n] : ''; b.parentElement.classList.toggle('on', !!pool[n]); } $('#a-expr').textContent = diceExpr(pool) || 'no dice yet'; };
+    m.querySelectorAll('[data-die]').forEach(b => { b.onclick = () => { const n = +b.dataset.die; pool[n] = Math.min(20, (pool[n] || 0) + 1); drawDice(); }; b.oncontextmenu = ev => { ev.preventDefault(); const n = +b.dataset.die; pool[n] = Math.max(0, (pool[n] || 0) - 1); drawDice(); }; });
+    $('#a-dclear').onclick = () => { pool = {}; drawDice(); }; drawDice();
+    m.addEventListener('click', ev => {
+      const act = ev.target.dataset.a; if (!act) return;
+      if (act === 'no') return closeModal();
+      if (act === 'del') { sh.attacks = sh.attacks.filter(x => x !== atk); closeModal(); onDone(); return; }
+      if (act === 'yes') {
+        const name = $('#a-name').value.trim(); if (!name) return $('#a-name').focus();
+        const out = { name, ab: $('#a-ab').value, prof: $('#a-prof').checked, hitBonus: $('#a-hit').value === '' ? '' : +$('#a-hit').value, dmg: diceExpr(pool), dmgAb: $('#a-dab').checked, dmgBonus: $('#a-dmgb').value === '' ? '' : +$('#a-dmgb').value, type: getType() || '' };
+        if (isNew) sh.attacks.push(out); else sh.attacks[sh.attacks.indexOf(atk)] = out;
+        closeModal(); onDone();
+      }
+    });
+  });
+}
+
 // ---------- house rules for proficiency ----------
 function profRulesDialog(onDone) {
   const R = profRules();
@@ -609,7 +657,7 @@ export function mountSheet(host, e, opts = {}) {
     if (t.dataset.t === 'num') v = t.value.trim() === '' ? '' : +t.value.replace(/[^\d.+-]/g, '') || 0;
     if (t.dataset.conv && v !== '') v = stored(v, t.dataset.conv);
     setP(sh(), k, v); touch(); refresh();
-    if (k === 'theme' || k === 'accent') draw();
+    if (k === 'theme' || k === 'accent' || k === 'unarmored') draw();
   });
   host.addEventListener('change', ev => { const k = ev.target.dataset.k; if (k && /^spell\.slots\.\d\.max$/.test(k)) draw(); if (ev.target.dataset.act === 'cond' && ev.target.value) { sh().conds = [...(sh().conds || []), ev.target.value]; touch(); draw(); } });
   host.addEventListener('click', async ev => {
@@ -624,12 +672,27 @@ export function mountSheet(host, e, opts = {}) {
     if (t.dataset.del) { getP(S, t.dataset.del).splice(+t.dataset.i, 1); touch(); draw(); return; }
     if (t.dataset.rollMod) { const v = parseInt(t.textContent.replace('−', '-')) || 0, d = derive(S), mode = ['str', 'dex'].includes(t.dataset.ab) ? d.armorMode : 'normal'; try { const r = rollAndLog(d20(v, mode)); toast(`${e.name}: ${t.dataset.rollMod}${mode !== 'normal' ? ` (${mode})` : ''} — ${r.total}`); } catch { /* */ } return; }
     if (t.dataset.roll) { try { const r = rollAndLog(t.dataset.roll); toast(`${t.dataset.label}: ${r.total}`); } catch (err) { toast(err.message); } return; }
+    if (t.dataset.attack != null) {
+      const a = derive(S).attacks[+t.dataset.attack]; if (!a) return;
+      try {
+        const r = rollAndLog(d20(a.hit, a.mode));
+        const crit = r.crit, miss = r.fumble;
+        const dmgExpr = a.dmg ? (crit ? a.dmg.replace(/(\d*)d(\d+)/gi, (x, n, sz) => `${(+n || 1) * 2}d${sz}`) : a.dmg) : '';
+        const dr = dmgExpr && !miss ? rollAndLog(dmgExpr) : null;
+        const html = `<b>${esc(a.name)}</b>: ${crit ? '<span class="nat20">Critical hit!</span> ' : miss ? '<span class="nat1">Natural 1 — a miss</span> ' : ''}<b>${r.total}</b> to hit${a.mode !== 'normal' ? ` (${a.mode})` : ''}${dr ? ` · <b>${dr.total}</b> ${esc(a.type || 'damage')}${crit ? ' (dice doubled)' : ''}` : ''}`;
+        lastAttack.set(e.id, html); const la = host.querySelector('#cs-lastatk'); if (la) { la.innerHTML = html; la.classList.remove('pop'); void la.offsetWidth; la.classList.add('pop'); }
+      } catch (err) { toast(err.message); }
+      return;
+    }
+    if (t.dataset.editatk != null) { attackDialog(e, S.attacks[+t.dataset.editatk], () => { touch(); draw(); }); return; }
+    if (t.dataset.delatk != null) { S.attacks.splice(+t.dataset.delatk, 1); touch(); draw(); return; }
     if (t.dataset.atk != null) { const a = S.attacks[+t.dataset.atk]; const ex = t.dataset.part === 'hit' ? `d20${/^[+-]/.test(String(a.hit).trim()) ? '' : '+'}${String(a.hit || 0).trim()}` : a.dmg; try { const r = rollAndLog(ex); toast(`${a.name || 'Attack'} ${t.dataset.part === 'hit' ? 'to hit' : 'damage'}: ${r.total}`); } catch (err) { toast(err.message); } return; }
     const act = t.dataset.act;
     if (act === 'prof-rules') { profRulesDialog(() => draw()); return; }
     if (act === 'portrait') { hideTip(); portraitDialog(e, () => { touch(); draw(); }); return; }
     if (act === 'accent-reset') { S.accent = ''; touch(); draw(); return; }
-    if (act === 'add-attack') { S.attacks.push({ name: '', hit: '', dmg: '', type: '' }); touch(); draw(); return; }
+    if (act === 'add-attack') { attackDialog(e, null, () => { touch(); draw(); }); return; }
+    if (act === 'builder') { openCreator(e, () => draw()); return; }
     if (act === 'add-spell') { S.spell.list.push({ lvl: 0, name: '', prep: false }); touch(); draw(); host.querySelector(`[data-k="spell.list.${S.spell.list.length - 1}.name"]`)?.focus(); return; }
     if (act === 'add-row') { S.bagRows++; touch(); draw(); return; }
     if (act === 'hp-roll') { if (!S.hpRoll) return toast('Type the hit dice to roll, e.g. 4d8+4'); try { const r = rollAndLog(S.hpRoll); S.hpMax = r.total; S.hp = r.total; touch(); draw(); toast(`Hit points: ${r.total}`); } catch (err) { toast(err.message); } return; }
@@ -730,7 +793,7 @@ export function mountSheet(host, e, opts = {}) {
     if (acb) {
       const d = derive(sh());
       if (!tip) { tip = document.createElement('div'); tip.className = 'cs-tip'; document.body.appendChild(tip); }
-      tip.innerHTML = `<div class="cs-tip-name">Armour class ${d.ac}</div>${d.acParts.map(([l, v]) => `<div class="cs-tip-row"><span>${esc(l)}</span><b>${l === 'Unarmoured' || l.includes('armour') || l === 'Base you set' ? v : sgn(v)}</b></div>`).join('')}
+      tip.innerHTML = `<div class="cs-tip-name">Armour class ${d.ac}</div>${d.acParts.map(([l, v]) => `<div class="cs-tip-row"><span>${esc(l)}</span><b>${l === 'Unarmoured' || (l.includes('armour') && !l.startsWith('Unarmoured defence')) || l === 'Base you set' ? v : sgn(v)}</b></div>`).join('')}
         ${d.acMods.map(([l, v]) => `<div class="cs-tip-row ${v < 0 ? 'neg' : 'pos'}"><span>${esc(l)}</span><b>${sgn(v)}</b></div>`).join('')}<div class="cs-tip-row total"><span>Total</span><b>${d.ac}</b></div>`;
       const r = acb.getBoundingClientRect(); tip.style.left = Math.min(innerWidth - 270, r.left) + 'px'; tip.style.top = Math.min(innerHeight - tip.offsetHeight - 8, r.bottom + 6) + 'px';
       return;

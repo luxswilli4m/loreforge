@@ -32,9 +32,11 @@ export function guessArt(text) {
 }
 
 const cache = {};
-export function artURL(key) {
+// label: put a different name on the ribbon (for homebrew classes that borrow a card)
+export function artURL(key, label) {
   if (!C[key]) return '';
-  return cache[key] || (cache[key] = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(artSVG(key)));
+  const ck = key + '|' + (label || '');
+  return cache[ck] || (cache[ck] = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(artSVG(key, label)));
 }
 
 // ---------- pieces ----------
@@ -128,8 +130,8 @@ function creatureLight(kind, rim) {
   return '';
 }
 
-function artSVG(key) {
-  const c = C[key], [b1, b2] = c.bg, rim = c.rim, sil = '#0b0a0e';
+function artSVG(key, label) {
+  const c = { ...C[key], label: label || C[key].label }, [b1, b2] = c.bg, rim = c.rim, sil = '#0b0a0e';
   const shape = c.creature ? creature(c.creature) : figure(c);
   // drifting motes
   let sd = key.length * 97; const rnd = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
@@ -150,7 +152,7 @@ function artSVG(key) {
   ${c.creature ? creatureLight(c.creature, rim) : (c.props || []).map(p => prop(p, rim)).join('')}
   <rect y="290" width="300" height="110" fill="url(#fog)"/>
   <path d="M40 352h220l-12 14l12 14H40l12-14z" fill="${b2}" stroke="${rim}" stroke-width="1.5" opacity=".95"/>
-  <text x="150" y="372" text-anchor="middle" font-family="Cormorant Garamond, Georgia, serif" font-weight="700" font-size="22" letter-spacing="3" fill="${rim}">${c.label.toUpperCase()}</text>
+  <text x="150" y="372" text-anchor="middle" font-family="Cormorant Garamond, Georgia, serif" font-weight="700" font-size="${c.label.length > 12 ? 17 : 22}" letter-spacing="${c.label.length > 12 ? 1.5 : 3}" fill="${rim}">${c.label.toUpperCase().replace(/&/g, '&amp;').replace(/</g, '&lt;')}</text>
   <rect x="5" y="5" width="290" height="390" rx="10" fill="none" stroke="${rim}" stroke-opacity=".5" stroke-width="2"/>
 </svg>`;
 }
