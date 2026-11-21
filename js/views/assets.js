@@ -5,11 +5,13 @@ import { W, uid, save } from '../store.js';
 import { esc, go, toast, confirmDialog, pickFile, query } from '../util.js';
 import * as A from '../assets.js';
 import { drawIcon, iconThumb, registerCustomIcons, ROLES, roleColor } from '../gen/icons.js';
+import { SHAPES, makeShape, shapeSVG } from '../gen/shapePresets.js';
 
 const KINDS = { icon: { label: 'Map icons', one: 'map icon', emoji: '🐉', note: 'Stickers for the map generator — they show up under their group in the Map icons palette.' } };
 const TOOLS = [['select', '✋', 'Select & move'], ['pen', '✏️', 'Freehand'], ['poly', '⬠', 'Shape (click points)'], ['line', '╱', 'Line (click points)'], ['rect', '▭', 'Box'], ['ell', '◯', 'Oval']];
 const PREVIEWS = [['parchment', 'Parchment'], ['storybook', 'Storybook'], ['night', 'Night'], ['quill', 'Ink & Quill']];
-const ed = { tool: 'pen', fill: 'stone', stroke: true, lw: 1, snap: true, look: '', bg: 'parchment', traceOpacity: 0.35 };
+const ed = { tool: 'pen', fill: 'stone', stroke: true, lw: 1, snap: true, look: '', bg: 'parchment', traceOpacity: 0.35, gallery: false };
+const G = 5; // snap grid: every 5 units (half of a grid square)
 
 export function render(main) {
   const w = W();
@@ -69,18 +71,24 @@ export function render(main) {
       <input id="af-group" value="${esc(cur.group || '')}" placeholder="Group (e.g. My ruins)" list="af-groups" class="af-group">
       <datalist id="af-groups">${[...new Set(w.assets.map(a => a.group).filter(Boolean))].map(g => `<option value="${esc(g)}">`).join('')}</datalist>
     </div>
-    <div class="af-tools">${TOOLS.map(([k, i, l]) => `<button class="tool ${ed.tool === k ? 'on' : ''}" data-tool="${k}" title="${l}"><span>${i}</span>${l.split(' (')[0]}</button>`).join('')}</div>
+    <div class="af-tools">${TOOLS.map(([k, i, l]) => `<button class="tool ${ed.tool === k ? 'on' : ''}" data-tool="${k}" title="${l}"><span>${i}</span>${l.split(' (')[0]}</button>`).join('')}
+      <button class="tool ${ed.gallery ? 'on' : ''}" id="af-gal-btn" title="Ready-made shapes: drag one onto the box, or click to drop it in the middle"><span>🔷</span>Shapes ▾</button></div>
+    <div class="af-gallery" id="af-gallery" ${ed.gallery ? '' : 'hidden'}>${SHAPES.map((d, i) => `<button class="af-shape" draggable="true" data-shape="${i}" title="${d.label} — drag onto the box, or click">${shapeSVG(d)}</button>`).join('')}</div>
     <div class="af-stage"><canvas id="cv"></canvas></div>
     <div class="row af-bar">
       <button id="af-undo" title="Undo (Ctrl+Z)">↶ Undo</button><button id="af-redo" title="Redo (Ctrl+Y)">↷ Redo</button>
-      <label class="check" style="margin:0"><input type="checkbox" id="af-snap" ${ed.snap ? 'checked' : ''}> Snap to grid</label>
+      <label class="check" style="margin:0" title="Corners, points, moves and resizes lock onto the grid (every half square). Freehand is never snapped. Hold Alt to ignore the grid for a moment."><input type="checkbox" id="af-snap" ${ed.snap ? 'checked' : ''}> Snap to grid</label>
       <span style="flex:1"></span>
       <label class="row shrink" style="margin:0;gap:6px">Paper <select id="af-bg">${PREVIEWS.map(([k, l]) => `<option value="${k}" ${ed.bg === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     </div>`;
   const cv = pane.querySelector('#cv'), ctx = cv.getContext('2d');
   let Spx = 4, CW = 480;
   const PAD = 6; // units of margin around the 100×100 box
-  const toU = ev => { const r = cv.getBoundingClientRect(); let x = (ev.clientX - r.left) / Spx - 50 - PAD, y = (ev.clientY - r.top) / Spx - 50 - PAD; if (ed.snap && !ev.altKey) { x = Math.round(x / 2.5) * 2.5; y = Math.round(y / 2.5) * 2.5; } return [+x.toFixed(1), +y.toFixed(1)]; };
+  const snapOn = ev => ed.snap && !ev.altKey;
+  const sn = v => Math.round(v / G) * G;
+  const toU = ev => { const r = cv.getBoundingClientRect(); let x = (ev.clientX - r.left) / Spx - 50 - PAD, y = (ev.clientY - r.top) / Spx - 50 - PAD; if (snapOn(ev)) { x = sn(x); y = sn(y); } return [+x.toFixed(1), +y.toFixed(1)]; };
+  const rawU = ev => toU({ clientX: ev.clientX, clientY: ev.clientY, altKey: true });
+  let hoverPt = null;
   const toPx = p => [(p[0] + 50 + PAD) * Spx, (p[1] + 50 + PAD) * Spx];
 
   function resize() {
@@ -100,6 +108,36 @@ export function render(main) {
     const xs = sh.pts.map(p => p[0]), ys = sh.pts.map(p => p[1]);
     return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
   }
+  // handle positions in canvas pixels: 4 corners (top-left, top-right, bottom-right, bottom-left), then the turn handle
+  function handles() {
+    const [x0, y0, x1, y1] = bbox(cur.shapes[sel]), a = toPx([x0, y0]), b = toPx([x1, y1]);
+    return [[a[0] - 4, a[1] - 4], [b[0] + 4, a[1] - 4], [b[0] + 4, b[1] + 4], [a[0] - 4, b[1] + 4], [(a[0] + b[0]) / 2, a[1] - 26]];
+  }
+  function handleAt(ev) {
+    if (sel < 0 || !cur.shapes[sel] || ed.tool !== 'select') return -1;
+    const r = cv.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+    return handles().findIndex(([hx, hy]) => Math.hypot(hx - x, hy - y) < 9);
+  }
+  // boxes and ovals become point shapes when they're turned, since they can only sit square
+  function toPoints(sh) {
+    if (sh.t === 'rect') return { ...sh, t: 'poly', pts: [[sh.x, sh.y], [sh.x + sh.w, sh.y], [sh.x + sh.w, sh.y + sh.h], [sh.x, sh.y + sh.h]], x: undefined, y: undefined, w: undefined, h: undefined };
+    if (sh.t === 'ell') return { ...sh, t: 'path', closed: true, pts: Array.from({ length: 40 }, (_, i) => { const a = i / 40 * Math.PI * 2; return [sh.cx + Math.cos(a) * Math.abs(sh.rx), sh.cy + Math.sin(a) * Math.abs(sh.ry)]; }), cx: undefined, cy: undefined, rx: undefined, ry: undefined };
+    return sh;
+  }
+  const R1 = v => +v.toFixed(1);
+  function resized(o, bb, nb) {
+    const sx = (nb[2] - nb[0]) / ((bb[2] - bb[0]) || 1), sy = (nb[3] - nb[1]) / ((bb[3] - bb[1]) || 1);
+    const fx = x => R1(nb[0] + (x - bb[0]) * sx), fy = y => R1(nb[1] + (y - bb[1]) * sy);
+    if (o.t === 'rect') return { ...o, x: fx(o.x), y: fy(o.y), w: R1(o.w * sx), h: R1(o.h * sy) };
+    if (o.t === 'ell') return { ...o, cx: fx(o.cx), cy: fy(o.cy), rx: R1(o.rx * sx), ry: R1(o.ry * sy) };
+    return { ...o, pts: o.pts.map(([x, y]) => [fx(x), fy(y)]) };
+  }
+  function turned(o, c, ang) {
+    const p = toPoints(o), cs = Math.cos(ang), sn2 = Math.sin(ang);
+    return { ...p, pts: p.pts.map(([x, y]) => [R1(c[0] + (x - c[0]) * cs - (y - c[1]) * sn2), R1(c[1] + (x - c[0]) * sn2 + (y - c[1]) * cs)]) };
+  }
+  const clean = sh => { for (const k of Object.keys(sh)) if (sh[k] === undefined) delete sh[k]; return sh; };
+
   function draw() {
     ctx.clearRect(0, 0, CW, CW);
     ctx.fillStyle = PAPER[ed.bg]; ctx.fillRect(0, 0, CW, CW);
@@ -108,9 +146,9 @@ export function render(main) {
     // grid, the icon box and its ground line
     const dark = ed.bg === 'night';
     ctx.lineWidth = 1;
-    for (let u = -50; u <= 50; u += 10) {
-      const [x] = toPx([u, 0]), [, y] = toPx([0, u]);
-      ctx.strokeStyle = dark ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.07)';
+    for (let u = -50; u <= 50; u += ed.snap ? G : 10) {
+      const [x] = toPx([u, 0]), [, y] = toPx([0, u]), major = u % 10 === 0;
+      ctx.strokeStyle = dark ? `rgba(255,255,255,${major ? 0.09 : 0.035})` : `rgba(0,0,0,${major ? 0.09 : 0.035})`;
       ctx.beginPath(); ctx.moveTo(x, toPx([0, -50])[1]); ctx.lineTo(x, toPx([0, 50])[1]); ctx.moveTo(toPx([-50, 0])[0], y); ctx.lineTo(toPx([50, 0])[0], y); ctx.stroke();
     }
     const [bx, by] = toPx([-50, -50]);
@@ -130,10 +168,19 @@ export function render(main) {
       if (draft.t === 'poly' || draft.t === 'line') for (const [i, p] of draft.pts.entries()) { const [x, y] = toPx(p); ctx.beginPath(); ctx.arc(x, y, i ? 4 : 6, 0, Math.PI * 2); ctx.fillStyle = i ? '#fff' : '#d4a24c'; ctx.fill(); ctx.strokeStyle = '#000'; ctx.lineWidth = 1.2; ctx.stroke(); }
       ctx.restore();
     }
-    // selection box
+    // selection box, with handles to resize (corners) and turn (the round one on top)
     if (sel >= 0 && cur.shapes[sel]) {
       const [x0, y0, x1, y1] = bbox(cur.shapes[sel]), a = toPx([x0, y0]), b = toPx([x1, y1]);
       ctx.strokeStyle = '#4ea4ff'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]); ctx.strokeRect(a[0] - 4, a[1] - 4, b[0] - a[0] + 8, b[1] - a[1] + 8); ctx.setLineDash([]);
+      if (ed.tool === 'select') {
+        const hs = handles();
+        ctx.beginPath(); ctx.moveTo(hs[4][0], hs[4][1]); ctx.lineTo(hs[4][0], a[1] - 4); ctx.stroke();
+        hs.forEach(([x, y], i) => { ctx.beginPath(); if (i === 4) ctx.arc(x, y, 6, 0, Math.PI * 2); else ctx.rect(x - 5, y - 5, 10, 10); ctx.fillStyle = '#fff'; ctx.fill(); ctx.strokeStyle = '#4ea4ff'; ctx.lineWidth = 2; ctx.stroke(); });
+      }
+    }
+    // where the next point will land when snapping
+    if (hoverPt && ed.snap && ['poly', 'line', 'rect', 'ell'].includes(ed.tool)) {
+      const [x, y] = toPx(hoverPt); ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fillStyle = 'rgba(212,162,76,.9)'; ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 1; ctx.stroke();
     }
   }
 
@@ -151,7 +198,7 @@ export function render(main) {
       <label>Line weight <span class="val">${lw.toFixed(1)}×</span></label><input type="range" id="af-lw" min="0.4" max="3" step="0.1" value="${lw}">
       ${s ? `<div class="row" style="gap:6px;flex-wrap:wrap;margin-top:8px"><button class="small" id="af-up">▲ Forward</button><button class="small" id="af-down">▼ Back</button><button class="small" id="af-dup">⧉ Copy</button><button class="small danger" id="af-del">Delete</button></div>` : ''}
       <label>Shapes (${cur.shapes.length})</label>
-      <div class="af-layers">${cur.shapes.map((sh, i) => ({ sh, i })).reverse().map(({ sh, i }) => `<button class="af-layer ${i === sel ? 'on' : ''}" data-sel="${i}"><span class="rk-dot" style="background:${sh.fill ? roleColor(sh.fill) : 'transparent'};border:1px solid #888"></span>${({ rect: 'Box', ell: 'Oval', poly: 'Shape', path: sh.closed ? 'Freehand shape' : 'Freehand line', line: 'Line' })[sh.t]}</button>`).join('') || '<p class="small muted">Nothing drawn yet — pick a tool and draw in the box.</p>'}</div>
+      <div class="af-layers">${cur.shapes.map((sh, i) => ({ sh, i })).reverse().map(({ sh, i }) => `<button class="af-layer ${i === sel ? 'on' : ''}" data-sel="${i}"><span class="rk-dot" style="background:${sh.fill ? roleColor(sh.fill) : 'transparent'};border:1px solid #888"></span>${esc(sh.name || ({ rect: 'Box', ell: 'Oval', poly: 'Shape', path: sh.closed ? 'Freehand shape' : 'Freehand line', line: 'Line' })[sh.t])}</button>`).join('') || '<p class="small muted">Nothing drawn yet — pick a tool and draw in the box.</p>'}</div>
       <label>Preview</label>
       <div class="af-previews">${PREVIEWS.map(([k, l]) => `<div><img src="${previewURL(k)}" alt=""><span>${l}</span></div>`).join('')}<div><img src="${previewURL('parchment', 'marker')}" alt=""><span>Marker</span></div></div>
       <label>Trace over a picture</label>
@@ -192,7 +239,7 @@ export function render(main) {
   side.addEventListener('change', e => { if (['af-hex', 'af-lw'].includes(e.target.id)) refresh(); });
 
   function refresh() { draw(); drawSide(); drawList(); }
-  function syncTools() { pane.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === ed.tool)); }
+  function syncTools() { pane.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === ed.tool)); draw(); }
   async function loadTrace() {
     traceImg = null; if (!cur.trace) return;
     const u = await A.url(cur.trace); if (!u) return;
@@ -230,8 +277,14 @@ export function render(main) {
     const p = toU(e);
     cv.setPointerCapture(e.pointerId);
     if (ed.tool === 'select') {
-      sel = hit(p);
-      if (sel >= 0) { pushUndo(); drag = { kind: 'move', last: p, moved: false }; }
+      const h = handleAt(e);
+      if (h >= 0) {
+        const o = JSON.parse(JSON.stringify(cur.shapes[sel])), bb = bbox(o);
+        pushUndo(); drag = { kind: h === 4 ? 'turn' : 'size', h, o, bb, c: [(bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2], start: rawU(e), moved: false };
+        return;
+      }
+      sel = hit(rawU(e));
+      if (sel >= 0) { pushUndo(); const o = JSON.parse(JSON.stringify(cur.shapes[sel])); drag = { kind: 'move', o, bb: bbox(o), start: rawU(e), moved: false }; }
       refresh(); return;
     }
     if (ed.tool === 'poly' || ed.tool === 'line') {
@@ -247,8 +300,34 @@ export function render(main) {
   });
   cv.addEventListener('pointermove', e => {
     const p = toU(e);
-    if (!drag) { if (draft && (draft.t === 'poly' || draft.t === 'line')) { draft.hover = p; draw(); } return; }
-    if (drag.kind === 'move') { const s = cur.shapes[sel]; if (s) { moveShape(s, p[0] - drag.last[0], p[1] - drag.last[1]); drag.last = p; drag.moved = true; draw(); } return; }
+    if (!drag) {
+      hoverPt = p;
+      if (draft && (draft.t === 'poly' || draft.t === 'line')) draft.hover = p;
+      if (ed.tool === 'select') { const h = handleAt(e); cv.style.cursor = h === 4 ? 'grab' : h === 0 || h === 2 ? 'nwse-resize' : h === 1 || h === 3 ? 'nesw-resize' : hit(rawU(e)) >= 0 ? 'move' : 'default'; }
+      else cv.style.cursor = 'crosshair';
+      draw(); return;
+    }
+    if (drag.kind === 'move') {
+      // the shape's top-left corner lands on the grid when snapping
+      const q = rawU(e); let dx = q[0] - drag.start[0], dy = q[1] - drag.start[1];
+      if (snapOn(e)) { dx = sn(drag.bb[0] + dx) - drag.bb[0]; dy = sn(drag.bb[1] + dy) - drag.bb[1]; }
+      const o = JSON.parse(JSON.stringify(drag.o)); moveShape(o, dx, dy); cur.shapes[sel] = o; drag.moved = true; draw(); return;
+    }
+    if (drag.kind === 'size') {
+      // drag a corner; the opposite corner stays put. Shift keeps the proportions.
+      const bb = drag.bb, fixed = [[bb[2], bb[3]], [bb[0], bb[3]], [bb[0], bb[1]], [bb[2], bb[1]]][drag.h];
+      let q = p;
+      if (e.shiftKey) { const w0 = bb[2] - bb[0] || 1, h0 = bb[3] - bb[1] || 1, k = Math.max(Math.abs(q[0] - fixed[0]) / w0, Math.abs(q[1] - fixed[1]) / h0); q = [fixed[0] + Math.sign(q[0] - fixed[0] || 1) * w0 * k, fixed[1] + Math.sign(q[1] - fixed[1] || 1) * h0 * k]; }
+      if (Math.abs(q[0] - fixed[0]) < 1 || Math.abs(q[1] - fixed[1]) < 1) return;
+      const nb = [Math.min(q[0], fixed[0]), Math.min(q[1], fixed[1]), Math.max(q[0], fixed[0]), Math.max(q[1], fixed[1])];
+      cur.shapes[sel] = resized(drag.o, bb, nb); drag.moved = true; draw(); return;
+    }
+    if (drag.kind === 'turn') {
+      const q = rawU(e), c = drag.c;
+      let ang = Math.atan2(q[1] - c[1], q[0] - c[0]) - Math.atan2(drag.start[1] - c[1], drag.start[0] - c[0]);
+      if (e.shiftKey || snapOn(e)) ang = Math.round(ang / (Math.PI / 12)) * Math.PI / 12; // 15° steps
+      cur.shapes[sel] = ang ? clean(turned(drag.o, c, ang)) : JSON.parse(JSON.stringify(drag.o)); drag.moved = true; draw(); return;
+    }
     if (drag.kind === 'pen') { const q = toU({ clientX: e.clientX, clientY: e.clientY, altKey: true }), l = draft.pts[draft.pts.length - 1]; if (Math.hypot(q[0] - l[0], q[1] - l[1]) > 1.2) { draft.pts.push(q); draw(); } return; }
     if (drag.kind === 'box') {
       const o = draft.o;
@@ -259,7 +338,7 @@ export function render(main) {
   });
   cv.addEventListener('pointerup', () => {
     const d = drag; drag = null; if (!d) return;
-    if (d.kind === 'move') { if (d.moved) touch(); else undo.pop(); refresh(); return; }
+    if (d.kind === 'move' || d.kind === 'size' || d.kind === 'turn') { if (d.moved) touch(); else undo.pop(); refresh(); return; }
     if (d.kind === 'pen') {
       const dr = draft; draft = null;
       if (dr.pts.length < 3) { draw(); return; }
@@ -276,6 +355,22 @@ export function render(main) {
     }
   });
   cv.addEventListener('dblclick', () => finishPoints());
+  cv.addEventListener('pointerleave', () => { hoverPt = null; if (!drag) draw(); });
+  // ---------- ready-made shapes: drag from the gallery, or click to drop in the middle ----------
+  function placeShape(i, at) {
+    const def = SHAPES[i]; if (!def) return;
+    let [x, y] = at || [0, 0];
+    if (ed.snap) { x = sn(x); y = sn(y); }
+    const sh = { ...makeShape(def, x, y, 40), ...newShapeStyle() };
+    if (def.t === 'line' && !sh.fill) sh.stroke = true;
+    pushUndo(); cur.shapes.push(sh); sel = cur.shapes.length - 1; ed.tool = 'select'; syncTools(); touch(); refresh();
+  }
+  const gal = pane.querySelector('#af-gallery');
+  pane.querySelector('#af-gal-btn').onclick = () => { ed.gallery = !ed.gallery; gal.hidden = !ed.gallery; pane.querySelector('#af-gal-btn').classList.toggle('on', ed.gallery); resize(); };
+  gal.addEventListener('click', e => { const b = e.target.closest('[data-shape]'); if (b) placeShape(+b.dataset.shape); });
+  gal.addEventListener('dragstart', e => { const b = e.target.closest('[data-shape]'); if (!b) return; e.dataTransfer.setData('text/x-lf-shape', b.dataset.shape); e.dataTransfer.effectAllowed = 'copy'; });
+  cv.addEventListener('dragover', e => { if ([...e.dataTransfer.types].includes('text/x-lf-shape')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; hoverPt = toU(e); draw(); } });
+  cv.addEventListener('drop', e => { const i = e.dataTransfer.getData('text/x-lf-shape'); if (i === '') return; e.preventDefault(); hoverPt = null; placeShape(+i, rawU(e)); });
   cv.addEventListener('contextmenu', e => { e.preventDefault(); if (draft) { draft = null; draw(); } else if (sel >= 0) { sel = -1; refresh(); } });
 
   pane.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => { finishPoints(); draft = null; ed.tool = b.dataset.tool; if (ed.tool !== 'select') sel = -1; syncTools(); refresh(); });
@@ -283,7 +378,7 @@ export function render(main) {
   const doRedo = () => { if (!redo.length) return; undo.push(snap()); cur.shapes = JSON.parse(redo.pop()); sel = -1; touch(); refresh(); };
   pane.querySelector('#af-undo').onclick = doUndo;
   pane.querySelector('#af-redo').onclick = doRedo;
-  pane.querySelector('#af-snap').onchange = e => { ed.snap = e.target.checked; };
+  pane.querySelector('#af-snap').onchange = e => { ed.snap = e.target.checked; draw(); };
   pane.querySelector('#af-bg').onchange = e => { ed.bg = e.target.value; draw(); };
   pane.querySelector('#af-name').oninput = e => { cur.name = e.target.value || 'Untitled icon'; touch(); drawList(); };
   pane.querySelector('#af-group').oninput = e => { cur.group = e.target.value; touch(); drawList(); };
