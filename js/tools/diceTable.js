@@ -4,8 +4,10 @@
 import { rollAndLog } from './dice.js';
 import { esc, toast, pickFile } from '../util.js';
 import * as A from '../assets.js';
+import { qMul, qNorm, qAxis, qRandom, qSlerp, faceFor, drawDie, restQ, upness } from './dice3d.js';
 
 const TYPES = [4, 6, 8, 10, 12, 20, 100];
+const SOLID = [4, 6, 8, 10, 12, 20]; // dice drawn as real 3D shapes (a d100 is two d10s)
 const THEMES = {
   tavern: { label: 'Tavern table', felt: '#2f5d3a', felt2: '#22452b', rim: ['#7a4e2a', '#4a2c16'], die: '#efe6d2', edge: '#b9a98a', ink: '#2a1d10', pattern: 'felt' },
   arcane: { label: 'Arcane velvet', felt: '#3d2160', felt2: '#1f0f36', rim: ['#d8b660', '#8a6a24'], die: '#7b3fd1', edge: '#c9a4ff', ink: '#ffe9a8', pattern: 'runes', glow: true },
@@ -217,13 +219,19 @@ function build() {
   function throwDice(res) {
     lastRes = res;
     const list = [];
-    for (const p of res.parts) if (p.rolls) for (const r of p.rolls) list.push({ n: p.sides, v: r.v, kept: r.kept });
+    for (const p of res.parts) if (p.rolls) for (const r of p.rolls) {
+      if (p.sides === 100) { // percentile: a tens die and a units die
+        list.push({ n: 100, geo: 10, label: 'tens', fv: Math.floor((r.v % 100) / 10), v: r.v, kept: r.kept });
+        list.push({ n: 100, geo: 10, fv: r.v % 10, v: r.v, kept: r.kept });
+      } else list.push({ n: p.sides, geo: SOLID.includes(p.sides) ? p.sides : 0, fv: p.sides === 10 ? r.v % 10 : r.v, v: r.v, kept: r.kept });
+    }
     const shown = list.slice(0, 40);
     const size = Math.max(20, Math.min(36, Math.sqrt(W * H / Math.max(4, shown.length)) * 0.22));
     // dice come in from the lower-right corner, spread out, with a good spin
     dice = shown.map((d, i) => {
       const a = Math.PI + 0.35 + Math.random() * 0.5, sp = 13 + Math.random() * 7;
-      return { ...d, r: size * (d.n === 100 ? 1.1 : d.n === 4 ? 0.95 : 1), x: W - RIM - size - Math.random() * 60, y: H - RIM - size - Math.random() * 60 - (i % 4) * 8,
+      const w = [(Math.random() - 0.5), (Math.random() - 0.5), (Math.random() - 0.5)].map(x => x * 0.7);
+      return { ...d, q: qRandom(), w, face3: d.geo ? faceFor(d.geo, d.fv) : null, r: size * (d.geo ? (d.geo === 4 ? 1.12 : d.geo === 20 || d.geo === 12 ? 1.05 : 1) : d.n === 100 ? 1.1 : 1), x: W - RIM - size - Math.random() * 60, y: H - RIM - size - Math.random() * 60 - (i % 4) * 8,
         vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, ang: Math.random() * 6, va: (Math.random() - 0.5) * 0.6, z: 30 + Math.random() * 25, vz: 4 + Math.random() * 3,
         face: 1 + Math.floor(Math.random() * d.n), t: 0, settled: false, pop: 0 };
     });
@@ -246,18 +254,31 @@ function build() {
       if (d.settled) { d.pop = Math.max(0, d.pop - 0.06); continue; }
       d.t++;
       // fall and bounce on the felt
-      d.vz -= 0.9; d.z += d.vz; if (d.z <= 0) { d.z = 0; d.vz = Math.abs(d.vz) * 0.45; if (d.vz < 1.2) d.vz = 0; d.vx *= 0.9; d.vy *= 0.9; d.va *= 0.85; }
+      d.vz -= 0.9; d.z += d.vz; if (d.z <= 0) { if (d.geo && d.vz < -3) d.w = d.w.map(x => x + (Math.random() - 0.5) * 0.4); d.z = 0; d.vz = Math.abs(d.vz) * 0.45; if (d.vz < 1.2) d.vz = 0; d.vx *= 0.9; d.vy *= 0.9; d.va *= 0.85; }
       d.x += d.vx; d.y += d.vy; d.ang += d.va;
       const fr = d.z > 0 ? 0.995 : 0.955; d.vx *= fr; d.vy *= fr; d.va *= d.z > 0 ? 0.995 : 0.94;
       // walls
       const lo = RIM + d.r, hx = W - RIM - d.r, hy = H - RIM - d.r;
       if (d.x < lo) { d.x = lo; d.vx = Math.abs(d.vx) * 0.7; d.va += d.vy * 0.02; } if (d.x > hx) { d.x = hx; d.vx = -Math.abs(d.vx) * 0.7; d.va -= d.vy * 0.02; }
       if (d.y < lo) { d.y = lo; d.vy = Math.abs(d.vy) * 0.7; d.va -= d.vx * 0.02; } if (d.y > hy) { d.y = hy; d.vy = -Math.abs(d.vy) * 0.7; d.va += d.vx * 0.02; }
-      // tumbling faces while it moves
       const sp = Math.hypot(d.vx, d.vy);
-      if (sp > 1.2 && d.t % 4 === 0) d.face = 1 + Math.floor(Math.random() * d.n);
-      if (sp < 0.25 && Math.abs(d.va) < 0.02 && d.z === 0 && d.t > 25) { d.settled = true; d.face = d.v; d.pop = 1; d.vx = d.vy = 0; }
-      else moving = true;
+      if (d.geo) {
+        // a real die: in the air it tumbles freely; on the felt it rolls along the way it's travelling
+        const R = d.r;
+        if (d.z > 0) d.w = d.w.map(x => x * 0.996);
+        else { const roll = [-d.vy / R, d.vx / R, 0], k = 0.3; d.w = d.w.map((x, i) => x + (roll[i] - x) * k); }
+        const wz = [d.w[0], d.w[1], d.w[2] + d.va], a = Math.hypot(...wz);
+        if (a > 1e-5) d.q = qNorm(qMul(qAxis(wz, a), d.q));
+        // as it slows, it tips over onto the face that was rolled
+        if (d.z === 0 && sp < 7) { const k = 0.05 + (1 - sp / 7) * 0.17; d.q = qSlerp(d.q, restQ(d.geo, d.q, d.face3), k); d.w = d.w.map(x => x * (0.6 + sp / 7 * 0.4)); d.va *= 0.9; }
+        if (sp < 0.25 && d.z === 0 && d.t > 25 && upness(d.q, d.face3) > 0.998) { d.settled = true; d.q = restQ(d.geo, d.q, d.face3); d.pop = 1; d.vx = d.vy = 0; d.va = 0; }
+        else moving = true;
+      } else {
+        // tumbling faces while it moves
+        if (sp > 1.2 && d.t % 4 === 0) d.face = 1 + Math.floor(Math.random() * d.n);
+        if (sp < 0.25 && Math.abs(d.va) < 0.02 && d.z === 0 && d.t > 25) { d.settled = true; d.face = d.v; d.pop = 1; d.vx = d.vy = 0; }
+        else moving = true;
+      }
     }
     // dice knock into each other
     for (let i = 0; i < dice.length; i++) for (let j = i + 1; j < dice.length; j++) {
@@ -266,7 +287,7 @@ function build() {
         const nx = dx / dist, ny = dy / dist, push = (min - dist) / 2;
         a.x -= nx * push; a.y -= ny * push; b.x += nx * push; b.y += ny * push;
         const rv = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
-        if (rv < 0) { const imp = -rv * 0.85; a.vx -= nx * imp; a.vy -= ny * imp; b.vx += nx * imp; b.vy += ny * imp; if (!a.settled || !b.settled) { a.va += (Math.random() - 0.5) * 0.2; b.va += (Math.random() - 0.5) * 0.2; } }
+        if (rv < 0) { const imp = -rv * 0.85; a.vx -= nx * imp; a.vy -= ny * imp; b.vx += nx * imp; b.vy += ny * imp; if (!a.settled || !b.settled) { a.va += (Math.random() - 0.5) * 0.2; b.va += (Math.random() - 0.5) * 0.2; for (const o of [a, b]) if (o.geo) o.w = o.w.map(x => x + (Math.random() - 0.5) * 0.25); } }
         if (a.settled && Math.hypot(a.vx, a.vy) > 0.3) a.settled = false; if (b.settled && Math.hypot(b.vx, b.vy) > 0.3) b.settled = false;
       }
     }
@@ -283,7 +304,24 @@ function build() {
     const ink = numCol();
     const texKind = prefs.mat === 'custom' ? 'custom' : M.tex;
     const tex = texKind ? texture(texKind, body) : null, pat = tex ? ctx.createPattern(tex, 'repeat') : null;
+    const special = (dd, v) => dd.settled && dd.geo === 20 && v === dd.fv ? (v === 20 ? '#ffd24a' : v === 1 ? '#ff5a4a' : null) : null;
     for (const d of [...dice].sort((a, b) => a.z - b.z)) {
+      if (d.geo) {
+        const lift = 1 + d.z / 90, pop = 1 + d.pop * 0.18, r = d.r * lift * pop;
+        // shadow on the felt
+        ctx.beginPath(); ctx.ellipse(d.x + 4 + d.z * 0.5, d.y + 6 + d.z * 0.7, r * 0.82, r * 0.78, 0, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(0,0,0,${0.26 / lift})`; ctx.fill();
+        ctx.save(); ctx.translate(d.x, d.y - d.z * 0.4);
+        ctx.globalAlpha = d.kept === false && d.settled ? 0.45 : 1;
+        if (t.glow && d.settled && d.pop > 0) { ctx.shadowColor = t.edge; ctx.shadowBlur = 24 * d.pop; ctx.beginPath(); ctx.arc(0, 0, r * 0.75, 0, Math.PI * 2); ctx.fillStyle = t.edge; ctx.fill(); ctx.shadowBlur = 0; }
+        if (M.glass) ctx.globalAlpha *= 0.9;
+        if (pat?.setTransform) pat.setTransform(prefs.mat === 'custom' ? new DOMMatrix().translate(-1, -1).scale(2 / 128) : new DOMMatrix().scale(1.5 / 128));
+        drawDie(ctx, { geo: d.geo, q: d.q, r, label: d.label, fv: d.fv, settled: d.settled }, {
+          pattern: pat, body, shade, edge: prefs.mat === 'custom' ? 'rgba(0,0,0,.6)' : shade(body, -0.5),
+          ink, inkOutline: light ? 'rgba(255,255,255,.5)' : 'rgba(0,0,0,.5)', glass: M.glass, shine: M.shine, special });
+        ctx.restore();
+        continue;
+      }
       const lift = 1 + d.z / 90, pop = 1 + d.pop * 0.18, r = d.r * lift * pop, pts = shape(d.n, r);
       // shadow
       ctx.save(); ctx.translate(d.x + 4 + d.z * 0.5, d.y + 6 + d.z * 0.7); ctx.rotate(d.ang);
