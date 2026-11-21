@@ -13,8 +13,21 @@ const THEMES = {
   parchment: { label: 'Explorer’s map', felt: '#e8d9b5', felt2: '#d4c193', rim: ['#8a5530', '#4e2c14'], die: '#a8322b', edge: '#6e1c17', ink: '#fff6e0', pattern: 'map' },
   starfall: { label: 'Starfall', felt: '#0e1636', felt2: '#060a1c', rim: ['#b7c2da', '#5a6680'], die: '#2a4fa8', edge: '#8fb0ff', ink: '#ffffff', pattern: 'stars', glow: true },
 };
+// what the dice are made of. Each has its own surface texture, lighting and number colour.
+const MATS = {
+  tray: { label: 'Match the tray' },
+  ivory: { label: 'Ivory', color: '#efe6d2', ink: '#2a1d10' },
+  wood: { label: 'Oak wood', color: '#9a6232', ink: '#f6e6c4', tex: 'wood' },
+  steel: { label: 'Steel', color: '#b4bac4', ink: '#22252b', tex: 'brushed', shine: 0.7 },
+  brass: { label: 'Brass', color: '#c9a04a', ink: '#3a2608', tex: 'brushed', shine: 0.7 },
+  gem: { label: 'Gemstone', color: '#c4306a', ink: '#ffffff', tex: 'gem', glass: true },
+  marble: { label: 'Marble', color: '#ecebe6', ink: '#33333a', tex: 'marble' },
+  obsidian: { label: 'Obsidian', color: '#1c1a22', ink: '#e8c66a', tex: 'gloss', shine: 0.9 },
+  bone: { label: 'Bone', color: '#e2d5b8', ink: '#5a1c14', tex: 'bone' },
+  custom: { label: '🖼️ My own picture…', ink: '#ffffff' },
+};
 const PREF_KEY = 'loreforge:dicetable';
-const prefs = (() => { try { return { theme: 'tavern', bg: '', dieColor: '', pool: { 20: 1 }, mod: 0, ...JSON.parse(localStorage.getItem(PREF_KEY) || '{}') }; } catch { return { theme: 'tavern', bg: '', dieColor: '', pool: { 20: 1 }, mod: 0 }; } })();
+const prefs = (() => { try { return { theme: 'tavern', bg: '', dieColor: '', mat: 'tray', numColor: '', dieImg: '', pool: { 20: 1 }, mod: 0, ...JSON.parse(localStorage.getItem(PREF_KEY) || '{}') }; } catch { return { theme: 'tavern', bg: '', dieColor: '', mat: 'tray', numColor: '', dieImg: '', pool: { 20: 1 }, mod: 0 }; } })();
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch { /* private mode */ } };
 
 let win = null, api = null;
@@ -43,8 +56,10 @@ function build() {
   win.innerHTML = `
     <div class="dt-head" id="dt-drag"><b>🎲 Dice table</b>
       <select id="dt-theme" title="Tray">${Object.entries(THEMES).map(([k, t]) => `<option value="${k}">${t.label}</option>`).join('')}<option value="custom">🖼️ My own picture…</option></select>
+      <select id="dt-mat" title="What the dice are made of">${Object.entries(MATS).map(([k, m]) => `<option value="${k}">🎲 ${m.label}</option>`).join('')}</select>
       <label class="dt-colour" title="Dice colour"><input type="color" id="dt-dcol"><span>Dice</span></label>
-      <button class="small" id="dt-dreset" title="Use the tray’s own dice colour">↺</button>
+      <label class="dt-colour" title="Number colour"><input type="color" id="dt-ncol"><span>Numbers</span></label>
+      <button class="small" id="dt-dreset" title="Back to the material’s own colours">↺</button>
       <span style="flex:1"></span><button class="icon small" id="dt-close" title="Close">✕</button></div>
     <div class="dt-body">
       <div class="dt-pool">
@@ -66,9 +81,50 @@ function build() {
   $('#dt-theme').value = prefs.theme;
   $('#dt-mod').value = prefs.mod || 0;
   const theme = () => THEMES[prefs.theme] || { ...THEMES.tavern, label: 'Custom', pattern: 'image' };
-  const dieCol = () => prefs.dieColor || (prefs.theme === 'custom' ? '#efe6d2' : theme().die);
-  const syncColour = () => { $('#dt-dcol').value = dieCol(); };
+  const mat = () => MATS[prefs.mat] || MATS.tray;
+  const dieCol = () => prefs.dieColor || mat().color || (prefs.theme === 'custom' ? '#efe6d2' : theme().die);
+  const lum = hex => parseInt(hex.slice(1, 3), 16) + parseInt(hex.slice(3, 5), 16) + parseInt(hex.slice(5, 7), 16);
+  const numCol = () => prefs.numColor || (prefs.dieColor && prefs.mat !== 'custom' ? (lum(prefs.dieColor) > 420 ? '#1e1610' : '#fff8e8') : mat().ink || theme().ink);
+  const syncColour = () => { $('#dt-dcol').value = dieCol(); $('#dt-ncol').value = numCol(); $('#dt-mat').value = prefs.mat in MATS ? prefs.mat : 'tray'; };
   syncColour();
+  // the picture for your own dice, and the textures for each material
+  let dieImg = null;
+  const texCache = new Map();
+  async function loadDieImg() {
+    dieImg = null; texCache.clear();
+    if (prefs.mat !== 'custom' || !prefs.dieImg) return;
+    const u = await A.url(prefs.dieImg); if (!u) return;
+    await new Promise(r => { const im = new Image(); im.onload = () => { dieImg = im; r(); }; im.onerror = r; im.src = u; });
+  }
+  function texture(kind, base) {
+    const key = kind + base + (kind === 'custom' ? prefs.dieImg + (dieImg ? ':ready' : '') : '');
+    if (texCache.has(key)) return texCache.get(key);
+    const S = 128, c = document.createElement('canvas'); c.width = c.height = S;
+    const g = c.getContext('2d');
+    let sd = 11; const rnd = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
+    g.fillStyle = base; g.fillRect(0, 0, S, S);
+    if (kind === 'custom' && dieImg) { const k = Math.max(S / dieImg.width, S / dieImg.height); g.drawImage(dieImg, (S - dieImg.width * k) / 2, (S - dieImg.height * k) / 2, dieImg.width * k, dieImg.height * k); }
+    if (kind === 'wood') { for (let i = 0; i < 26; i++) { const y0 = rnd() * S; g.beginPath(); for (let x = 0; x <= S; x += 4) g.lineTo(x, y0 + Math.sin(x / 18 + i) * 3 + Math.sin(x / 7) * 0.8); g.strokeStyle = `rgba(${rnd() > 0.5 ? '60,30,10' : '255,220,170'},${0.12 + rnd() * 0.18})`; g.lineWidth = 0.6 + rnd() * 1.6; g.stroke(); }
+      g.beginPath(); g.ellipse(S * 0.6, S * 0.4, 9, 4, 0.2, 0, Math.PI * 2); g.strokeStyle = 'rgba(60,30,10,.35)'; g.lineWidth = 1.4; g.stroke(); }
+    if (kind === 'brushed') for (let i = 0; i < 220; i++) { const y = rnd() * S; g.fillStyle = `rgba(${rnd() > 0.5 ? '255,255,255' : '0,0,0'},${0.05 + rnd() * 0.08})`; g.fillRect(0, y, S, 0.6 + rnd()); }
+    if (kind === 'marble') for (let i = 0; i < 7; i++) { g.beginPath(); let x = rnd() * S, y = 0; g.moveTo(x, y); while (y < S) { x += (rnd() - 0.5) * 16; y += 6 + rnd() * 6; g.lineTo(x, y); } g.strokeStyle = `rgba(80,80,90,${0.15 + rnd() * 0.25})`; g.lineWidth = 0.5 + rnd() * 1.8; g.stroke(); }
+    if (kind === 'bone') { for (let i = 0; i < 300; i++) { g.fillStyle = `rgba(90,70,40,${rnd() * 0.12})`; g.fillRect(rnd() * S, rnd() * S, 1.5, 1.5); } for (let i = 0; i < 4; i++) { g.beginPath(); let x = rnd() * S, y = rnd() * S; g.moveTo(x, y); for (let j = 0; j < 5; j++) { x += (rnd() - 0.5) * 18; y += (rnd() - 0.5) * 18; g.lineTo(x, y); } g.strokeStyle = 'rgba(90,60,30,.22)'; g.lineWidth = 0.7; g.stroke(); } }
+    if (kind === 'gem') for (let i = 0; i < 14; i++) { g.beginPath(); const x = rnd() * S, y = rnd() * S, s2 = 8 + rnd() * 22; g.moveTo(x, y); g.lineTo(x + s2, y + s2 * 0.3); g.lineTo(x + s2 * 0.4, y + s2); g.closePath(); g.fillStyle = `rgba(255,255,255,${0.05 + rnd() * 0.14})`; g.fill(); }
+    texCache.set(key, c);
+    return c;
+  }
+  $('#dt-mat').onchange = async e => {
+    const v = e.target.value;
+    if (v === 'custom') {
+      if (!prefs.dieImg || prefs.mat === 'custom' || confirm('Choose a new picture for your dice? (Cancel keeps the one you used before.)')) {
+        const f = await pickFile('image/*');
+        if (f) prefs.dieImg = (await A.storeImage(f, { maxDim: 512 })).ref;
+        else if (!prefs.dieImg) { e.target.value = prefs.mat; return; }
+      }
+    }
+    prefs.mat = v; prefs.dieColor = ''; prefs.numColor = ''; savePrefs(); await loadDieImg(); syncColour(); draw();
+  };
+  $('#dt-ncol').oninput = e => { prefs.numColor = e.target.value; savePrefs(); draw(); };
   async function loadBg() {
     bgImg = null;
     if (prefs.theme !== 'custom' || !prefs.bg) return;
@@ -82,8 +138,8 @@ function build() {
     }
     prefs.theme = e.target.value; savePrefs(); syncColour(); await loadBg(); paintBg();
   };
-  $('#dt-dcol').oninput = e => { prefs.dieColor = e.target.value; savePrefs(); };
-  $('#dt-dreset').onclick = () => { prefs.dieColor = ''; savePrefs(); syncColour(); };
+  $('#dt-dcol').oninput = e => { prefs.dieColor = e.target.value; savePrefs(); draw(); };
+  $('#dt-dreset').onclick = () => { prefs.dieColor = ''; prefs.numColor = ''; savePrefs(); syncColour(); draw(); };
 
   // ---------- the pool ----------
   const poolExpr = () => {
@@ -221,9 +277,11 @@ function build() {
   function draw() {
     ctx.clearRect(0, 0, W, H);
     if (bgCanvas) ctx.drawImage(bgCanvas, 0, 0, W, H);
-    const t = theme(), body = dieCol();
-    const light = parseInt(body.slice(1, 3), 16) + parseInt(body.slice(3, 5), 16) + parseInt(body.slice(5, 7), 16) > 420;
-    const ink = prefs.dieColor ? (light ? '#1e1610' : '#fff8e8') : t.ink;
+    const t = theme(), body = dieCol(), M = mat();
+    const light = lum(body) > 420;
+    const ink = numCol();
+    const texKind = prefs.mat === 'custom' ? 'custom' : M.tex;
+    const tex = texKind ? texture(texKind, body) : null, pat = tex ? ctx.createPattern(tex, 'repeat') : null;
     for (const d of [...dice].sort((a, b) => a.z - b.z)) {
       const lift = 1 + d.z / 90, pop = 1 + d.pop * 0.18, r = d.r * lift * pop, pts = shape(d.n, r);
       // shadow
@@ -233,12 +291,20 @@ function build() {
       ctx.save(); ctx.translate(d.x, d.y - d.z * 0.4); ctx.rotate(d.ang);
       ctx.globalAlpha = d.kept === false && d.settled ? 0.45 : 1;
       if (t.glow && d.settled && d.pop > 0) { ctx.shadowColor = t.edge; ctx.shadowBlur = 24 * d.pop; }
-      // body with a light from the top left
-      const g = ctx.createRadialGradient(-r * 0.4, -r * 0.5, r * 0.1, 0, 0, r * 1.2);
-      g.addColorStop(0, shade(body, 0.35)); g.addColorStop(0.55, body); g.addColorStop(1, shade(body, -0.35));
+      // body: the material's surface, then light from the top left
       ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath();
+      const baseA = ctx.globalAlpha;
+      if (M.glass) ctx.globalAlpha = baseA * 0.85;
+      if (pat) { if (pat.setTransform) pat.setTransform(prefs.mat === 'custom' ? new DOMMatrix().translate(-r * 1.15, -r * 1.15).scale(r * 2.3 / 128) : new DOMMatrix()); ctx.fillStyle = pat; ctx.fill(); }
+      const g = ctx.createRadialGradient(-r * 0.4, -r * 0.5, r * 0.1, 0, 0, r * 1.2);
+      if (pat) { g.addColorStop(0, 'rgba(255,255,255,.28)'); g.addColorStop(0.55, 'rgba(255,255,255,0)'); g.addColorStop(1, 'rgba(0,0,0,.38)'); }
+      else { g.addColorStop(0, shade(body, 0.35)); g.addColorStop(0.55, body); g.addColorStop(1, shade(body, -0.35)); }
       ctx.fillStyle = g; ctx.fill(); ctx.shadowBlur = 0;
-      ctx.lineJoin = 'round'; ctx.strokeStyle = shade(body, -0.5); ctx.lineWidth = 2; ctx.stroke();
+      ctx.globalAlpha = baseA;
+      // metal and obsidian catch a bright streak of light
+      if (M.shine) { ctx.save(); ctx.clip(); const sg = ctx.createLinearGradient(-r, -r, r, r); sg.addColorStop(0.3, 'rgba(255,255,255,0)'); sg.addColorStop(0.42, `rgba(255,255,255,${0.5 * M.shine})`); sg.addColorStop(0.5, 'rgba(255,255,255,0)'); ctx.fillStyle = sg; ctx.fillRect(-r * 1.3, -r * 1.3, r * 2.6, r * 2.6); ctx.restore(); }
+      if (M.glass) { ctx.save(); ctx.clip(); ctx.beginPath(); ctx.ellipse(-r * 0.35, -r * 0.45, r * 0.35, r * 0.16, -0.6, 0, Math.PI * 2); ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.fill(); ctx.restore(); }
+      ctx.lineJoin = 'round'; ctx.strokeStyle = prefs.mat === 'custom' ? 'rgba(0,0,0,.6)' : shade(body, -0.5); ctx.lineWidth = 2; ctx.stroke();
       // facets
       ctx.strokeStyle = light ? 'rgba(0,0,0,.18)' : 'rgba(255,255,255,.22)'; ctx.lineWidth = 1.2;
       if (d.n === 20) { const tri = [[0, -r * 0.62], [r * 0.56, r * 0.36], [-r * 0.56, r * 0.36]]; ctx.beginPath(); tri.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); ctx.stroke(); ctx.beginPath(); pts.forEach(([x, y], i) => { const q = tri[Math.round(i / 2) % 3]; ctx.moveTo(x, y); ctx.lineTo(q[0], q[1]); }); ctx.stroke(); }
@@ -286,7 +352,7 @@ function build() {
   window.addEventListener('keydown', onKey, true);
   const ro = new ResizeObserver(() => { resize(); draw(); }); ro.observe(stage);
   drawPool();
-  loadBg().then(() => { resize(); draw(); });
+  Promise.all([loadBg(), loadDieImg()]).then(() => { resize(); draw(); });
   api = { roll: doRoll, close };
   return api;
 }
