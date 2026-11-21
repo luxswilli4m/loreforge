@@ -900,3 +900,7 @@ body.player-view #main-wrap { grid-column: 1 / -1; }
 .cs-passive div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cs-stats .cs-big { font-size: 1.5em !important; }
 .cs-stats .cs-box { padding: 4px 8px; }
+
+.cs-gear .cs-coins { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
+.cs-gear .cs-coins label { padding: 2px 6px; min-width: 0; }
+.cs-gear .cs-coins .cs-in { width: 100%; min-width: 0; }
