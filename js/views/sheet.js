@@ -5,6 +5,7 @@ import { W, save, uid, getEntry } from '../store.js';
 import { esc, openModal, closeModal, pickFile, toast } from '../util.js';
 import * as A from '../assets.js';
 import { rollAndLog } from '../tools/dice.js';
+import { CLASS_ART, artURL, guessArt } from '../gen/classArt.js';
 
 // ---------- rules data ----------
 export const ABIL = [['str', 'Strength'], ['dex', 'Dexterity'], ['con', 'Constitution'], ['int', 'Intelligence'], ['wis', 'Wisdom'], ['cha', 'Charisma']];
@@ -130,7 +131,7 @@ function itemIcon(i, big) {
 }
 const rarCol = i => RARITY[i.rarity]?.[1] || RARITY.common[1];
 
-function sheetHTML(e) {
+function sheetHTML(e, opts = {}) {
   const sh = ensureSheet(e), d = derive(sh), creature = e.type === 'creature';
   const th = THEMES[sh.theme] || THEMES.parchment;
   const style = `--cs-bg:${th.bg};--cs-panel:${th.panel};--cs-ink:${th.ink};--cs-muted:${th.muted};--cs-line:${th.line};--cs-accent:${sh.accent || th.accent};--cs-slot:${th.slot};--cs-slot-ink:${th.slotInk || th.ink};--cs-slot-line:${th.slotLine || th.line}`;
@@ -151,7 +152,7 @@ function sheetHTML(e) {
   return `<div class="cs" style="${style}">
     <div class="cs-top">
       <div class="cs-ident">
-        <div class="cs-name">${esc(e.name)}</div>
+        ${opts.hideName ? '' : `<div class="cs-name">${esc(e.name)}</div>`}
         <div class="cs-idrow">
           ${creature ? `<label>Size ${txt('size', 'Medium')}</label><label>Type ${txt('ctype', 'e.g. dragon')}</label><label>CR ${txt('cr', '1/2', 'w5')}</label><label>XP <b data-d="xp">${d.xp ?? '—'}</b></label>`
             : `<label>Class ${txt('cls', 'e.g. Fighter 3 / Rogue 1')}</label><label>Level ${num('level', '1', 'w4')}</label><label>Background ${txt('background', 'e.g. Sailor')}</label><label>Player ${txt('player', 'who plays them')}</label><label>XP ${txt('xp', '0', 'w7')}</label>`}
@@ -176,39 +177,40 @@ function sheetHTML(e) {
         <div class="cs-panel cs-passive"><div><b data-d="passive">${d.passive}</b> Passive Perception</div><div><b data-d="passiveIns">${d.passiveIns}</b> Passive Insight</div><div><b data-d="passiveInv">${d.passiveInv}</b> Passive Investigation</div></div>
       </aside>
 
-      <section class="cs-centre">
+      <section class="cs-gear">
+        <div class="cs-doll">
+          <div class="cs-col">${['head', 'cloak', 'body', 'hands', 'belt', 'feet'].map(slotHTML).join('')}</div>
+          <button class="cs-portrait" data-act="portrait" title="Change the picture">${portraitHTML(e, sh)}<span class="cs-portrait-edit">🖼️ Change picture</span></button>
+          <div class="cs-col">${['neck', 'ring1', 'ring2', 'main', 'off', 'ranged'].map(slotHTML).join('')}</div>
+        </div>
+        <div class="cs-baghead"><b>Inventory</b><span class="cs-muted small">${bag.length} item${bag.length === 1 ? '' : 's'} · <span data-d="weight">${d.weight}</span> / ${d.carry} lb</span><span style="flex:1"></span><button class="cs-btn small" data-act="new-item">＋ Item</button><button class="cs-btn small" data-act="add-row" title="A bigger bag">＋ Row</button></div>
+        <div class="cs-bag">${Array.from({ length: cells }, (_, c) => { const it = bag.find(i => i.cell === c); return `<div class="cs-cell ${it ? 'full' : ''}" data-cell="${c}" ${it ? `data-item="${it.id}" draggable="true" style="--rar:${rarCol(it)}"` : ''}>${it ? `${itemIcon(it)}${+it.qty > 1 ? `<b class="cs-qty">${it.qty}</b>` : ''}` : ''}</div>`; }).join('')}</div>
+        <div class="cs-coins">${['cp', 'sp', 'ep', 'gp', 'pp'].map(c => `<label class="coin-${c}"><span>${c.toUpperCase()}</span>${num('coins.' + c, '0')}</label>`).join('')}</div>
+        <p class="cs-muted small cs-hint">Drag items between the bag and the slots, or double-click to equip. Click an item to edit it, or an empty square to add one. Armour, shields and AC bonuses set your AC; weapons in hand become attacks.</p>
+      </section>
+
+      <section class="cs-stats">
         <div class="cs-vitals">
           ${box('Armour class', `<input class="cs-in cs-big" data-k="acOverride" data-t="num" value="${val(sh, 'acOverride')}" placeholder="${d.acAuto}" title="Worked out from your armour and shield (${d.acAuto}); type to set your own">`, 'cs-shield')}
           ${box('Initiative', `<input class="cs-in cs-big" data-k="initOverride" data-t="num" value="${val(sh, 'initOverride')}" placeholder="${sgn(d.m.dex)}" title="Your Dexterity modifier; type to set your own">`)}
           ${box('Speed', txt('speed', '30 ft', 'cs-big'))}
-          <div class="cs-box cs-hp"><div class="cs-box-in"><div class="cs-hp-row">${num('hp', String(sh.hpMax || '—'), 'cs-big')}<span>/</span>${num('hpMax', 'max', 'cs-big')}</div>
-            <div class="cs-hp-row small">Temp ${num('temp', '0', 'w4')}<button class="cs-btn small" data-act="hp-roll" title="Roll hit points from the dice below">🎲</button>${txt('hpRoll', 'e.g. 4d8+4', 'w9')}</div></div><label>Hit points</label></div>
+        </div>
+        <div class="cs-box cs-hp"><div class="cs-box-in"><div class="cs-hp-row">${num('hp', String(sh.hpMax || '—'), 'cs-big')}<span>/</span>${num('hpMax', 'max', 'cs-big')}</div>
+          <div class="cs-hp-row small">Temp ${num('temp', '0', 'w4')}<button class="cs-btn small" data-act="hp-roll" title="Roll hit points from these dice">🎲</button>${txt('hpRoll', 'e.g. 4d8+4', 'w9')}</div></div><label>Hit points</label></div>
+        <div class="cs-vitals two">
           ${box('Hit dice', `<div class="cs-hp-row">${txt('hitDice', 'e.g. 3d10', 'w7')}</div><div class="cs-hp-row small">used ${num('hitDiceUsed', '0', 'w4')}</div>`)}
           ${box('Death saves', `<div class="cs-ds"><span>✔</span>${pip('death.s', 3, sh.death.s)}</div><div class="cs-ds"><span>✖</span>${pip('death.f', 3, sh.death.f)}</div>`)}
         </div>
         <div class="cs-conds">
           <span class="cs-label">Conditions</span>${(sh.conds || []).map(c => `<button class="cs-cond" data-cond="${esc(c)}" title="Remove">${esc(c)} ✕</button>`).join('')}
           <select class="cs-cond-add" data-act="cond"><option value="">＋ condition</option>${CONDITIONS.filter(c => !(sh.conds || []).includes(c)).map(c => `<option>${c}</option>`).join('')}</select>
-          <span class="cs-label" style="margin-left:auto">Exhaustion</span>${pip('exhaustion', 6, sh.exhaustion)}
         </div>
-
-        <div class="cs-gear">
-          <div class="cs-doll">
-            <div class="cs-figure">${e.image ? `<img ${A.src(e.image)} alt="">` : `<svg viewBox="0 0 100 200"><path d="M50 8a17 17 0 1 1 0 34a17 17 0 1 1 0-34M30 48h40l12 50l-10 4l-6-30v50l6 70h-14l-8-60l-8 60h-14l6-70v-50l-6 30l-10-4z"/></svg>`}</div>
-            ${Object.keys(SLOTS).map(slotHTML).join('')}
-          </div>
-          <div class="cs-bagwrap">
-            <div class="cs-baghead"><b>Inventory</b><span class="cs-muted small">${bag.length} item${bag.length === 1 ? '' : 's'} · <span data-d="weight">${d.weight}</span> / ${d.carry} lb</span><span style="flex:1"></span><button class="cs-btn small" data-act="new-item">＋ Item</button><button class="cs-btn small" data-act="add-row" title="A bigger bag">＋ Row</button></div>
-            <div class="cs-bag" style="grid-template-columns:repeat(10,1fr)">${Array.from({ length: cells }, (_, c) => { const it = bag.find(i => i.cell === c); return `<div class="cs-cell ${it ? 'full' : ''}" data-cell="${c}" ${it ? `data-item="${it.id}" draggable="true" style="--rar:${rarCol(it)}"` : ''}>${it ? `${itemIcon(it)}${+it.qty > 1 ? `<b class="cs-qty">${it.qty}</b>` : ''}` : ''}</div>`; }).join('')}</div>
-            <div class="cs-coins">${['cp', 'sp', 'ep', 'gp', 'pp'].map(c => `<label class="coin-${c}"><span>${c.toUpperCase()}</span>${num('coins.' + c, '0')}</label>`).join('')}</div>
-            <p class="cs-muted small cs-hint">Drag items between the bag and the slots (double-click equips or takes off). Click an item to edit it, or an empty square to add one. Armour, shields and anything with an AC bonus change your AC; weapons in hand become attacks.</p>
-          </div>
-        </div>
+        <div class="cs-conds"><span class="cs-label">Exhaustion</span>${pip('exhaustion', 6, sh.exhaustion)}</div>
+        <div class="cs-panel"><h5>Skills</h5>${SKILLS.map(skillRow).join('')}</div>
       </section>
     </div>
 
     <div class="cs-below">
-      <div class="cs-panel"><h5>Skills</h5>${SKILLS.map(skillRow).join('')}</div>
       <div class="cs-panel cs-wide">
         <h5>Attacks</h5>
         <table class="cs-table"><tr><th>Name</th><th>To hit</th><th>Damage</th><th>Type</th><th></th></tr>
@@ -234,6 +236,33 @@ function sheetHTML(e) {
       <div class="cs-panel"><h5>Notes</h5>${area('notes', 'Anything else', 8)}</div>
     </div>
   </div>`;
+}
+
+// ---------- the portrait in the middle of the gear screen ----------
+function portraitHTML(e, sh) {
+  const p = sh.portrait || {};
+  if (p.img) return `<img ${A.src(p.img)} alt="">`;
+  const art = p.art || (!p.none && !e.image ? guessArt(sh.cls || sh.ctype || (e.type === 'creature' ? e.name : '')) : '');
+  if (art && artURL(art)) return `<img src="${artURL(art)}" alt="">`;
+  if (e.image && !p.none) return `<img ${A.src(e.image)} alt="">`;
+  return `<svg class="cs-sil" viewBox="0 0 100 200"><path d="M50 8a17 17 0 1 1 0 34a17 17 0 1 1 0-34M30 48h40l12 50l-10 4l-6-30v50l6 70h-14l-8-60l-8 60h-14l6-70v-50l-6 30l-10-4z"/></svg>`;
+}
+function portraitDialog(e, onDone) {
+  const sh = e.sheet, cur = sh.portrait || {};
+  const card = (k, v) => `<button class="cs-artcard ${cur.art === k ? 'on' : ''}" data-art="${k}" title="${v.label}"><img src="${artURL(k)}" alt="${v.label}"></button>`;
+  openModal(`<h2>Character picture</h2>
+    <div class="row" style="gap:8px;flex-wrap:wrap"><button class="primary" data-a="upload">⬆ Upload your own</button>${e.image ? '<button data-a="entry">Use the World Bible picture</button>' : ''}<button data-a="none">No picture</button></div>
+    <label style="margin-top:12px">Classes</label><div class="cs-artgrid">${Object.entries(CLASS_ART).filter(([, v]) => !v.creature).map(([k, v]) => card(k, v)).join('')}</div>
+    <label>Creatures</label><div class="cs-artgrid">${Object.entries(CLASS_ART).filter(([, v]) => v.creature).map(([k, v]) => card(k, v)).join('')}</div>
+    <div class="modal-actions"><button data-a="close">Close</button></div>`, m => m.addEventListener('click', async ev => {
+    const b = ev.target.closest('[data-art], [data-a]'); if (!b) return;
+    if (b.dataset.art) sh.portrait = { art: b.dataset.art };
+    else if (b.dataset.a === 'upload') { const f = await pickFile('image/*'); if (!f) return; sh.portrait = { img: (await A.storeImage(f, { maxDim: 900 })).ref }; }
+    else if (b.dataset.a === 'entry') sh.portrait = {};
+    else if (b.dataset.a === 'none') sh.portrait = { none: true };
+    else if (b.dataset.a !== 'close') return;
+    closeModal(); onDone();
+  }));
 }
 
 // ---------- the item editor ----------
@@ -297,7 +326,7 @@ function tipHTML(i) {
 }
 
 // ---------- putting the sheet on a page ----------
-export function mountSheet(host, e) {
+export function mountSheet(host, e, opts = {}) {
   ensureSheet(e);
   const sh = () => e.sheet;
   const touch = () => { e.updated = Date.now(); save(); };
@@ -305,7 +334,7 @@ export function mountSheet(host, e) {
   // redraw, keeping the cursor in whichever box you were typing in
   const draw = () => {
     const a = document.activeElement, k = host.contains(a) ? (a.dataset.k || a.dataset.field) : null, pos = k && a.selectionStart != null ? a.selectionStart : null;
-    host.innerHTML = sheetHTML(e);
+    host.innerHTML = `<div class="cs-wrap">${sheetHTML(e, opts)}</div>`;
     if (k) { const n = host.querySelector(`[data-k="${k}"], [data-field="${k}"]`); if (n) { n.focus(); if (pos != null) try { n.setSelectionRange(pos, pos); } catch { /* */ } } }
   };
   // update the worked-out numbers without redrawing (so typing isn't interrupted)
@@ -343,6 +372,7 @@ export function mountSheet(host, e) {
     if (t.dataset.roll) { try { const r = rollAndLog(t.dataset.roll); toast(`${t.dataset.label}: ${r.total}`); } catch (err) { toast(err.message); } return; }
     if (t.dataset.atk != null) { const a = S.attacks[+t.dataset.atk]; const ex = t.dataset.part === 'hit' ? `d20${/^[+-]/.test(String(a.hit).trim()) ? '' : '+'}${String(a.hit || 0).trim()}` : a.dmg; try { const r = rollAndLog(ex); toast(`${a.name || 'Attack'} ${t.dataset.part === 'hit' ? 'to hit' : 'damage'}: ${r.total}`); } catch (err) { toast(err.message); } return; }
     const act = t.dataset.act;
+    if (act === 'portrait') { hideTip(); portraitDialog(e, () => { touch(); draw(); }); return; }
     if (act === 'accent-reset') { S.accent = ''; touch(); draw(); return; }
     if (act === 'add-attack') { S.attacks.push({ name: '', hit: '', dmg: '', type: '' }); touch(); draw(); return; }
     if (act === 'add-spell') { S.spell.list.push({ lvl: 0, name: '', prep: false }); touch(); draw(); host.querySelector(`[data-k="spell.list.${S.spell.list.length - 1}.name"]`)?.focus(); return; }

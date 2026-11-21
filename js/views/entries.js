@@ -115,29 +115,16 @@ export function renderView(main, id) {
   const e = getEntry(id);
   if (!e) { main.innerHTML = `<div class="empty"><div class="big">❓</div>Entry not found. <a href="#/entries">Back to World Bible</a></div>`; return; }
   const hasSheet = e.type === 'character' || e.type === 'creature';
-  let tab = hasSheet ? (localStorage.getItem('loreforge:entrytab') || 'sheet') : 'story';
   main.innerHTML = `
     <div class="page-head"><div class="breadcrumbs" style="flex:1"><a href="#/entries">World Bible</a> › <a href="#/entries/${e.type}">${TYPES[e.type]?.plural}</a></div>
       <button id="fav" title="${e.fav ? 'Unpin from sidebar' : 'Pin to sidebar'}" class="${e.fav ? 'active' : ''}">${e.fav ? '⭐ Pinned' : '☆ Pin'}</button>
       ${e.type === 'location' ? `<a class="btn" href="#/forge?loc=${e.id}&kind=bounty" title="Generate a bounty, quest or rumours set here">🔮 Forge a story here</a>` : ''}
+      ${hasSheet ? `<a class="btn" href="#/combat?add=${e.id}">⚔️ Add to combat</a>` : ''}
       <a class="btn" href="#/graph?focus=${e.id}">🕸️ Web</a>
       <a class="btn primary" href="#/entry/${e.id}/edit" style="background:var(--accent);color:var(--on-accent)">✎ Edit</a>
       <button class="danger" id="del">Delete</button></div>
-    ${hasSheet ? `<div class="entry-tabs"><button data-etab="sheet" class="${tab === 'sheet' ? 'on' : ''}">🛡️ Character sheet</button><button data-etab="story" class="${tab === 'story' ? 'on' : ''}">📖 Story & links</button>
-      ${e.type === 'character' || e.type === 'creature' ? `<a class="btn small" href="#/combat?add=${e.id}" style="margin-left:auto">⚔️ Add to combat</a>` : ''}</div>` : ''}
-    <div id="etab-sheet" ${tab === 'sheet' ? '' : 'hidden'}></div>
-    <div id="etab-story" ${tab === 'story' ? '' : 'hidden'}>${readHTML(e)}</div>`;
-  let stopSheet = null;
-  if (hasSheet) {
-    const showTab = t => {
-      tab = t; try { localStorage.setItem('loreforge:entrytab', t); } catch { /* */ }
-      main.querySelectorAll('[data-etab]').forEach(b => b.classList.toggle('on', b.dataset.etab === t));
-      main.querySelector('#etab-sheet').hidden = t !== 'sheet'; main.querySelector('#etab-story').hidden = t !== 'story';
-      if (t === 'sheet' && !stopSheet) stopSheet = mountSheet(main.querySelector('#etab-sheet'), e);
-    };
-    main.querySelectorAll('[data-etab]').forEach(b => b.onclick = () => showTab(b.dataset.etab));
-    if (tab === 'sheet') showTab('sheet');
-  }
+    ${hasSheet ? `<div class="entry-split"><div class="es-story">${readHTML(e)}</div><div class="es-sheet" id="es-sheet"></div></div>` : readHTML(e)}`;
+  const stopSheet = hasSheet ? mountSheet(main.querySelector('#es-sheet'), e, { hideName: true }) : null;
   main.querySelector('#del').onclick = async () => {
     if (await confirmDialog(`Delete “${e.name}”? Links to it elsewhere will show as broken.`)) { deleteEntry(e.id); go(`#/entries/${e.type}`); }
   };
