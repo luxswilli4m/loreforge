@@ -67,7 +67,7 @@ function build() {
         <div class="row" style="gap:6px;align-items:center;margin-top:8px"><span class="small">Modifier</span><button class="small" data-mod="-1">−</button><input id="dt-mod" type="number" value="0" style="width:64px;text-align:center"><button class="small" data-mod="1">＋</button></div>
         <div class="dt-expr" id="dt-expr"></div>
         <button class="primary dt-roll" id="dt-roll">🎲 Roll</button>
-        <div class="row" style="gap:6px"><button class="small" id="dt-clear">Clear dice</button><button class="small" data-quick="adv">Advantage</button><button class="small" data-quick="dis">Disadvantage</button></div>
+        <div class="dt-quick"><button class="small" id="dt-clear">Clear dice</button><button class="small" data-quick="adv">Advantage</button><button class="small" data-quick="dis">Disadvantage</button></div>
         <div class="dt-result" id="dt-result"><p class="small muted">Pick some dice and roll — or roll from the dice tray and watch it here.</p></div>
       </div>
       <div class="dt-stage" id="dt-stage"><canvas id="dt-cv"></canvas><div class="dt-hint">Click the tray to roll again</div></div>
@@ -136,7 +136,7 @@ function build() {
       if (!prefs.bg) { const f = await pickFile('image/*'); if (!f) { e.target.value = prefs.theme; return; } prefs.bg = (await A.storeImage(f, { maxDim: 1600 })).ref; }
       else if (prefs.theme === 'custom' || confirm('Choose a new picture? (Cancel keeps the one you used before.)')) { const f = await pickFile('image/*'); if (f) prefs.bg = (await A.storeImage(f, { maxDim: 1600 })).ref; }
     }
-    prefs.theme = e.target.value; savePrefs(); syncColour(); await loadBg(); paintBg();
+    prefs.theme = e.target.value; savePrefs(); syncColour(); await loadBg(); paintBg(); draw();
   };
   $('#dt-dcol').oninput = e => { prefs.dieColor = e.target.value; savePrefs(); draw(); };
   $('#dt-dreset').onclick = () => { prefs.dieColor = ''; prefs.numColor = ''; savePrefs(); syncColour(); draw(); };
@@ -153,7 +153,7 @@ function build() {
     $('#dt-expr').textContent = ex ? ex.replace(/\+/g, ' + ').replace(/\+ -/g, '− ') : 'No dice yet';
     $('#dt-roll').disabled = !ex;
   }
-  const addDie = (n, d) => { prefs.pool[n] = Math.max(0, Math.min(30, (prefs.pool[n] || 0) + d)); savePrefs(); drawPool(); };
+  const addDie = (n, d) => { prefs.pool[n] = Math.max(0, Math.min(30, (prefs.pool[n] || 0) + d)); lastQuick = ''; savePrefs(); drawPool(); };
   win.querySelectorAll('[data-add]').forEach(b => {
     b.onclick = () => addDie(+b.dataset.add, 1);
     b.oncontextmenu = e => { e.preventDefault(); addDie(+b.dataset.add, -1); };
@@ -162,9 +162,10 @@ function build() {
   $('#dt-mod').oninput = e => { prefs.mod = +e.target.value || 0; savePrefs(); drawPool(); };
   $('#dt-clear').onclick = () => { prefs.pool = {}; prefs.mod = 0; $('#dt-mod').value = 0; savePrefs(); drawPool(); };
   const doRoll = expr => { try { pending = 'self'; const r = rollAndLog(expr); pending = null; throwDice(r); } catch (err) { pending = null; toast(err.message); } };
-  $('#dt-roll').onclick = () => { const ex = poolExpr(); if (ex) doRoll(ex); };
-  win.querySelectorAll('[data-quick]').forEach(b => b.onclick = () => doRoll(b.dataset.quick));
-  stage.addEventListener('click', () => { if (dice.some(d => !d.settled)) return; const ex = lastRes?.input || poolExpr(); if (ex) doRoll(ex); });
+  $('#dt-roll').onclick = () => { const ex = poolExpr(); lastQuick = ''; if (ex) doRoll(ex); };
+  win.querySelectorAll('[data-quick]').forEach(b => b.onclick = () => { lastQuick = b.dataset.quick; doRoll(b.dataset.quick); });
+  let lastQuick = '';
+  stage.addEventListener('click', () => { if (dice.some(d => !d.settled)) return; const ex = lastQuick || poolExpr() || lastRes?.input; if (ex) doRoll(ex); });
   // rolls made anywhere else (the tray, the GM screen) tumble here too while the table is open
   const onRoll = e => { if (pending !== 'self' && e.detail) throwDice(e.detail); };
   window.addEventListener('lf-roll', onRoll);

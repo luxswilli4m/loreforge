@@ -593,7 +593,7 @@ label.check { display: flex; align-items: center; gap: 7px; color: var(--text); 
 .dt-colour { display: inline-flex; align-items: center; gap: 4px; margin: 0; font-size: .85em; cursor: pointer; }
 .dt-colour input { width: 30px; height: 26px; padding: 1px; }
 .dt-body { flex: 1; display: grid; grid-template-columns: 250px 1fr; min-height: 0; }
-.dt-pool { padding: 12px; border-right: 1px solid var(--line); overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.dt-pool { padding: 12px; border-right: 1px solid var(--line); overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 8px; }
 .dt-dice { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
 .dt-die { position: relative; flex-direction: column; gap: 0; padding: 4px 2px; min-height: 0; font-size: .78em; font-weight: 700; color: var(--text); }
 .dt-die svg { color: var(--accent); }
@@ -610,3 +610,5 @@ label.check { display: flex; align-items: center; gap: 7px; color: var(--text); 
 .dt-stage canvas { display: block; }
 .dt-hint { position: absolute; right: 30px; bottom: 28px; font-size: .75em; color: rgba(255,255,255,.55); pointer-events: none; text-shadow: 0 1px 3px #000; }
 @media (max-width: 760px) { .dt-body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } .dt-pool { border-right: 0; border-bottom: 1px solid var(--line); max-height: 45%; } }
+.dt-quick { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.dt-quick button { padding: 5px 2px; font-size: .74em; white-space: normal; line-height: 1.15; justify-content: center; min-width: 0; }
