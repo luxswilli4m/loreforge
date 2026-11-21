@@ -24,6 +24,7 @@ const unitOf = conv => CONV[conv][isMetric() ? 1 : 2];
 export const mod = s => Math.floor(((+s || 10) - 10) / 2);
 export const sgn = n => (n >= 0 ? '+' : '−') + Math.abs(n);
 
+const TRINKETS = ['trinket', 'gem', 'key', 'potion', 'scroll', 'book', 'tool', 'treasure', 'food', 'light', 'misc'];
 export const SLOTS = {
   head: { label: 'Head', icon: '⛑️', kinds: ['helm'] },
   neck: { label: 'Neck', icon: '📿', kinds: ['amulet'] },
@@ -37,8 +38,12 @@ export const SLOTS = {
   ring1: { label: 'Ring', icon: '💍', kinds: ['ring'] },
   feet: { label: 'Feet', icon: '🥾', kinds: ['boots'] },
   ring2: { label: 'Ring', icon: '💍', kinds: ['ring'] },
+  // quick slots under the portrait: charms, potions, keys, anything small you keep to hand
+  trinket1: { label: 'Trinket', icon: '🧿', kinds: TRINKETS },
+  trinket2: { label: 'Trinket', icon: '🧿', kinds: TRINKETS },
+  trinket3: { label: 'Trinket', icon: '🧿', kinds: TRINKETS },
 };
-export const KINDS = { weapon: ['Weapon', '🗡️'], shield: ['Shield', '🛡️'], armor: ['Armour', '🥋'], helm: ['Helm', '⛑️'], amulet: ['Amulet', '📿'], cloak: ['Cloak', '🧣'], gloves: ['Gloves / bracers', '🧤'], belt: ['Belt', '🎗️'], boots: ['Boots', '🥾'], ring: ['Ring', '💍'], ammo: ['Ammunition', '🏹'], light: ['Torch / lantern', '🕯️'],
+export const KINDS = { weapon: ['Weapon', '🗡️'], shield: ['Shield', '🛡️'], armor: ['Armour', '🥋'], helm: ['Helm', '⛑️'], amulet: ['Amulet', '📿'], cloak: ['Cloak', '🧣'], gloves: ['Gloves / bracers', '🧤'], belt: ['Belt', '🎗️'], boots: ['Boots', '🥾'], ring: ['Ring', '💍'], ammo: ['Ammunition', '🏹'], light: ['Torch / lantern', '🕯️'], trinket: ['Trinket / charm', '🧿'],
   potion: ['Potion', '🧪'], scroll: ['Scroll', '📜'], book: ['Book', '📕'], gem: ['Gem', '💎'], treasure: ['Treasure', '🪙'], tool: ['Tool / kit', '🔧'], food: ['Food & drink', '🍖'], key: ['Key', '🗝️'], misc: ['Other', '📦'] };
 export const RARITY = { common: ['Common', '#d8d2c4'], uncommon: ['Uncommon', '#4fc06a'], rare: ['Rare', '#4f8ff7'], 'very rare': ['Very rare', '#b265f0'], legendary: ['Legendary', '#f08a24'], artifact: ['Artifact', '#e8c35a'] };
 export const THEMES = {
@@ -106,10 +111,17 @@ export function derive(sh) {
   const sa = sh.spell.ability;
   const weight = sh.items.reduce((t, i) => t + (+i.weight || 0) * (+i.qty || 1), 0);
   // attacks from the weapons in hand
-  const attacks = ['main', 'off', 'ranged'].map(eq).filter(i => i && i.kind === 'weapon').map(i => {
+  // attacks from the weapons in hand: off-hand attacks don't add a positive modifier to damage (two-weapon fighting),
+  // and a versatile weapon held alone in the main hand uses its bigger two-handed die
+  const offItem = eq('off');
+  const attacks = ['main', 'off', 'ranged'].map(sl => [sl, eq(sl)]).filter(([, i]) => i && i.kind === 'weapon').map(([sl, i]) => {
     const ab = i.ranged ? 'dex' : i.finesse ? (m.dex > m.str ? 'dex' : 'str') : 'str';
-    const hit = m[ab] + prof + (+i.bonus || 0), dmgMod = m[ab] + (+i.bonus || 0);
-    return { name: i.name, hit, dmg: i.dmg ? `${i.dmg}${dmgMod ? (dmgMod > 0 ? '+' : '') + dmgMod : ''}` : '', type: i.dmgType || '', auto: true };
+    const hit = m[ab] + prof + (+i.bonus || 0);
+    const dmgMod = (sl === 'off' ? Math.min(0, m[ab]) : m[ab]) + (+i.bonus || 0);
+    let dice = i.dmg || '', note = sl === 'off' ? 'off hand' : sl === 'ranged' ? 'ranged' : '';
+    if (sl === 'main' && i.versatile && !offItem && !i.two) { dice = dice.replace(/d\d+/i, 'd' + i.versatile); note = 'two hands'; }
+    if (i.range && (i.ranged || i.thrown || i.ammo)) note = [note, `${rangeShown(i.range)} ${unitOf('ft')}`].filter(Boolean).join(', ');
+    return { name: i.name, note, hit, dmg: dice ? `${dice}${dmgMod ? (dmgMod > 0 ? '+' : '') + dmgMod : ''}` : '', type: i.dmgType || '', auto: true };
   });
   return { m, prof, saves, skills, ac, acAuto, acMod, acMods, acParts, init, passive: 10 + skills.perception, passiveInv: 10 + skills.investigation, passiveIns: 10 + skills.insight,
     dc: sa ? 8 + prof + m[sa] : null, satk: sa ? prof + m[sa] : null, weight, carry: (+sh.abil.str || 10) * 15, attacks, xp: CR_XP[String(sh.cr).trim()] ?? null };
@@ -158,8 +170,10 @@ function sheetHTML(e, opts = {}) {
   const box = (label, inner, cls = '') => `<div class="cs-box ${cls}"><div class="cs-box-in">${inner}</div><label>${label}</label></div>`;
   const bag = sh.items.filter(i => !i.slot);
   const cells = sh.bagRows * 10;
+  const twoH = sh.items.find(i => i.slot === 'main' && i.kind === 'weapon' && i.two);
   const slotHTML = s => {
     const it = sh.items.find(i => i.slot === s), S = SLOTS[s];
+    if (s === 'off' && twoH && !it) return `<div class="cs-slot slot-off blocked" data-slot="off" title="${esc(twoH.name)} needs both hands">${itemIcon(twoH, true)}<span class="cs-slot-label">Two-handed</span></div>`;
     return `<div class="cs-slot slot-${s} ${it ? 'full' : ''}" data-slot="${s}" ${it ? `data-item="${it.id}" draggable="true" style="--rar:${rarCol(it)}"` : ''} title="${it ? '' : S.label}">
       ${it ? itemIcon(it, true) : `<span class="cs-ghost">${S.icon}</span>`}<span class="cs-slot-label">${it ? esc(it.name) : S.label}</span></div>`;
   };
@@ -197,7 +211,8 @@ function sheetHTML(e, opts = {}) {
       <section class="cs-gear">
         <div class="cs-doll">
           <div class="cs-col">${['head', 'cloak', 'body', 'hands', 'belt', 'feet'].map(slotHTML).join('')}</div>
-          <button class="cs-portrait" data-act="portrait" title="Change the picture">${portraitHTML(e, sh)}<span class="cs-portrait-edit">🖼️ Change picture</span></button>
+          <div class="cs-mid"><button class="cs-portrait" data-act="portrait" title="Change the picture">${portraitHTML(e, sh)}<span class="cs-portrait-edit">🖼️ Change picture</span></button>
+            <div class="cs-trinkets">${['trinket1', 'trinket2', 'trinket3'].map(slotHTML).join('')}</div></div>
           <div class="cs-col">${['neck', 'ring1', 'ring2', 'main', 'off', 'ranged'].map(slotHTML).join('')}</div>
         </div>
         <div class="cs-baghead"><b>Inventory</b><span class="cs-muted small">${bag.length} item${bag.length === 1 ? '' : 's'} · <span data-d="weight">${weightText(d.weight)}</span> / ${weightText(d.carry)}</span><span style="flex:1"></span><button class="cs-btn small" data-act="new-item">＋ Item</button><button class="cs-btn small" data-act="add-row" title="A bigger bag">＋ Row</button></div>
@@ -228,7 +243,7 @@ function sheetHTML(e, opts = {}) {
         <div class="cs-panel cs-atkpanel">
         <h5>Attacks</h5>
         <table class="cs-table"><tr><th>Name</th><th>To hit</th><th>Damage</th><th>Type</th><th></th></tr>
-          ${d.attacks.map(a => `<tr class="auto"><td>${esc(a.name)} <span class="cs-muted small">(equipped)</span></td><td><button class="cs-roll" data-roll="d20${a.hit >= 0 ? '+' : ''}${a.hit}" data-label="${esc(a.name)} to hit">${sgn(a.hit)}</button></td><td>${a.dmg ? `<button class="cs-roll" data-roll="${esc(a.dmg)}" data-label="${esc(a.name)} damage">${esc(a.dmg)}</button>` : '—'}</td><td>${esc(a.type)}</td><td></td></tr>`).join('')}
+          ${d.attacks.map(a => `<tr class="auto"><td>${esc(a.name)} <span class="cs-muted small">(${esc(a.note || 'equipped')})</span></td><td><button class="cs-roll" data-roll="d20${a.hit >= 0 ? '+' : ''}${a.hit}" data-label="${esc(a.name)} to hit">${sgn(a.hit)}</button></td><td>${a.dmg ? `<button class="cs-roll" data-roll="${esc(a.dmg)}" data-label="${esc(a.name)} damage">${esc(a.dmg)}</button>` : '—'}</td><td>${esc(a.type)}</td><td></td></tr>`).join('')}
           ${sh.attacks.map((a, i) => `<tr><td><input class="cs-in" data-k="attacks.${i}.name" value="${esc(a.name || '')}" placeholder="Bite"></td><td class="cs-rollcell"><input class="cs-in w4" data-k="attacks.${i}.hit" value="${esc(a.hit ?? '')}" placeholder="+5"><button class="cs-roll" data-atk="${i}" data-part="hit" title="Roll to hit">🎲</button></td>
             <td class="cs-rollcell"><input class="cs-in" data-k="attacks.${i}.dmg" value="${esc(a.dmg || '')}" placeholder="2d6+3"><button class="cs-roll" data-atk="${i}" data-part="dmg" title="Roll damage">🎲</button></td><td><input class="cs-in" data-k="attacks.${i}.type" value="${esc(a.type || '')}" placeholder="piercing"></td><td><button class="cs-x" data-del="attacks" data-i="${i}">✕</button></td></tr>`).join('')}
         </table>
@@ -284,6 +299,18 @@ function portraitDialog(e, onDone) {
 }
 
 // ---------- the item editor ----------
+// weapon properties (5e), and 2024 weapon masteries
+export const WPROPS = [['ammo', 'Ammunition', 'Needs ammunition; range listed'], ['finesse', 'Finesse', 'Use Strength or Dexterity'], ['heavy', 'Heavy', 'Small creatures have disadvantage'], ['light', 'Light', 'Good for fighting with two weapons'],
+  ['loading', 'Loading', 'One shot per action'], ['ranged', 'Ranged', 'A ranged weapon (uses Dexterity)'], ['reach', 'Reach', 'Adds 5 ft to your reach'], ['thrown', 'Thrown', 'Can be thrown, using the same ability'], ['two', 'Two-handed', 'Needs both hands'], ['special', 'Special', 'Has its own rules']];
+export const MASTERY = { Cleave: 'Hit a second creature next to the first', Graze: 'Deal ability-modifier damage on a miss', Nick: 'The extra light-weapon attack is part of the Attack action', Push: 'Push the target 10 ft', Sap: 'Target has disadvantage on its next attack', Slow: 'Target’s speed drops by 10 ft', Topple: 'Target makes a Con save or falls prone', Vex: 'Advantage on your next attack against the target' };
+const rangeShown = r => String(r || '').replace(/\d+(\.\d+)?/g, n => shown(+n, 'ft'));
+const rangeStored = r => String(r || '').replace(/\d+(\.\d+)?/g, n => num1(stored(+n, 'ft')));
+export function propList(i) {
+  const p = WPROPS.filter(([k]) => i[k]).map(([, l]) => l.toLowerCase());
+  if (i.versatile) p.push(`versatile (d${i.versatile})`);
+  if (i.range && (i.ranged || i.thrown || i.ammo)) p.push(`range ${rangeShown(i.range)} ${unitOf('ft')}`);
+  return p.join(', ');
+}
 export const DMG_TYPES = ['acid', 'bludgeoning', 'cold', 'fire', 'force', 'lightning', 'necrotic', 'piercing', 'poison', 'psychic', 'radiant', 'slashing', 'thunder'];
 const COINS = { cp: ['Copper', 0.01], sp: ['Silver', 0.1], ep: ['Electrum', 0.5], gp: ['Gold', 1], pp: ['Platinum', 10] };
 // old items kept their value as text like "15 gp"
@@ -357,7 +384,14 @@ function itemDialog(e, item, onDone) {
       <label style="margin-top:0">Damage <span class="small muted">— click a die to add it, right-click to take one away</span></label>
       <div class="i-dice">${DMG_DICE.map(n => `<button type="button" class="i-die" data-die="${n}">d${n}<b data-dc="${n}"></b></button>`).join('')}<span class="i-expr" id="i-expr"></span><button type="button" class="small" id="i-dclear">Clear</button></div>
       <div class="row"><div><label>Damage type</label>${comboHTML('i-dt', dmgOpts, item.dmgType || '', { custom: true, placeholder: 'Search or type…' })}</div><div><label>Magic bonus</label><input id="i-bonus" type="number" value="${item.bonus ?? ''}" placeholder="0"></div></div>
-      <div class="row"><label class="check"><input type="checkbox" id="i-fin" ${item.finesse ? 'checked' : ''}> Finesse</label><label class="check"><input type="checkbox" id="i-rng" ${item.ranged ? 'checked' : ''}> Ranged</label><label class="check"><input type="checkbox" id="i-two" ${item.two ? 'checked' : ''}> Two-handed</label></div></fieldset>
+      <label>Properties</label>
+      <div class="i-props">${WPROPS.map(([k, l, tip]) => `<label class="check" title="${tip}"><input type="checkbox" data-prop="${k}" ${item[k] ? 'checked' : ''}> ${l}</label>`).join('')}
+        <label class="check" title="Can be used in one or two hands; two hands use a bigger die"><input type="checkbox" id="i-vers" ${item.versatile ? 'checked' : ''}> Versatile</label></div>
+      <div class="row">
+        <div id="i-versbox"><label>Two-handed die</label><select id="i-versdie">${[6, 8, 10, 12].map(n => `<option value="${n}" ${+item.versatile === n ? 'selected' : ''}>d${n}</option>`).join('')}</select></div>
+        <div id="i-rangebox"><label>Range (${unitOf('ft')}, normal/long)</label><input id="i-range" value="${esc(rangeShown(item.range))}" placeholder="${isMetric() ? '24/96' : '80/320'}"></div>
+        <div><label>Mastery <span class="small muted">(2024 rules)</span></label><select id="i-mastery"><option value="">—</option>${Object.entries(MASTERY).map(([k, d]) => `<option ${item.mastery === k ? 'selected' : ''} title="${d}">${k}</option>`).join('')}</select></div>
+      </div></fieldset>
     <fieldset class="i-grp" data-for="armor shield"><legend>Armour</legend><div class="row"><div><label id="i-aclab">${item.kind === 'shield' ? 'AC bonus' : 'Base AC'}</label><input id="i-ac" type="number" value="${item.ac ?? ''}" placeholder="${item.kind === 'shield' ? '2' : '11'}"></div>
       <div class="i-armortype"><label>Type</label><select id="i-at">${['light', 'medium', 'heavy'].map(t => `<option ${item.armorType === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div></div></fieldset>
     <div class="row"><div><label>AC bonus while worn</label><input id="i-acb" type="number" value="${item.acBonus ?? ''}" placeholder="e.g. 1, or −1 for a penalty"></div><label class="check" style="align-self:flex-end"><input type="checkbox" id="i-att" ${item.attune ? 'checked' : ''}> Needs attunement</label></div>
@@ -377,6 +411,8 @@ function itemDialog(e, item, onDone) {
     m.querySelectorAll('[data-die]').forEach(b => { b.onclick = () => { const n = +b.dataset.die; pool[n] = Math.min(20, (pool[n] || 0) + 1); drawDice(); }; b.oncontextmenu = ev => { ev.preventDefault(); const n = +b.dataset.die; pool[n] = Math.max(0, (pool[n] || 0) - 1); drawDice(); }; });
     $('#i-dclear').onclick = () => { pool = {}; drawDice(); };
     drawDice();
+    const propsVis = () => { $('#i-versbox').hidden = !$('#i-vers').checked; const r = ['ranged', 'thrown', 'ammo'].some(k => m.querySelector(`[data-prop="${k}"]`).checked); $('#i-rangebox').hidden = !r; };
+    m.querySelectorAll('[data-prop], #i-vers').forEach(c => c.addEventListener('change', propsVis)); propsVis();
     // icon
     $('#i-iconbtn').onclick = () => { $('#i-icongrid').hidden = !$('#i-icongrid').hidden; };
     $('#i-icongrid').addEventListener('click', ev => { const b = ev.target.closest('[data-ic]'); if (!b) return; icon = b.dataset.ic; drawIcon(); $('#i-icongrid').hidden = true; });
@@ -392,7 +428,8 @@ function itemDialog(e, item, onDone) {
         const n = v => v === '' ? '' : +v;
         kind = getKind() || kind;
         Object.assign(item, { name: $('#i-name').value.trim() || KINDS[kind][0], kind, rarity: $('#i-rar').value, qty: Math.max(1, +$('#i-qty').value || 1), weight: stored($('#i-w').value, 'lb'),
-          value: n($('#i-val').value), cur: $('#i-cur').value, icon, img, entryId, dmg: diceExpr(pool), dmgType: getDt() || '', bonus: n($('#i-bonus').value), finesse: $('#i-fin').checked, ranged: $('#i-rng').checked, two: $('#i-two').checked,
+          value: n($('#i-val').value), cur: $('#i-cur').value, icon, img, entryId, dmg: diceExpr(pool), dmgType: getDt() || '', bonus: n($('#i-bonus').value), ...Object.fromEntries(WPROPS.map(([k]) => [k, m.querySelector(`[data-prop="${k}"]`).checked])),
+          versatile: $('#i-vers').checked ? +$('#i-versdie').value : '', range: rangeStored($('#i-range').value.trim()), mastery: $('#i-mastery').value,
           ac: n($('#i-ac').value), armorType: $('#i-at').value, acBonus: n($('#i-acb').value), attune: $('#i-att').checked, notes: $('#i-notes').value });
         // something worn in a slot it no longer fits goes back in the bag
         if (item.slot && !SLOTS[item.slot].kinds.includes(item.kind)) { item.slot = ''; item.cell = freeCell(sh); }
@@ -419,8 +456,8 @@ function compareDialog(e, a, onEquip) {
       txt('Damage', `${x.dmg || '—'}${+x.bonus ? ' ' + sgn(+x.bonus) : ''}`, `${y.dmg || '—'}${+y.bonus ? ' ' + sgn(+y.bonus) : ''}`);
       cmp('To hit (magic)', +x.bonus || 0, +y.bonus || 0, v => sgn(+v));
       txt('Damage type', x.dmgType, y.dmgType);
-      const props = i => [i.finesse && 'finesse', i.ranged && 'ranged', i.two && 'two-handed'].filter(Boolean).join(', ');
-      txt('Properties', props(x), props(y));
+      txt('Properties', propList(x), propList(y));
+      if (x.mastery || y.mastery) txt('Mastery', x.mastery, y.mastery);
     }
     if (a.kind === 'armor') { cmp('Base AC', +x.ac || 0, +y.ac || 0); txt('Type', x.armorType || 'light', y.armorType || 'light'); }
     if (a.kind === 'shield') cmp('AC bonus', +x.ac || 2, +y.ac || 2, v => sgn(+v));
@@ -458,7 +495,7 @@ function tipHTML(i) {
   const lines = [];
   if (i.kind === 'weapon' && i.dmg) lines.push(`${esc(i.dmg)}${+i.bonus ? ` ${sgn(+i.bonus)}` : ''} ${esc(i.dmgType || '')} damage`);
   if (i.kind === 'weapon' && +i.bonus) lines.push(`${sgn(+i.bonus)} to hit`);
-  if (i.kind === 'weapon') { const p = [i.finesse && 'finesse', i.ranged && 'ranged', i.two && 'two-handed'].filter(Boolean); if (p.length) lines.push(p.join(', ')); }
+  if (i.kind === 'weapon') { const p = propList(i); if (p) lines.push(esc(p)); if (i.mastery) lines.push(`Mastery: ${i.mastery} — ${MASTERY[i.mastery]}`); }
   if (i.kind === 'armor' && i.ac) lines.push(`AC ${i.ac} · ${i.armorType || 'light'} armour`);
   if (i.kind === 'shield') lines.push(`${sgn(+i.ac || 2)} AC`);
   if (+i.acBonus) lines.push(`${sgn(+i.acBonus)} AC while worn`);
@@ -523,6 +560,7 @@ export function mountSheet(host, e, opts = {}) {
     if (act === 'add-row') { S.bagRows++; touch(); draw(); return; }
     if (act === 'hp-roll') { if (!S.hpRoll) return toast('Type the hit dice to roll, e.g. 4d8+4'); try { const r = rollAndLog(S.hpRoll); S.hpMax = r.total; S.hp = r.total; touch(); draw(); toast(`Hit points: ${r.total}`); } catch (err) { toast(err.message); } return; }
     if (act === 'new-item') { itemDialog(e, { id: uid(), kind: 'misc', qty: 1, cell: freeCell(S), slot: '' }, () => { touch(); draw(); }); return; }
+    if (t.classList.contains('blocked')) { toast('Your main-hand weapon needs both hands'); return; }
     if (t.classList.contains('cs-cell') || t.classList.contains('cs-slot')) {
       hideTip();
       const it = S.items.find(i => i.id === t.dataset.item);
@@ -543,12 +581,12 @@ export function mountSheet(host, e, opts = {}) {
     touch(); draw();
   });
   // put something on in the best free slot that fits it (ranged weapons prefer the ranged slot)
-  const fits = it => it.kind === 'weapon' ? (it.ranged ? ['ranged', 'main', 'off'] : ['main', 'off']) : Object.keys(SLOTS).filter(s => SLOTS[s].kinds.includes(it.kind));
+  const fits = it => it.kind === 'weapon' ? (it.two ? (it.ranged ? ['ranged', 'main'] : ['main']) : it.ranged ? ['ranged', 'main', 'off'] : ['main', 'off']) : Object.keys(SLOTS).filter(s => SLOTS[s].kinds.includes(it.kind));
   function wear(S, it, prefer) {
     const ok = fits(it);
     if (!ok.length) { toast(`${KINDS[it.kind]?.[0] || 'That'} can’t be worn — it stays in the bag`); return false; }
     const slot = (prefer && ok.includes(prefer) && prefer) || ok.find(s => !S.items.some(i => i.slot === s)) || ok[0];
-    equip(S, it, slot); return true;
+    return equip(S, it, slot);
   }
   function unwear(S, it) { it.slot = ''; it.cell = freeCell(S); }
   // right-click an item: equip or take off, compare, edit, delete
@@ -568,10 +606,16 @@ export function mountSheet(host, e, opts = {}) {
       { label: 'Delete', icon: '🗑', danger: true, action: () => { S.items = S.items.filter(i => i !== it); done(); } },
     ]);
   });
+  // two-handed weapons go in the main hand and leave the off hand empty
   function equip(S, it, slot) {
+    if (it.kind === 'weapon' && it.two && slot === 'off') slot = 'main';
+    const main = S.items.find(i => i.slot === 'main');
+    if (slot === 'off' && main && main !== it && main.kind === 'weapon' && main.two) { toast(`${main.name} needs both hands — take it off first`); return false; }
     const there = S.items.find(i => i.slot === slot && i !== it);
-    if (there) { there.slot = it.slot || ''; there.cell = it.slot ? 0 : it.cell; if (there.slot && !SLOTS[there.slot].kinds.includes(there.kind)) { there.slot = ''; there.cell = freeCell(S); } }
+    if (there) { there.slot = it.slot || ''; there.cell = it.slot ? 0 : it.cell; if (there.slot && (!SLOTS[there.slot].kinds.includes(there.kind) || (there.slot === 'off' && it.two))) { there.slot = ''; there.cell = freeCell(S); } }
     it.slot = slot;
+    if (slot === 'main' && it.kind === 'weapon' && it.two) { const off = S.items.find(i => i.slot === 'off'); if (off) { off.slot = ''; off.cell = freeCell(S); toast(`${off.name} went back in the bag — ${it.name} needs both hands`); } }
+    return true;
   }
   // drag and drop between the bag and the slots
   let dragId = null;
@@ -579,7 +623,8 @@ export function mountSheet(host, e, opts = {}) {
   host.addEventListener('dragover', ev => {
     const t = ev.target.closest('.cs-cell, .cs-slot'); if (!t || !dragId) return;
     const it = sh().items.find(i => i.id === dragId);
-    const ok = t.dataset.cell != null || SLOTS[t.dataset.slot]?.kinds.includes(it?.kind);
+    const main = sh().items.find(i => i.slot === 'main' && i !== it);
+    const ok = t.dataset.cell != null || (SLOTS[t.dataset.slot]?.kinds.includes(it?.kind) && !(t.dataset.slot === 'off' && main?.two && main.kind === 'weapon'));
     if (ok) { ev.preventDefault(); host.querySelectorAll('.drop-ok').forEach(x => x.classList.remove('drop-ok')); t.classList.add('drop-ok'); }
   });
   host.addEventListener('dragend', () => { dragId = null; host.querySelectorAll('.drop-ok').forEach(x => x.classList.remove('drop-ok')); });
@@ -587,7 +632,7 @@ export function mountSheet(host, e, opts = {}) {
     const t = ev.target.closest('.cs-cell, .cs-slot'); if (!t || !dragId) return;
     ev.preventDefault();
     const S = sh(), it = S.items.find(i => i.id === dragId); dragId = null; if (!it) return;
-    if (t.dataset.slot) equip(S, it, t.dataset.slot);
+    if (t.dataset.slot) { if (!equip(S, it, t.dataset.slot)) { draw(); return; } }
     else {
       const c = +t.dataset.cell, other = S.items.find(i => !i.slot && i.cell === c && i !== it);
       if (other) { if (it.slot) { if (SLOTS[it.slot].kinds.includes(other.kind)) other.slot = it.slot; else other.cell = freeCell(S); } else other.cell = it.cell; }
