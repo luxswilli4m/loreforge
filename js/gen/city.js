@@ -415,12 +415,15 @@ export function renderCity(data, canvas, styleName = 'parchment', ropts = {}) {
     for (const p of data.castle.wall) { ctx.beginPath(); ctx.arc(p[0], p[1], 5.5, 0, Math.PI * 2); ctx.fillStyle = ink; ctx.fill(); }
   }
 
+  // paved squares and yards from placed sets
+  for (const pl of data.plazas || []) { ctx.beginPath(); tracePath(ctx, pl.poly, true); ctx.fillStyle = rgba(S.plaza); ctx.fill(); ctx.strokeStyle = rgba(S.ink, 0.35); ctx.lineWidth = 1; ctx.stroke(); }
+
   // buildings (shadow, fill, outline)
   const shadow = styleName === 'night' ? 'rgba(0,0,0,.45)' : rgba(S.ink, 0.22);
   for (const b of data.buildings) { ctx.beginPath(); tracePath(ctx, b.poly.map(p => [p[0] + 2, p[1] + 2]), true); ctx.fillStyle = shadow; ctx.fill(); }
   for (const b of data.buildings) {
     ctx.beginPath(); tracePath(ctx, b.poly, true);
-    ctx.fillStyle = b.color ? b.color : rgba(b.kind === 'keep' ? S.keep : b.kind === 'temple' ? S.temple : mix(S.bld, [0, 0, 0], (b.v ?? r()) * 0.14 - 0.06));
+    ctx.fillStyle = b.color ? b.color : rgba(b.kind === 'keep' || b.mat === 'stone' ? S.keep : b.kind === 'temple' || b.kind === 'special' ? S.temple : mix(S.bld, [0, 0, 0], (b.v ?? r()) * 0.14 - 0.06));
     ctx.fill();
     ctx.strokeStyle = ink; ctx.lineWidth = b.kind === 'house' ? 1 : 2; ctx.stroke();
     if (b.kind !== 'house') {
@@ -650,6 +653,13 @@ function renderCityStorybook(data, canvas, ropts = {}) {
     }
   }
 
+  for (const pl of data.plazas || []) {
+    ctx.beginPath(); tracePath(ctx, pl.poly, true); ctx.fillStyle = 'rgb(222,212,186)'; ctx.fill();
+    ctx.save(); ctx.clip(); ctx.beginPath(); const c0 = centroid(pl.poly);
+    for (let t = -400; t < 400; t += 9) { ctx.moveTo(c0[0] - 400, c0[1] + t); ctx.lineTo(c0[0] + 400, c0[1] + t); ctx.moveTo(c0[0] + t, c0[1] - 400); ctx.lineTo(c0[0] + t, c0[1] + 400); }
+    ctx.strokeStyle = 'rgba(120,100,70,.18)'; ctx.lineWidth = 1; ctx.stroke(); ctx.restore();
+    ctx.beginPath(); tracePath(ctx, pl.poly, true); ctx.strokeStyle = 'rgba(60,50,30,.45)'; ctx.lineWidth = 1.5; ctx.stroke();
+  }
   // castle courtyard
   if (data.castle && data.castle.wall.length > 2) {
     ctx.beginPath(); tracePath(ctx, data.castle.wall, true); ctx.fillStyle = 'rgb(186,182,172)'; ctx.fill();
@@ -666,7 +676,7 @@ function renderCityStorybook(data, canvas, ropts = {}) {
     let col;
     const bv = b.v ?? r();
     if (b.color) col = hexToRgb(b.color);
-    else if (b.kind === 'keep') col = [112, 118, 140];
+    else if (b.kind === 'keep' || b.mat === 'stone') col = [118, 122, 140];
     else if (b.kind === 'temple') col = [86, 132, 170];
     else {
       const bias = nz.fbm(c[0] / 320, c[1] / 320, 2);
@@ -808,7 +818,7 @@ export const ROAD_SWATCHES = ['#c2beb6', '#e8dcc0', '#b8946a', '#8c7a66', '#9a9a
 export function cloneCity(d) {
   const c = JSON.parse(JSON.stringify(d));
   c.roadColors = c.roadColors || [];
-  c.walls2 = c.walls2 || []; c.rivers2 = c.rivers2 || []; c.ponds = c.ponds || []; c.icons = c.icons || [];
+  c.walls2 = c.walls2 || []; c.rivers2 = c.rivers2 || []; c.ponds = c.ponds || []; c.icons = c.icons || []; c.plazas = c.plazas || [];
   return c;
 }
 const cen = poly => centroid(poly);
@@ -918,9 +928,9 @@ function packBuildings(d, x, y, radius, value, rand, opts) {
 }
 
 // a hand-drawn wall: an open line or a closed loop. It is added alongside any walls already there.
-export function addCityWall(d, pts, closed = true) {
+export function addCityWall(d, pts, closed = true, smooth = true) {
   if (!pts || pts.length < (closed ? 3 : 2)) return;
-  const line = chaikin(pts, 2, closed);
+  const line = smooth ? chaikin(pts, 2, closed) : pts.map(p => [...p]);
   const dense = [];
   const n = line.length;
   for (let i = 0; i < (closed ? n : n - 1); i++) {
@@ -971,6 +981,7 @@ function gateLine(d, dense, closed) {
 }
 function gateWall(d, dense) { const g = gateLine(d, dense, true); d.wall = g.pts; d.gates = g.gates; }
 // re-open gates after roads change
+export function regateCity(d) { regate(d); }
 function regate(d) {
   if (d.wall) { const gi = new Set(d.gates.map(g => g.wi)); gateWall(d, d.wall.filter((_, i) => !gi.has(i))); }
   for (const w of d.walls2 || []) { const gi = new Set(w.gates.map(g => g.wi)); Object.assign(w, gateLine(d, w.pts.filter((_, i) => !gi.has(i)), w.closed)); }
@@ -1042,6 +1053,7 @@ export function removeCityRoad(d, i) {
   d.roads.splice(i, 1);
   (d.roadColors || []).splice(i, 1);
   (d.roadCtl || []).splice(i, 1);
+  (d.roadG || []).splice(i, 1);
   regate(d);
   updateBridges(d);
 }

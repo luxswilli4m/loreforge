@@ -6,6 +6,7 @@ import { generateWorld, renderWorld, WORLD_DEFAULTS, WORLD_SIZES, worldUnits, wo
   editToBlob, editFromBlob, BIOME_LABELS, REALM_COLORS } from '../gen/world.js';
 import { generateCity, renderCity, CITY_DEFAULTS, CITY_EXTENTS, cityFrameStyle, citySubtitle, ROOF_SWATCHES, ROAD_SWATCHES, cloneCity, cityBrush, addCityWall, nearestWall, removeCityWall, snapToRoad, addCityRiver, addCityPond, nearestWater, removeCityWater, streetAngle, reshapeCityLine, addCityRoad, nearestRoad, removeCityRoad, cityToBlob, cityFromBlob } from '../gen/city.js';
 import { ICONS, iconGroups, iconThumb, drawIcon, registerCustomIcons } from '../gen/icons.js';
+import { BUILDINGS, SETS, PIECE, layoutOf, transformer, placePiece, groupAt, pickUpPiece } from '../gen/cityPresets.js';
 import { curveFromPts, samplePath, segMid, hitCurve, pullSegment, addElbow, removeElbow, straighten, cloneLine } from '../gen/bend.js';
 import { placeName, realmBase, realmName } from '../gen/names.js';
 import { rng } from '../gen/core.js';
@@ -32,7 +33,7 @@ const MODE_STYLES = { world: Object.keys(STYLE_SWATCH), city: ['parchment', 'atl
 const TOOLS = [
   ['Terrain', [['raise', '⬆️', 'Raise'], ['lower', '⬇️', 'Lower'], ['mountain', '🏔️', 'Mountains'], ['smooth', '〰️', 'Smooth'], ['flatten', '▁', 'Flatten'], ['land', '🏝️', 'Add land'], ['sea', '🌊', 'Add sea']]],
   ['Paint', [['biome', '🌲', 'Biome'], ['realm', '🚩', 'Realm']]],
-  ['Water & routes', [['river', '〰️', 'Draw river'], ['dry', '🏜️', 'Dry up rivers'], ['road', '🛣️', 'Draw road'], ['bend', '〽️', 'Bend & elbows'], ['erase', '✂️', 'Erase drawn']]],
+  ['Water & routes', [['river', '〰️', 'Draw river'], ['dry', '🏜️', 'Dry up rivers'], ['road', '🛣️', 'Draw road'], ['bend', '〽️', 'Edit & bend'], ['erase', '✂️', 'Erase drawn']]],
   ['Places & labels', [['town', '🏘️', 'Towns'], ['label', '🏷️', 'Labels'], ['icon', '🐉', 'Map icons']]],
 ];
 // brush sizes run from a hair (0.1) to huge (40) on a curved slider, so small sizes get plenty of room
@@ -48,22 +49,23 @@ const TOOL_HELP = {
   town: 'Click land to add a town. Drag a town to move it. Click a town to rename it, make it a capital or delete it.',
   river: 'Freehand: drag from the source to the sea. Point to point: click along its course, then double-click or press Enter. Rivers start thin and widen as they go; reshape them later with Bend & elbows.', dry: 'Drag over generated rivers to dry them up.',
   road: 'Freehand: drag to draw a road or trade route. Point to point: click along it, then double-click or press Enter.', erase: 'Click a river or road you drew to remove it.',
-  bend: 'Click a road or river to pick it up. Drag the line to bend it; drag a dot to move an end or elbow. Double-click the line to add an elbow, double-click an elbow to remove it. Right-click to let go. (Works on rivers and roads you drew.)',
+  bend: 'Click any road or river (generated ones too) to pick it up and change its width. Drag the line to bend it; drag a dot to move an end or elbow. Double-click the line to add an elbow, double-click an elbow to remove it. Right-click to let go.',
   icon: 'Pick an icon below, then click the map to drop it. Drag an icon to move it; click one to resize, flip or remove it (Delete key works too).',
   label: 'Click empty space to add your own label. Click an existing label (realm, mountain, forest, sea or yours) to rename it — leave it blank to hide it.',
 };
 
 const CITY_TOOLS = [
-  ['Buildings', [['bld-add', '🏠', 'Add'], ['bld-del', '🧹', 'Remove'], ['bld-paint', '🎨', 'Paint roofs']]],
+  ['Buildings', [['stamp', '🏛️', 'Buildings & sets'], ['bld-add', '🏠', 'Add houses'], ['bld-del', '🧹', 'Remove'], ['bld-paint', '🎨', 'Paint roofs']]],
   ['Nature', [['tree-add', '🌳', 'Add trees'], ['tree-del', '🪓', 'Clear trees']]],
   ['Walls & roads', [['wall', '🧱', 'Draw wall'], ['wall-del', '⛏️', 'Remove wall'], ['road', '🛣️', 'Draw road'], ['road-paint', '🖌️', 'Colour road'], ['road-del', '✂️', 'Remove road']]],
   ['Water', [['river', '〰️', 'Draw river'], ['lake', '💧', 'Draw lake'], ['water-del', '🏜️', 'Remove water']]],
-  ['Shape', [['bend', '〽️', 'Bend & elbows']]],
+  ['Shape', [['bend', '〽️', 'Edit & bend']]],
   ['Icons', [['icon', '🐉', 'Map icons']]],
 ];
 const POLY_TOOLS = ['wall', 'road', 'river', 'lake'];
 const POLY_NAME = { wall: 'wall', road: 'road', river: 'river', lake: 'lake' };
 const CITY_HELP = {
+  stamp: 'Pick a building or a whole set, then click the map to drop it. Scroll the mouse wheel or press A / D to rotate (Ctrl + scroll still zooms). Drag something you placed to move it.',
   'bld-add': 'Drag to fill an area with houses. They line up with the nearest street.', 'bld-del': 'Drag over buildings to knock them down.',
   'bld-paint': 'Drag over buildings to repaint their roofs.', 'tree-add': 'Drag to plant trees.', 'tree-del': 'Drag to clear trees.',
   wall: 'Click to place wall corners; double-click or press Enter to finish (right-click cancels). A closed wall loops back to the start; an open wall stays a line. Gates open where roads cross.',
@@ -72,7 +74,7 @@ const CITY_HELP = {
   river: 'Freehand: drag along the river’s course. Point to point: click along it, then double-click or press Enter. Bridges appear where roads cross; reshape it later with Bend & elbows.',
   lake: 'Click around the shore of a lake or pond; click the first point again, double-click or press Enter to fill it.',
   'water-del': 'Click a river or lake to drain it (this works on the generated river too).',
-  bend: 'Click a road or river to pick it up. Drag the line to bend it; drag a dot to move an end or elbow. Double-click the line to add an elbow, double-click an elbow to remove it. Right-click to let go. Works on every road and river, including the generated ones.',
+  bend: 'Click any road or river (generated ones too) to pick it up and change its width. Drag the line to bend it; drag a dot to move an end or elbow. Double-click the line to add an elbow, double-click an elbow to remove it. Right-click to let go. Works on every road and river, including the generated ones.',
   icon: 'Pick an icon below, then click the map to drop it. Drag an icon to move it; click one to resize, flip or remove it (Delete key works too).',
   'road-paint': 'Click a road to give it the colour below.', 'road-del': 'Click a road to remove it.',
 };
@@ -80,7 +82,7 @@ const CITY_HELP = {
 // remembered between visits in this session
 const memo = { mode: 'world', world: { ...WORLD_DEFAULTS, seed: randomSeed() }, city: { ...CITY_DEFAULTS, seed: randomSeed() },
   tool: { tool: 'raise', size: 8, strength: 0.5, biome: 2, realm: -2, riverW: 2.2, labelSize: 1, icon: 'castle', iconSize: 1 },
-  ctool: { tool: 'bld-add', size: 70, roof: '', road: '#b8946a', wallClosed: true, roadSnap: true, uniform: true, riverW: 1, icon: 'castle', iconSize: 1 } };
+  ctool: { tool: 'bld-add', stampTab: 'buildings', stamp: 'church', stampRot: 0, stampScale: 1, stampLabel: true, stampSnap: true, size: 70, roof: '', road: '#b8946a', wallClosed: true, roadSnap: true, uniform: true, riverW: 1, icon: 'castle', iconSize: 1 } };
 memo.lineMode = 'free'; // rivers & roads: 'free' (drag) or 'points' (click elbow to elbow), shared by both editors
 const BW = 1000; // layout width of the zoomable map
 
@@ -193,7 +195,7 @@ export function render(main) {
     const brush = BRUSH_TOOLS.includes(t.tool) ? `
       <label>Brush size <span class="val">${fmtSize(t.size)}</span></label><input type="range" data-t="size" data-log min="0" max="100" step="1" value="${sizeToSlider(t.size)}">
       ${['biome', 'realm', 'dry'].includes(t.tool) ? '' : `<label>Strength <span class="val">${Math.round(t.strength * 100)}%</span></label><input type="range" data-t="strength" min="0.05" max="1" step="0.05" value="${t.strength}">`}` : '';
-    const riverOpt = (t.tool === 'river' || t.tool === 'road' ? lineModeHTML() : '') + (t.tool === 'river' ? `<label>River size</label><div class="seg small">${[[1, 'Stream'], [2.2, 'River'], [4, 'Great river']].map(([v, l]) => `<button class="${+t.riverW === v ? 'on' : ''}" data-wriver="${v}">${l}</button>`).join('')}</div>` : '')
+    const riverOpt = (t.tool === 'river' || t.tool === 'road' ? lineModeHTML() : '') + (t.tool === 'river' ? `<label>River width at the mouth <span class="val">${(+t.riverW).toFixed(1)}</span></label><input type="range" data-t="riverW" min="0.4" max="9" step="0.1" value="${t.riverW}"><div class="range-ends"><span>Stream</span><span>Great river</span></div>` : '')
       + (wpoly ? `<div class="row" style="margin-top:8px"><button class="small primary" id="w-finish">Finish ${wpoly.tool}</button><button class="small" id="w-cancel">Cancel</button></div>` : '');
     const labelOpt = t.tool === 'label' ? `<label>New label size</label><select data-t="labelSize">${[[0.7, 'Small'], [1, 'Medium'], [1.5, 'Large'], [2.2, 'Huge']].map(([v, l]) => `<option value="${v}" ${+t.labelSize === v ? 'selected' : ''}>${l}</option>`).join('')}</select>` : '';
     const drawn = (ed.rivers?.length || ed.roads?.length) ? `<p class="small muted" style="margin:8px 0 0">Drawn: ${ed.rivers.length} river${ed.rivers.length === 1 ? '' : 's'}, ${ed.roads.length} road${ed.roads.length === 1 ? '' : 's'}</p>` : '';
@@ -205,7 +207,8 @@ export function render(main) {
     const biome = t.tool === 'biome' ? `<label>Paint with</label><select data-t="biome">${BIOME_LABELS.map(([v, l]) => `<option value="${v}" ${+t.biome === v ? 'selected' : ''}>${l}</option>`).join('')}<option value="255" ${+t.biome === 255 ? 'selected' : ''}>✨ Automatic (let climate decide)</option></select>` : '';
     const realm = t.tool === 'realm' ? `<label>Paint with</label><select data-t="realm">${ed.realms.map(rl => `<option value="${rl.id}" ${+t.realm === rl.id ? 'selected' : ''}>${esc(rl.name)}</option>`).join('')}<option value="-1" ${+t.realm === -1 ? 'selected' : ''}>Unclaimed land</option><option value="-2" ${+t.realm === -2 ? 'selected' : ''}>✨ Automatic (natural borders)</option></select>` : '';
     const bendOpt = t.tool === 'bend' ? (bendSel ? `<div class="sel-town"><b>${esc(bendSel.label)}</b> <span class="muted small">· ${bendSel.line.ctl.length - 2} elbow${bendSel.line.ctl.length === 3 ? '' : 's'}</span>
-        <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap"><button class="small" id="bd-straight">Straighten bends</button><button class="small" id="bd-done">Let go</button></div></div>` : `<p class="small muted" style="margin:8px 0 0">Click a road or river to start.</p>`) : '';
+        ${widthHTML()}
+        <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap"><button class="small" id="bd-straight">Straighten bends</button><button class="small" id="bd-done">Let go</button></div></div>` : `<p class="small muted" style="margin:8px 0 0">Click any road or river to start.</p>`) : '';
     const tw = selTown >= 0 ? ed.towns[selTown] : null;
     const town = t.tool === 'town' ? (tw ? `<div class="sel-town">
         <label>Town name</label><input id="tw-name" value="${esc(tw.name)}">
@@ -277,17 +280,26 @@ export function render(main) {
     const wall = t.tool === 'wall' ? `<label>Wall shape</label>${seg('wallClosed', [['1', '⭕ Closed loop', 'Joins back to where you started'], ['0', '➖ Open line', 'A straight or winding wall that doesn’t close']], t.wallClosed ? '1' : '0')}` : '';
     const roadMode = t.tool === 'road' ? `<label>Road joins</label>${seg('roadSnap', [['1', '🔗 Connected', 'Points near another road latch onto it'], ['0', '✏️ Free', 'Points go exactly where you click']], t.roadSnap ? '1' : '0')}` : '';
     const bld = t.tool === 'bld-add' ? `<label>Layout</label>${seg('uniform', [['1', '▦ Uniform', 'Tight rows along the street, like the town'], ['0', '⁘ Loose', 'Scattered cottages']], t.uniform ? '1' : '0')}` : '';
-    const river = (t.tool === 'river' || t.tool === 'road' ? lineModeHTML() : '') + (t.tool === 'river' ? `<label>River size</label>${seg('riverW', [['0.5', 'Stream'], ['1', 'River'], ['1.7', 'Great river']], String(t.riverW))}` : '');
+    const river = (t.tool === 'river' || t.tool === 'road' ? lineModeHTML() : '') + (t.tool === 'river' ? `<label>River width <span class="val">${(+t.riverW).toFixed(1)}×</span></label><input type="range" data-ct="riverW" min="0.25" max="3.5" step="0.05" value="${t.riverW}"><div class="range-ends"><span>Stream</span><span>Great river</span></div>` : '');
     const icons = t.tool === 'icon' ? iconPanelHTML(t, o.style) : '';
+    const deg = Math.round(((t.stampRot * 180 / Math.PI) % 360 + 360) % 360);
+    const stampP = t.tool === 'stamp' ? `<div class="seg small" style="margin-top:6px"><button class="${t.stampTab === 'buildings' ? 'on' : ''}" data-stab="buildings">🏛️ Buildings (${Object.keys(BUILDINGS).length})</button><button class="${t.stampTab === 'sets' ? 'on' : ''}" data-stab="sets">🏘️ Sets with streets (${Object.keys(SETS).length})</button></div>
+      <div class="piece-grid">${Object.entries(t.stampTab === 'sets' ? SETS : BUILDINGS).map(([k, d]) => `<button class="piece-btn ${t.stamp === k ? 'on' : ''}" data-stamp="${k}" title="${esc(d.label)}"><span>${d.emoji}</span>${esc(d.label)}</button>`).join('')}</div>
+      <label>Size <span class="val">${(+t.stampScale).toFixed(1)}×</span></label><input type="range" data-ct="stampScale" min="0.5" max="2" step="0.1" value="${t.stampScale}">
+      <div class="row" style="align-items:center;gap:6px;margin-top:6px"><span class="small">Rotation <b id="rotv">${deg}°</b></span><span style="flex:1"></span><button class="small" data-rot="-1" title="Rotate left (A)">⟲</button><button class="small" data-rot="1" title="Rotate right (D)">⟳</button><button class="small" data-rot="0" title="Face south again">0°</button></div>
+      <label class="check"><input type="checkbox" id="st-snap" ${t.stampSnap ? 'checked' : ''}> Join its streets onto nearby roads</label>
+      <label class="check"><input type="checkbox" id="st-label" ${t.stampLabel ? 'checked' : ''}> Label it on the map</label>
+      ${t.stampTab === 'sets' ? '<button class="small" id="st-reroll" style="margin-top:6px">🎲 Shuffle the houses</button>' : ''}` : '';
     const bendOpt = t.tool === 'bend' ? (bendSel ? `<div class="sel-town"><b>${esc(bendSel.label)}</b> <span class="muted small">· ${bendSel.line.ctl.length - 2} elbow${bendSel.line.ctl.length === 3 ? '' : 's'}</span>
-        <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap"><button class="small" id="bd-straight">Straighten bends</button><button class="small" id="bd-done">Let go</button></div></div>` : `<p class="small muted" style="margin:8px 0 0">Click a road or river to start.</p>`) : '';
+        ${widthHTML()}
+        <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap"><button class="small" id="bd-straight">Straighten bends</button><button class="small" id="bd-done">Let go</button></div></div>` : `<p class="small muted" style="margin:8px 0 0">Click any road or river to start.</p>`) : '';
 
     const drawing = poly ? `<div class="row" style="margin-top:8px"><button class="small primary" id="c-finish">Finish ${POLY_NAME[t.tool] || 'line'}</button><button class="small" id="c-cancel">Cancel</button></div>` : '';
     return `
       <div class="edit-head"><b>✏️ Editing ${esc(o.name || 'city')}</b><button class="small" id="enddone">Done</button></div>
       ${tools}
       <p class="small muted tool-help">${esc(CITY_HELP[t.tool])}</p>
-      ${bld}${size}${roof}${roadMode}${road}${wall}${river}${icons}${bendOpt}${drawing}
+      ${stampP}${bld}${size}${roof}${roadMode}${road}${wall}${river}${icons}${bendOpt}${drawing}
       <p class="small muted" style="margin:10px 0 0">${ced.buildings.length} buildings · ${ced.roads.length} roads · ${(ced.wall ? 1 : 0) + (ced.walls2?.length || 0)} walls · ${ced.trees.length} trees</p>
       <label>Style</label><div class="swatches">${styleButtons(o)}</div>
       ${undoRow()}`;
@@ -388,6 +400,7 @@ export function render(main) {
   }
   pv.addEventListener('wheel', ev => {
     ev.preventDefault();
+    if (stampOn() && !ev.ctrlKey && !ev.metaKey) { rotateStamp(ev.deltaY > 0 ? 1 : -1); return; }
     const r = pv.getBoundingClientRect();
     zoomAt(Math.exp(-ev.deltaY * 0.0015), ev.clientX - r.left, ev.clientY - r.top);
   }, { passive: false });
@@ -450,7 +463,7 @@ export function render(main) {
     } catch (e) { console.error(e); toast('Something went wrong drawing that map — try another seed'); }
     busy = false; busyEl.classList.remove('on');
     ov.classList.remove('on');
-    if (!stroke) { if (memo.mode === 'city' && poly) drawPoly(); else if (wpoly) drawWPoly(); else { clearCov(); drawIconSel(); drawBend(); } }
+    if (!stroke) { if (memo.mode === 'city' && poly) drawPoly(); else if (wpoly) drawWPoly(); else if (stampOn()) drawStampGhost(stampHover); else { clearCov(); drawIconSel(); drawBend(); } }
     if (view.fitted || prevW !== canvas.width || prevH !== canvas.height) fit(); else { drawFurniture(); scheduleDetail(); }
     drawMark();
     if (pending) { pending = false; regen(); }
@@ -618,7 +631,8 @@ export function render(main) {
   // every line that can be bent, with where its shape is stored
   function bendRefs() {
     if (isWorldM()) return [...(ed.rivers || []).map((r, i) => ({ type: 'river', i, obj: r, label: 'River', w: 3, color: 'rgb(60,120,190)' })),
-      ...(ed.roads || []).map((r, i) => ({ type: 'road', i, obj: r, label: 'Road', w: 2.4, color: 'rgb(170,100,50)' }))];
+      ...(ed.roads || []).map((r, i) => ({ type: 'road', i, obj: r, label: 'Road', w: 2.4, color: 'rgb(170,100,50)' })),
+      ...(data?.gen?.rivers || []).filter(r => !r.hand && r.src != null).map(r => ({ type: 'gen', src: r.src, pts: r.map(p => [p.x, p.y]), label: 'River', w: 3, color: 'rgb(60,120,190)' }))];
     const d = ced, out = [];
     d.roads.forEach((r, i) => out.push({ type: 'road', i, pts: r, label: 'Road', w: d.roadW, color: d.roadColors?.[i] || '#c2beb6' }));
     if (d.river) out.push({ type: 'mainriver', pts: d.river, label: 'River', w: d.riverW, color: '#5aa2c4' });
@@ -627,13 +641,14 @@ export function render(main) {
   }
   const refPts = ref => ref.obj ? ref.obj.pts : ref.pts;
   function refLine(ref) {
-    let m = ref.obj ? (ref.obj.ctl ? { ctl: ref.obj.ctl, bend: ref.obj.bend } : null)
+    let m = ref.type === 'gen' ? null : ref.obj ? (ref.obj.ctl ? { ctl: ref.obj.ctl, bend: ref.obj.bend } : null)
       : ref.type === 'road' ? ced.roadCtl?.[ref.i] : ref.type === 'mainriver' ? ced.riverCtl : ced.rivers2[ref.i].ctl ? { ctl: ced.rivers2[ref.i].ctl, bend: ced.rivers2[ref.i].bend } : null;
     if (!m || !m.ctl?.length) m = curveFromPts(refPts(ref), isWorldM() ? 0.6 : 10);
     return cloneLine(m);
   }
   // write the new shape back (and the dense path everything else draws from)
   function applyBend(sel) {
+    adoptGen(sel);
     const ref = sel.ref, line = cloneLine(sel.line);
     let pts = samplePath(line, bStep());
     if (isWorldM()) { pts = pts.map(p => [+p[0].toFixed(2), +p[1].toFixed(2)]); ref.obj.pts = pts; ref.obj.ctl = line.ctl; ref.obj.bend = line.bend; return; }
@@ -641,6 +656,42 @@ export function render(main) {
     else if (ref.type === 'mainriver') ced.riverCtl = line;
     else { ced.rivers2[ref.i].ctl = line.ctl; ced.rivers2[ref.i].bend = line.bend; }
     reshapeCityLine(ced, ref, pts);
+  }
+  // width controls for the picked-up river (Azgaar-style: any river, generated or drawn)
+  function widthHTML() {
+    const ref = bendSel?.ref; if (!ref) return '';
+    const sl = (key, label, v, min, max, step, unit = '') => `<label>${label} <span class="val">${(+v).toFixed(step < 1 ? 1 : 0)}${unit}</span></label><input type="range" data-bw="${key}" min="${min}" max="${max}" step="${step}" value="${v}">`;
+    if (isWorldM()) {
+      if (ref.type === 'gen') return sl('k', 'Width', ed.riverK?.[ref.src] || 1, 0.3, 4, 0.05, '×');
+      if (ref.type === 'river') return sl('w', 'Width at the mouth', ref.obj.w ?? 2.2, 0.4, 9, 0.1) + sl('w0', 'Width at the source', ref.obj.w0 ?? 0.15, 0, 4, 0.05);
+      return '';
+    }
+    if (ref.type === 'mainriver') return sl('w', 'Width', ced.riverW, 4, 120, 1);
+    if (ref.type === 'river2') return sl('w', 'Width', ced.rivers2[ref.i].w, 4, 120, 1);
+    return '';
+  }
+  let widthUndoArmed = true;
+  function setWidth(key, v) {
+    const ref = bendSel.ref;
+    if (widthUndoArmed) { pushUndo(); widthUndoArmed = false; }
+    if (isWorldM()) {
+      if (ref.type === 'gen') { ed.riverK = { ...(ed.riverK || {}), [ref.src]: v }; }
+      else ref.obj[key] = v;
+    } else if (ref.type === 'mainriver') { ced.riverW = v; updateBridgesNow(); }
+    else { ced.rivers2[ref.i].w = v; updateBridgesNow(); }
+    changed();
+  }
+  const updateBridgesNow = () => reshapeCityLine(ced, bendSel.ref, refPts(bendSel.ref));
+  // a generated river becomes a hand-drawn one the first time it's bent, so its new shape can be kept
+  function adoptGen(sel) {
+    const ref = sel.ref; if (ref.type !== 'gen') return;
+    const segs = (data.gen.rivers || []).filter(r => r.src === ref.src && !r.hand);
+    const path = segs.sort((a, b) => b.length - a.length)[0]; if (!path) return;
+    const px = p => Math.min(4.5, 0.7 + Math.sqrt(p.w) * 0.75) * (path.k || 1);
+    const obj = { pts: path.map(p => [+p.x.toFixed(2), +p.y.toFixed(2)]), w: Math.max(0.4, (px(path[path.length - 1]) - 0.4) / 0.75), w0: Math.max(0, (px(path[0]) - 0.4) / 0.75) };
+    ed.rivers.push(obj);
+    for (const sg of segs) for (const c of sg.cells || []) ed.noRiver[c] = 1;
+    sel.ref = { type: 'river', i: ed.rivers.length - 1, obj, label: 'River', w: 3, color: 'rgb(60,120,190)' };
   }
   function drawBend() {
     if (!bendSel) return;
@@ -778,13 +829,13 @@ export function render(main) {
       if (selIcon) items.push({ icon: '☐', label: 'Deselect icon', action: () => { selIcon = null; redrawBend(); drawControls(); } },
         { icon: '⇋', label: 'Flip icon', action: () => { pushUndo(); selIcon.flip = !selIcon.flip; iconsChanged(); } },
         { icon: '🗑', label: 'Remove icon', danger: true, action: () => { pushUndo(); const l = iconList(), i = l.indexOf(selIcon); if (i >= 0) l.splice(i, 1); selIcon = null; drawControls(); iconsChanged(); } });
-      if (line && (!bendSel || bendSel.ref.type !== line.type || bendSel.ref.i !== line.i)) items.push({ icon: '〽️', label: `Select this ${line.label.toLowerCase()} to bend it`, action: () => { t.tool = 'bend'; selIcon = null; bendSel = { ref: line, line: refLine(line), label: line.label }; drawControls(); redrawBend(); } });
+      if (line && (!bendSel || bendSel.ref.type !== line.type || bendSel.ref.i !== line.i)) items.push({ icon: '〽️', label: `Edit this ${line.label.toLowerCase()}`, action: () => { t.tool = 'bend'; selIcon = null; bendSel = { ref: line, line: refLine(line), label: line.label }; drawControls(); redrawBend(); } });
       if (bendSel) items.push({ icon: '☐', label: `Deselect the ${bendSel.label.toLowerCase()}`, action: () => { bendSel = null; redrawBend(); drawControls(); } },
         { icon: '⌒', label: 'Straighten its bends', action: () => { pushUndo(); straighten(bendSel.line); applyBend(bendSel); changed(); redrawBend(); drawControls(); } });
       if (world && t.tool === 'town' && selTown >= 0) items.push({ icon: '☐', label: 'Deselect town', action: () => { selTown = -1; drawControls(); drawMark(); } });
       if (items.length > 1) items.push('-');
-      const quick = world ? [['raise', '⬆️', 'Raise land'], ['river', '〰️', 'Draw river'], ['road', '🛣️', 'Draw road'], ['bend', '〽️', 'Bend & elbows'], ['town', '🏘️', 'Towns'], ['label', '🏷️', 'Labels'], ['icon', '🐉', 'Map icons']]
-        : [['bld-add', '🏠', 'Add buildings'], ['wall', '🧱', 'Draw wall'], ['road', '🛣️', 'Draw road'], ['river', '〰️', 'Draw river'], ['bend', '〽️', 'Bend & elbows'], ['icon', '🐉', 'Map icons']];
+      const quick = world ? [['raise', '⬆️', 'Raise land'], ['river', '〰️', 'Draw river'], ['road', '🛣️', 'Draw road'], ['bend', '〽️', 'Edit & bend'], ['town', '🏘️', 'Towns'], ['label', '🏷️', 'Labels'], ['icon', '🐉', 'Map icons']]
+        : [['bld-add', '🏠', 'Add buildings'], ['wall', '🧱', 'Draw wall'], ['road', '🛣️', 'Draw road'], ['river', '〰️', 'Draw river'], ['bend', '〽️', 'Edit & bend'], ['icon', '🐉', 'Map icons']];
       for (const [k, i, l] of quick) if (k !== t.tool) items.push({ icon: i, label: l, action: () => { t.tool = k; selIcon = null; bendSel = null; poly = null; wpoly = null; clearCov(); drawControls(); } });
       items.push('-');
       if (undoStack.length) items.push({ icon: '↶', label: 'Undo', hint: 'Ctrl+Z', action: undo });
@@ -793,6 +844,48 @@ export function render(main) {
     items.push({ icon: '⤢', label: 'Fit the whole map', action: fit });
     if (editing()) items.push({ icon: '✓', label: 'Done editing', action: () => { wEdit = cEdit = false; poly = null; wpoly = null; selIcon = null; bendSel = null; clearCov(); cur.style.display = 'none'; drawControls(); } });
     contextMenu(ev.clientX, ev.clientY, items);
+  }
+
+
+  // ---------- buildings & sets (city) ----------
+  let stampSeed = Math.floor(Math.random() * 1e6), stampHover = null;
+  const stampOn = () => memo.mode === 'city' && cEdit && memo.ctool.tool === 'stamp';
+  function drawStampGhost(at) {
+    clearCov(); if (!at) return;
+    const t = memo.ctool, lay = layoutOf(t.stamp, stampSeed); if (!lay) return;
+    const T = transformer(ced, at, t.stampRot, t.stampScale), c = cov.getContext('2d'), u = cu(), lw = 1 / u;
+    c.setTransform(u, 0, 0, u, 0, 0); c.lineJoin = c.lineCap = 'round';
+    const path = (pts, close) => { c.beginPath(); pts.forEach((p, i) => i ? c.lineTo(...T(p)) : c.moveTo(...T(p))); if (close) c.closePath(); };
+    for (const f of lay.fields) { path(f.poly, true); c.fillStyle = 'rgba(214,196,120,.35)'; c.fill(); }
+    for (const pl of lay.plazas) { path(pl, true); c.fillStyle = 'rgba(255,248,225,.55)'; c.fill(); }
+    for (const rd of lay.roads) { path(rd.pts); c.strokeStyle = 'rgba(0,0,0,.4)'; c.lineWidth = ced.roadW + 4 * lw; c.stroke(); c.strokeStyle = 'rgba(240,230,205,.9)'; c.lineWidth = ced.roadW; c.stroke(); }
+    for (const w of lay.walls) { path(w.pts, w.closed); c.strokeStyle = 'rgba(60,50,40,.8)'; c.lineWidth = 6 * lw; c.setLineDash([10 * lw, 6 * lw]); c.stroke(); c.setLineDash([]); }
+    for (const b of lay.buildings) { path(b.poly, true); c.fillStyle = b.color ? b.color : b.mat === 'stone' ? 'rgba(150,155,175,.85)' : 'rgba(212,162,76,.85)'; c.fill(); c.strokeStyle = '#1a1408'; c.lineWidth = 1.6 * lw; c.stroke(); }
+    for (const [x, y, sz] of lay.trees) { const [px, py] = T([x, y]); c.beginPath(); c.arc(px, py, sz * T.U * 0.75, 0, Math.PI * 2); c.fillStyle = 'rgba(90,140,80,.7)'; c.fill(); }
+    // a little arrow showing which way the front faces
+    const a = T([0, 0]), b = T([0, 4]);
+    c.beginPath(); c.moveTo(...a); c.lineTo(...b); c.strokeStyle = '#d4a24c'; c.lineWidth = 3 * lw; c.stroke();
+  }
+  function rotateStamp(dir) {
+    const t = memo.ctool, step = Math.PI / 12;
+    t.stampRot = dir === 0 ? 0 : t.stampRot + dir * step;
+    const rv = document.getElementById('rotv'); if (rv) rv.textContent = Math.round(((t.stampRot * 180 / Math.PI) % 360 + 360) % 360) + '°';
+    drawStampGhost(stampHover);
+  }
+  function stampDown(ev) {
+    const p = cityPos(ev), t = memo.ctool, g = groupAt(ced, p);
+    pushUndo();
+    if (g) {
+      // pick a placed piece up; it follows the cursor until it's let go
+      const info = pickUpPiece(ced, g);
+      if (info) {
+        t.stamp = info.key; t.stampTab = SETS[info.key] ? 'sets' : 'buildings'; t.stampRot = info.rot; t.stampScale = info.scale; stampSeed = info.seed;
+        stroke = { kind: 'stampdrag' }; changed(); drawControls(); drawStampGhost(p); return;
+      }
+    }
+    placePiece(ced, t.stamp, stampSeed, p, t.stampRot, t.stampScale, { snap: t.stampSnap, labels: t.stampLabel });
+    stampSeed = Math.floor(Math.random() * 1e6);
+    changed(); drawControls();
   }
 
   let stroke = null;
@@ -808,6 +901,7 @@ export function render(main) {
       cur.style.display = 'block';
     } else cur.style.display = 'none';
     if (stroke?.kind === 'bend') { bendMove(ev); return; }
+    if (stampOn()) { stampHover = cityPos(ev); drawStampGhost(stampHover); return; }
     if (stroke?.kind === 'cfree') {
       const p = cityPos(ev), l = stroke.pts[stroke.pts.length - 1];
       if (Math.hypot(p[0] - l[0], p[1] - l[1]) >= cityTol(5)) { stroke.pts.push(p); drawFree(stroke); }
@@ -868,7 +962,7 @@ export function render(main) {
     if (memo.mode === 'city') {
       const t = memo.ctool, p = cityPos(ev);
       if (t.tool === 'icon') { iconDown(ev); return; }
-    if (t.tool === 'bend') { bendDown(ev); return; }
+      if (t.tool === 'stamp') { stampDown(ev); return; }
       if (t.tool === 'bend') { bendDown(ev); return; }
       if ((t.tool === 'river' || t.tool === 'road') && memo.lineMode === 'free' && !poly) {
         pushUndo();
@@ -929,6 +1023,7 @@ export function render(main) {
     }
     if (t.tool === 'label') { labelClick(gx, gy, tolG * 2.5); return; }
     if (t.tool === 'icon') { iconDown(ev); return; }
+    if (t.tool === 'bend') { bendDown(ev); return; }
     if (t.tool === 'town') {
       const rc = canvas.getBoundingClientRect();
       const i = nearestTown(gx, gy, 14 / rc.width * gdim()[0] + 0.8);
@@ -955,6 +1050,7 @@ export function render(main) {
     const s0 = stroke; stroke = null;
     if (s0.kind === 'bend') { stroke = s0; bendUp(); return; }
     if (s0.kind === 'cfree') { finishFree(s0); return; }
+    if (s0.kind === 'stampdrag') { const t = memo.ctool; placePiece(ced, t.stamp, stampSeed, stampHover || [ced.W / 2, ced.H / 2], t.stampRot, t.stampScale, { snap: t.stampSnap, labels: t.stampLabel }); stampSeed = Math.floor(Math.random() * 1e6); changed(); drawControls(); return; }
     if (s0.kind === 'icon') {
       iconList().push(s0.ic);
       if (!s0.moved) undoStack.pop();
@@ -1039,6 +1135,7 @@ export function render(main) {
     if (bendSel && ev.key === 'Escape') { bendSel = null; redrawBend(); drawControls(); return; }
     if (selIcon && ev.key === 'Escape') { selIcon = null; drawPoly(); drawControls(); return; }
     if (poly && ev.key === 'Escape') { ev.preventDefault(); ev.stopImmediatePropagation(); poly = null; drawPoly(); drawControls(); return; }
+    if (stampOn() && !ev.ctrlKey && !ev.metaKey && !ev.altKey && /^[ad]$/i.test(ev.key)) { ev.preventDefault(); ev.stopImmediatePropagation(); rotateStamp(ev.key.toLowerCase() === 'a' ? -1 : 1); return; }
     if (!(ev.ctrlKey || ev.metaKey) || ev.altKey) return;
     const k = ev.key.toLowerCase();
     if (k === 'z' && !ev.shiftKey) { ev.preventDefault(); ev.stopImmediatePropagation(); undo(); }
@@ -1054,6 +1151,7 @@ export function render(main) {
   ctl.addEventListener('input', e => {
     const t = e.target;
     if (t.dataset.layer) return;
+    if (t.dataset.bw && bendSel) { const v = +t.value, val = t.previousElementSibling?.querySelector('.val'); if (val) val.textContent = v.toFixed(+t.step < 1 ? 1 : 0) + (t.dataset.bw === 'k' ? '×' : ''); setWidth(t.dataset.bw, v); return; }
     if (t.id === 'ic-size') {
       const v = +t.value, val = t.previousElementSibling?.querySelector?.('.val'); if (val) val.textContent = v.toFixed(1) + '×';
       iconTool().iconSize = v;
@@ -1108,13 +1206,17 @@ export function render(main) {
     if (t.dataset.t === 'biome' || t.dataset.t === 'realm') memo.tool[t.dataset.t] = +t.value;
     if (t.id === 'c-roof' || t.id === 'c-road') drawControls();
   });
-  ctl.addEventListener('change', e => { if (e.target.id === 'ic-size') sizeUndoArmed = true; });
+  ctl.addEventListener('change', e => { if (e.target.id === 'st-snap') memo.ctool.stampSnap = e.target.checked; if (e.target.id === 'st-label') memo.ctool.stampLabel = e.target.checked; if (e.target.id === 'ic-size') sizeUndoArmed = true; if (e.target.dataset.bw) widthUndoArmed = true; });
   ctl.addEventListener('focusin', e => { if (e.target.id === 'tw-name') nameUndoArmed = true; });
   ctl.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
     const o = memo[memo.mode];
     if (b.dataset.tool) { selIcon = null; bendSel = null; wpoly = null; clearCov(); memo.tool.tool = b.dataset.tool; if (b.dataset.tool !== 'town') selTown = -1; if (b.dataset.tool === 'realm' && +memo.tool.realm === -2 && ed.realms[0]) memo.tool.realm = ed.realms[0].id; drawControls(); }
     else if (b.dataset.ctool) { selIcon = null; bendSel = null; poly = null; memo.ctool.tool = b.dataset.ctool; drawPoly(); drawControls(); }
+    else if (b.dataset.stab) { memo.ctool.stampTab = b.dataset.stab; const list = b.dataset.stab === 'sets' ? SETS : BUILDINGS; if (!list[memo.ctool.stamp]) memo.ctool.stamp = Object.keys(list)[0]; drawControls(); }
+    else if (b.dataset.stamp) { memo.ctool.stamp = b.dataset.stamp; stampSeed = Math.floor(Math.random() * 1e6); drawControls(); }
+    else if (b.dataset.rot != null) rotateStamp(+b.dataset.rot);
+    else if (b.id === 'st-reroll') { stampSeed = Math.floor(Math.random() * 1e6); drawStampGhost(stampHover); }
     else if (b.dataset.lmode) { memo.lineMode = b.dataset.lmode; poly = null; wpoly = null; drawPoly(); drawControls(); }
     else if (b.dataset.wriver) { memo.tool.riverW = +b.dataset.wriver; drawControls(); }
     else if (b.id === 'w-finish') finishWPoly();

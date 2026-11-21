@@ -224,7 +224,7 @@ function shortcutsHelp() {
     <div class="modal-actions"><button class="primary" onclick="document.getElementById('modal-root').innerHTML=''">Got it</button></div>`);
 }
 document.addEventListener('keydown', e => {
-  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
   if (/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return;
   if ($('#modal-root').innerHTML) return;
   if (e.key === 'd' || e.key === 'D') { e.preventDefault(); tray.toggle(); }

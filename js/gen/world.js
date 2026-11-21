@@ -290,30 +290,31 @@ export function generateWorld(opts, edit = null) {
   sources.sort((a, b) => acc[b] - acc[a]);
   const drawn = new Uint8Array(N);
   const rivers = [];
+  const tag = (path, s, cells) => { path.src = s; path.cells = cells; path.k = edit?.riverK?.[s] || 1; return path; };
   for (const s of sources) {
-    let c = s, path = [];
+    let c = s, path = [], cells = [];
     while (c >= 0) {
       const x = c % GW, y = (c / GW) | 0;
-      path.push({ x: x + jx[c], y: y + jy[c], w: Math.sqrt(acc[c] / thr) });
+      path.push({ x: x + jx[c], y: y + jy[c], w: Math.sqrt(acc[c] / thr) }); cells.push(c);
       if (isOcean[c]) break;
-      if (lake[c]) { if (path.length > 2) rivers.push(path); path = []; while (c >= 0 && lake[c]) c = receiver[c]; continue; }
+      if (lake[c]) { if (path.length > 2) rivers.push(tag(path, s, cells)); path = []; cells = []; while (c >= 0 && lake[c]) c = receiver[c]; continue; }
       if (drawn[c] && path.length > 1) break;
       if (!isRiver[c]) break; // dried up by hand
       drawn[c] = 1;
       c = receiver[c];
     }
-    if (path.length > 2) rivers.push(path);
+    if (path.length > 2) rivers.push(tag(path, s, cells));
   }
   // hand-drawn rivers: thin at the source, widening towards the mouth. Where one runs into the sea or a lake it
   // ends at the shore (and starts again on the far side), so it never runs across open water.
   const wetAt = (x, y) => { const c = idx(Math.max(0, Math.min(GW - 1, Math.round(x))), Math.max(0, Math.min(GH - 1, Math.round(y)))); return isOcean[c] || lake[c]; };
   for (const hr of edit?.rivers || []) {
     if (!hr.pts || hr.pts.length < 2) continue;
-    const n = hr.pts.length, wmax = hr.w || 2.2;
+    const n = hr.pts.length, wmax = hr.w || 2.2, w0 = hr.w0 ?? 0.15;
     let seg = [];
-    const flush = () => { if (seg.length > 1) rivers.push(seg); seg = []; };
+    const flush = () => { if (seg.length > 1) { seg.hand = true; rivers.push(seg); } seg = []; };
     hr.pts.forEach(([x, y], j) => {
-      const p = { x, y, w: 0.15 + (wmax - 0.15) * Math.pow(j / (n - 1), 1.3) };
+      const p = { x, y, w: w0 + (wmax - w0) * Math.pow(j / (n - 1), 1.3) };
       if (wetAt(x, y)) { if (seg.length) { seg.push(p); flush(); } return; }
       if (!seg.length && j > 0) { const [px, py] = hr.pts[j - 1]; seg.push({ x: px, y: py, w: p.w }); } // start at the far shore
       seg.push(p);
@@ -328,8 +329,9 @@ export function generateWorld(opts, edit = null) {
     const out = [];
     for (const rv of rivers) {
       let seg = [];
-      for (const p of rv) { if (isDry(p)) { if (seg.length > 1) out.push(seg); seg = []; } else seg.push(p); }
-      if (seg.length > 1) out.push(seg);
+      const keep = sg => { sg.src = rv.src; sg.k = rv.k; sg.hand = rv.hand; sg.cells = rv.cells; out.push(sg); };
+      for (const p of rv) { if (isDry(p)) { if (seg.length > 1) keep(seg); seg = []; } else seg.push(p); }
+      if (seg.length > 1) keep(seg);
     }
     rivers.length = 0; rivers.push(...out);
   }
@@ -579,7 +581,7 @@ export function cloneEdit(ed) {
   return { ...ed, h: Float32Array.from(ed.h), ridge: Float32Array.from(ed.ridge), eCurve: ed.eCurve.slice(), biome: Uint8Array.from(ed.biome),
     realmPaint: Int16Array.from(ed.realmPaint), towns: ed.towns.map(t => ({ ...t })), realms: ed.realms.map(rl => ({ ...rl })),
     rivers: (ed.rivers || []).map(r => JSON.parse(JSON.stringify(r))), roads: (ed.roads || []).map(r => JSON.parse(JSON.stringify(r))),
-    labels: (ed.labels || []).map(l => ({ ...l })), labelNames: { ...(ed.labelNames || {}) }, noRiver: ed.noRiver ? Uint8Array.from(ed.noRiver) : null, dry: (ed.dry || []).map(d => [...d]), icons: (ed.icons || []).map(i => ({ ...i })) };
+    labels: (ed.labels || []).map(l => ({ ...l })), labelNames: { ...(ed.labelNames || {}) }, noRiver: ed.noRiver ? Uint8Array.from(ed.noRiver) : null, dry: (ed.dry || []).map(d => [...d]), icons: (ed.icons || []).map(i => ({ ...i })), riverK: { ...(ed.riverK || {}) } };
 }
 
 // one dab of a brush at grid position (gx, gy). radius in cells, strength 0..1
@@ -658,7 +660,7 @@ export async function editToBlob(ed, o) {
   const qh = new Uint16Array(N), qr = new Uint16Array(N);
   for (let i = 0; i < N; i++) { qh[i] = Math.round((ed.h[i] - lo) / span * 65535); qr[i] = Math.round(Math.max(0, ed.ridge[i]) / rspan * 65535); }
   const head = new TextEncoder().encode(JSON.stringify({ v: 3, GW, GH, o, lo, span, rspan, sea: ed.sea, hmax: ed.hmax, eCurve: ed.eCurve, towns: ed.towns, realms: ed.realms,
-    rivers: ed.rivers || [], roads: ed.roads || [], labels: ed.labels || [], labelNames: ed.labelNames || {}, nameSeed: ed.nameSeed || '', noRoads: !!ed.noRoads, dry: ed.dry || [], townSeed: ed.townSeed || '', icons: ed.icons || [] }));
+    rivers: ed.rivers || [], roads: ed.roads || [], labels: ed.labels || [], labelNames: ed.labelNames || {}, nameSeed: ed.nameSeed || '', noRoads: !!ed.noRoads, dry: ed.dry || [], townSeed: ed.townSeed || '', icons: ed.icons || [], riverK: ed.riverK || {} }));
   const pad = new Uint8Array((4 - (head.length % 4)) % 4);
   let blob = new Blob([new Uint32Array([head.length]), head, pad, qh, qr, ed.realmPaint, ed.biome, ed.noRiver || new Uint8Array(N)]);
   if (typeof CompressionStream !== 'undefined') blob = await new Response(blob.stream().pipeThrough(new CompressionStream('gzip'))).blob();
@@ -680,7 +682,7 @@ export async function editFromBlob(blob) {
   for (let i = 0; i < N; i++) { h[i] = head.lo + qh[i] / 65535 * head.span; ridge[i] = qr[i] / 65535 * head.rspan; }
   return { o: head.o, edit: { GW, GH, h, ridge, realmPaint, biome, noRiver, sea: head.sea, hmax: head.hmax, eCurve: head.eCurve, towns: head.towns, realms: head.realms,
     rivers: head.rivers || [], roads: head.roads || [], labels: head.labels || [], labelNames: head.labelNames || {}, nameSeed: head.nameSeed || '', noRoads: !!head.noRoads,
-    dry: head.dry || [], townSeed: head.townSeed || '', icons: head.icons || [] } };
+    dry: head.dry || [], townSeed: head.townSeed || '', icons: head.icons || [], riverK: head.riverK || {} } };
 }
 
 // ---------------- Rendering ----------------
@@ -1091,7 +1093,7 @@ export function renderWorld(data, canvas, styleName = 'parchment', ropts = {}) {
     const pts = chaikin(rv.map(p => toPx([p.x, p.y])), 2);
     const ws = chaikin(rv.map(p => [p.w, 0]), 2).map(p => p[0]);
     for (let i = 1; i < pts.length; i++) {
-      ctx.lineWidth = Math.min(4.5, 0.7 + Math.sqrt(ws[i]) * 0.75) * k;
+      ctx.lineWidth = (rv.hand ? 0.4 + ws[i] * 0.75 : Math.min(4.5, 0.7 + Math.sqrt(ws[i]) * 0.75) * (rv.k || 1)) * k;
       ctx.beginPath(); ctx.moveTo(...pts[i - 1]); ctx.lineTo(...pts[i]); ctx.stroke();
     }
   }
