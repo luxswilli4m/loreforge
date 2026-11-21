@@ -196,6 +196,12 @@ export function createArtTool({ m, artG, overlay, getK, toMap }) {
   return {
     redraw, panelHTML, bindPanel,
     get selected() { return sel; },
+    get tool() { return opt.tool; },
+    // used by the right-click menu
+    hitAt(ev) { const p = toMap(ev); return hitAt([r1(p.x), r1(p.y)]); },
+    selectAt(ev) { const p = toMap(ev), h = hitAt([r1(p.x), r1(p.y)]); sel = h; if (h) opt.tool = 'move'; redraw(); return !!h; },
+    deselect() { sel = null; redraw(); },
+    setTool(t) { opt.tool = t; sel = null; redraw(); },
     deleteSelected() { if (!sel) return false; sel.l.items = sel.l.items.filter(x => x !== sel.it); sel = null; save(); redraw(); return true; },
     down(ev) {
       const p = toMap(ev), pt = [r1(p.x), r1(p.y)], k = getK();

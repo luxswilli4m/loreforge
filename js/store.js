@@ -70,7 +70,7 @@ export async function loadWorlds() {
 export function normalizeWorld(w) {
   const base = blankWorld(w.name || 'Untitled world');
   const out = Object.assign(base, w);
-  for (const k of ['entries', 'maps', 'relations', 'events', 'arcs', 'sessions', 'journals', 'quests', 'tables', 'library', 'party']) {
+  for (const k of ['entries', 'maps', 'relations', 'events', 'arcs', 'sessions', 'journals', 'quests', 'tables', 'library', 'party', 'assets']) {
     if (!Array.isArray(out[k])) out[k] = [];
   }
   out.calendar = Object.assign(blankWorld('').calendar, w.calendar || {});
@@ -108,7 +108,7 @@ function migrateHierarchy(w) {
 export function blankWorld(name) {
   return {
     id: uid(), name, description: '', created: Date.now(), updated: Date.now(),
-    entries: [], maps: [], relations: [], events: [], arcs: [], sessions: [], journals: [], quests: [], tables: [], library: [], party: [],
+    entries: [], maps: [], relations: [], events: [], arcs: [], sessions: [], journals: [], quests: [], tables: [], library: [], party: [], assets: [],
     combat: { round: 1, turn: 0, list: [] },
     calendar: {
       months: [

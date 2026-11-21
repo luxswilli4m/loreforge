@@ -29,7 +29,8 @@ const INKMAP = {
 };
 export function iconPalette(style) {
   const P = PAL[style] || PAL.parchment;
-  const c = P.mode === 'ink' ? k => (k === 'dark' && P.dark) || P[INKMAP[k] || 'paper'] : k => COL[k] || k;
+  // a '#hex' colour is kept exactly; named roles follow the style
+  const c = P.mode === 'ink' ? k => (k?.[0] === '#' ? k : (k === 'dark' && P.dark) || P[INKMAP[k] || 'paper']) : k => COL[k] || k;
   return { ...P, c };
 }
 
@@ -365,6 +366,41 @@ export const ICONS = {
   } },
 };
 export const ICON_GROUPS = [...new Set(Object.values(ICONS).map(i => i.group))];
+// groups including any custom ones (custom icons first, so your own work is easy to find)
+export const iconGroups = () => { const g = [...new Set(Object.values(ICONS).map(i => i.group))]; const own = g.filter(x => !ICON_GROUPS.includes(x)); return [...own, ...ICON_GROUPS]; };
+
+// ---------- custom icons made in the Asset Forge ----------
+// shapes live in the same 100×100 box as the built-in icons; fills are colour roles ('stone', 'roof'…) or exact '#hex'
+export const ROLES = [['stone', 'Stone'], ['stoneD', 'Dark stone'], ['roof', 'Roof'], ['roofD', 'Dark roof'], ['wood', 'Wood'], ['woodD', 'Dark wood'], ['leaf', 'Leaf'], ['leafD', 'Dark leaf'],
+  ['water', 'Water'], ['sand', 'Sand'], ['earth', 'Earth'], ['cloth', 'Cloth'], ['bone', 'Bone'], ['gold', 'Gold'], ['red', 'Red'], ['fire', 'Fire'], ['glow', 'Magic'], ['snow', 'Snow'], ['dark', 'Shadow / ink']];
+export const roleColor = r => COL[r] || r;
+export function drawShapes(k, ctx, shapes) {
+  const base = ctx.lineWidth;
+  for (const sh of shapes || []) {
+    ctx.lineWidth = base * (sh.lw || 1);
+    const fill = sh.fill || null, outline = sh.stroke !== false;
+    if (sh.t === 'rect') k.rect(sh.x, sh.y, sh.w, sh.h, fill, outline);
+    else if (sh.t === 'ell') k.ell(sh.cx, sh.cy, Math.abs(sh.rx), Math.abs(sh.ry), fill, outline);
+    else if (sh.t === 'poly' || (sh.t === 'path' && sh.closed)) { if (sh.pts?.length > 1) k.poly(sh.pts, fill, outline); }
+    else if (sh.pts?.length > 1) {
+      // an open line: drawn in its colour if it has one, otherwise in the map's ink
+      ctx.beginPath(); sh.pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+      ctx.strokeStyle = fill ? k.c(fill) : k.P.ink; ctx.stroke();
+    }
+  }
+  ctx.lineWidth = base;
+}
+const CUSTOM = new Set();
+export function registerCustomIcons(list) {
+  for (const id of CUSTOM) delete ICONS[id];
+  CUSTOM.clear();
+  for (const a of list || []) {
+    if (a.kind !== 'icon') continue;
+    const id = 'c:' + a.id;
+    ICONS[id] = { label: a.name || 'Custom icon', group: a.group?.trim() || 'Custom', custom: true, v: a.updated || 0, draw: (k, ctx) => drawShapes(k, ctx, a.shapes) };
+    CUSTOM.add(id);
+  }
+}
 
 // draw one sticker centred at (x, y) and `size` pixels tall, in the colours of the given map style
 export function drawIcon(ctx, id, x, y, size, style, opts = {}) {
@@ -387,7 +423,7 @@ const hexA = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${
 // a small picture of an icon for the tool palette
 const thumbCache = new Map();
 export function iconThumb(id, style, px = 44, look = '') {
-  const key = id + style + px + look;
+  const key = id + style + px + look + (ICONS[id]?.v || '');
   if (!thumbCache.has(key)) {
     const c = document.createElement('canvas'); c.width = c.height = px * 2;
     const ctx = c.getContext('2d');

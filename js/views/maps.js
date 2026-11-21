@@ -1,6 +1,6 @@
 import { createArtTool, artSVG, STAMP_DEFS } from './mapart.js';
 import { W, getMap, getEntry, uid, save, TYPES } from '../store.js';
-import { esc, openModal, closeModal, confirmDialog, pickFile, imageToDataURL, toast, go, query, typeColor, promptDialog } from '../util.js';
+import { esc, openModal, closeModal, confirmDialog, pickFile, imageToDataURL, toast, go, query, typeColor, promptDialog, contextMenu, closeContextMenu } from '../util.js';
 import { newEntryDialog } from './entries.js';
 import * as A from '../assets.js';
 import { placeOfMap } from '../hierarchy.js';
@@ -351,6 +351,54 @@ export function renderMap(main, id) {
       }
     }
   });
+  // right-click: select / deselect and the most useful actions for whatever is under the cursor
+  svg.addEventListener('contextmenu', ev => {
+    ev.preventDefault();
+    const pt = toMap(ev), pinEl = ev.target.closest('.pin');
+    if (mode === 'draw') {
+      const t = getArt(), hit = t.hitAt(ev), cur = t.selected;
+      const TOOLS = [['move', '✋', 'Select & move'], ['pen', '✏️', 'Pen'], ['marker', '🖍️', 'Marker'], ['line', '╱', 'Line'], ['text', '🔤', 'Text'], ['stamp', '✦', 'Symbols'], ['eraser', '🧽', 'Eraser']];
+      return contextMenu(ev.clientX, ev.clientY, [
+        { header: 'Drawing' },
+        ...(hit ? [{ icon: '☑', label: 'Select this', action: () => { t.selectAt(ev); drawSide(); } }, { icon: '🗑', label: 'Delete this', danger: true, action: () => { t.selectAt(ev); t.deleteSelected(); drawSide(); } }] : []),
+        ...(cur ? [{ icon: '☐', label: 'Deselect', action: () => { t.deselect(); drawSide(); } }] : []),
+        ...(hit || cur ? ['-'] : []),
+        ...TOOLS.filter(([k]) => k !== t.tool).map(([k, i, l]) => ({ icon: i, label: l, action: () => { t.setTool(k); drawSide(); } })),
+        '-',
+        { icon: '⤢', label: 'Fit map to view', action: fit },
+        { icon: '✓', label: 'Stop drawing', action: () => setMode('pan') },
+      ]);
+    }
+    if (pinEl) {
+      const p = m.pins.find(x => x.id === pinEl.dataset.pin); if (!p) return;
+      const ent = getEntry(p.entryId), sub = getMap(p.submapId), name = p.label || ent?.name || 'Pin';
+      return contextMenu(ev.clientX, ev.clientY, [
+        { header: name },
+        selected === p.id ? { icon: '☐', label: 'Deselect', action: () => { selected = null; drawPins(); drawSide(); } }
+          : { icon: '☑', label: 'Select', action: () => { setMode('pan'); selected = p.id; drawPins(); drawSide(); } },
+        ...(ent ? [{ icon: '📖', label: `Open ${ent.name}`, action: () => go(`#/entry/${ent.id}`) }] : []),
+        ...(sub ? [{ icon: '↘', label: `Enter ${sub.name}`, action: () => go(`#/map/${sub.id}`) }] : []),
+        { icon: '✎', label: 'Rename…', action: async () => { const v = await promptDialog('Pin label', p.label || ent?.name || ''); if (v != null) { p.label = v; save(); drawPins(); drawSide(); } } },
+        { icon: '🎯', label: 'Centre on it', action: () => centerOn(p.x, p.y) },
+        { icon: '📏', label: 'Measure from here', action: () => { setMode('measure'); measure = [{ x: p.x, y: p.y }]; drawOverlay(); updateInfo(); } },
+        '-',
+        { icon: '🗑', label: 'Delete pin', danger: true, action: () => { m.pins = m.pins.filter(x => x !== p); if (selected === p.id) selected = null; save(); drawPins(); drawSide(); } },
+      ]);
+    }
+    const inside = pt.x >= 0 && pt.y >= 0 && pt.x <= m.w && pt.y <= m.h;
+    contextMenu(ev.clientX, ev.clientY, [
+      ...(selected ? [{ icon: '☐', label: 'Deselect', action: () => { selected = null; drawPins(); drawSide(); } }] : []),
+      ...(inside ? [{ icon: '📍', label: 'Add a pin here', action: () => {
+        const p = { id: uid(), x: pt.x, y: pt.y, label: '', entryId: '', submapId: '', color: '' };
+        m.pins.push(p); selected = p.id; save(); setMode('pan'); drawPins(); drawSide(); side.querySelector('#p-label')?.focus();
+      } }, { icon: '📏', label: 'Measure from here', action: () => { setMode('measure'); measure = [pt]; drawOverlay(); updateInfo(); } }] : []),
+      ...(mode !== 'pan' ? [{ icon: '✋', label: 'Back to Select', action: () => setMode('pan') }] : []),
+      { icon: '🖌️', label: 'Draw on the map', action: () => setMode('draw') },
+      { icon: '⤢', label: 'Fit map to view', action: fit },
+      ...(m.gen?.edit ? [{ icon: '✏️', label: 'Edit in the map generator', action: () => go(`#/generate?edit=${m.id}`) }] : []),
+    ]);
+  });
+  svg.addEventListener('pointerdown', () => closeContextMenu(), true);
   svg.addEventListener('dblclick', () => { if (mode === 'measure') { measure = []; drawOverlay(); updateInfo(); } });
   svg.addEventListener('wheel', ev => {
     ev.preventDefault();

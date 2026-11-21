@@ -1,11 +1,11 @@
 import { W, uid, save, getMap, getEntry, newEntry, TYPES } from '../store.js';
-import { esc, query, go, toast, openModal, closeModal, promptDialog, pickFile } from '../util.js';
+import { esc, query, go, toast, openModal, closeModal, promptDialog, pickFile, contextMenu, closeContextMenu } from '../util.js';
 import { openGlobe } from './globe.js';
-import { randomSeed, ensureFonts, drawFrame, drawCompass, drawScaleBar, drawCartouche } from '../gen/core.js';
+import { randomSeed, ensureFonts, drawFrame, drawCompass, drawScaleBar, drawCartouche, chaikin } from '../gen/core.js';
 import { generateWorld, renderWorld, WORLD_DEFAULTS, WORLD_SIZES, worldUnits, worldFrameStyle, makeEditState, completeEdit, SHAPES, shapePreview, heightsFromImage, LAYERS, cloneEdit, applyBrush, drawEditPreview,
   editToBlob, editFromBlob, BIOME_LABELS, REALM_COLORS } from '../gen/world.js';
 import { generateCity, renderCity, CITY_DEFAULTS, CITY_EXTENTS, cityFrameStyle, citySubtitle, ROOF_SWATCHES, ROAD_SWATCHES, cloneCity, cityBrush, addCityWall, nearestWall, removeCityWall, snapToRoad, addCityRiver, addCityPond, nearestWater, removeCityWater, streetAngle, reshapeCityLine, addCityRoad, nearestRoad, removeCityRoad, cityToBlob, cityFromBlob } from '../gen/city.js';
-import { ICONS, ICON_GROUPS, iconThumb, drawIcon } from '../gen/icons.js';
+import { ICONS, iconGroups, iconThumb, drawIcon, registerCustomIcons } from '../gen/icons.js';
 import { curveFromPts, samplePath, segMid, hitCurve, pullSegment, addElbow, removeElbow, straighten, cloneLine } from '../gen/bend.js';
 import { placeName, realmBase, realmName } from '../gen/names.js';
 import { rng } from '../gen/core.js';
@@ -46,8 +46,8 @@ const TOOL_HELP = {
   land: 'Drag across the sea to add land.', sea: 'Drag across land to flood it.',
   biome: 'Paint forests, deserts, swamps… “Automatic” lets the climate decide again.', realm: 'Paint land into a realm. “Automatic” lets borders grow naturally again.',
   town: 'Click land to add a town. Drag a town to move it. Click a town to rename it, make it a capital or delete it.',
-  river: 'Drag from the source to the sea. Rivers start thin and widen as they go.', dry: 'Drag over generated rivers to dry them up.',
-  road: 'Drag to draw a road or trade route.', erase: 'Click a river or road you drew to remove it.',
+  river: 'Freehand: drag from the source to the sea. Point to point: click along its course, then double-click or press Enter. Rivers start thin and widen as they go; reshape them later with Bend & elbows.', dry: 'Drag over generated rivers to dry them up.',
+  road: 'Freehand: drag to draw a road or trade route. Point to point: click along it, then double-click or press Enter.', erase: 'Click a river or road you drew to remove it.',
   bend: 'Click a road or river to pick it up. Drag the line to bend it; drag a dot to move an end or elbow. Double-click the line to add an elbow, double-click an elbow to remove it. Right-click to let go. (Works on rivers and roads you drew.)',
   icon: 'Pick an icon below, then click the map to drop it. Drag an icon to move it; click one to resize, flip or remove it (Delete key works too).',
   label: 'Click empty space to add your own label. Click an existing label (realm, mountain, forest, sea or yours) to rename it — leave it blank to hide it.',
@@ -68,8 +68,8 @@ const CITY_HELP = {
   'bld-paint': 'Drag over buildings to repaint their roofs.', 'tree-add': 'Drag to plant trees.', 'tree-del': 'Drag to clear trees.',
   wall: 'Click to place wall corners; double-click or press Enter to finish (right-click cancels). A closed wall loops back to the start; an open wall stays a line. Gates open where roads cross.',
   'wall-del': 'Click a wall to knock it down.',
-  road: 'Click to place points along a road; double-click or press Enter to finish (right-click cancels). Connected roads latch onto roads already on the map.',
-  river: 'Click points along the river’s course; double-click or press Enter to finish. Bridges appear where roads cross.',
+  road: 'Freehand: drag to draw. Point to point: click along the road, then double-click or press Enter (right-click cancels). Connected roads latch onto roads already on the map.',
+  river: 'Freehand: drag along the river’s course. Point to point: click along it, then double-click or press Enter. Bridges appear where roads cross; reshape it later with Bend & elbows.',
   lake: 'Click around the shore of a lake or pond; click the first point again, double-click or press Enter to fill it.',
   'water-del': 'Click a river or lake to drain it (this works on the generated river too).',
   bend: 'Click a road or river to pick it up. Drag the line to bend it; drag a dot to move an end or elbow. Double-click the line to add an elbow, double-click an elbow to remove it. Right-click to let go. Works on every road and river, including the generated ones.',
@@ -81,9 +81,11 @@ const CITY_HELP = {
 const memo = { mode: 'world', world: { ...WORLD_DEFAULTS, seed: randomSeed() }, city: { ...CITY_DEFAULTS, seed: randomSeed() },
   tool: { tool: 'raise', size: 8, strength: 0.5, biome: 2, realm: -2, riverW: 2.2, labelSize: 1, icon: 'castle', iconSize: 1 },
   ctool: { tool: 'bld-add', size: 70, roof: '', road: '#b8946a', wallClosed: true, roadSnap: true, uniform: true, riverW: 1, icon: 'castle', iconSize: 1 } };
+memo.lineMode = 'free'; // rivers & roads: 'free' (drag) or 'points' (click elbow to elbow), shared by both editors
 const BW = 1000; // layout width of the zoomable map
 
 export function render(main) {
+  registerCustomIcons(W().assets);
   const q = query();
   if (q.mode === 'city' || q.mode === 'world') memo.mode = q.mode;
   if (q.name && memo.mode === 'city') memo.city.name = q.name;
@@ -95,7 +97,7 @@ export function render(main) {
   // world editor state
   let ed = null, wEdit = false, selTown = -1, edVersion = 0;
   // city editor state
-  let ced = null, cEdit = false, cVersion = 0, poly = null, selIcon = null, bendSel = null;
+  let ced = null, cEdit = false, cVersion = 0, poly = null, selIcon = null, bendSel = null, wpoly = null;
   let undoStack = [], redoStack = [];
   let editMapId = q.edit || '';
   let pendingShots = [];
@@ -191,7 +193,8 @@ export function render(main) {
     const brush = BRUSH_TOOLS.includes(t.tool) ? `
       <label>Brush size <span class="val">${fmtSize(t.size)}</span></label><input type="range" data-t="size" data-log min="0" max="100" step="1" value="${sizeToSlider(t.size)}">
       ${['biome', 'realm', 'dry'].includes(t.tool) ? '' : `<label>Strength <span class="val">${Math.round(t.strength * 100)}%</span></label><input type="range" data-t="strength" min="0.05" max="1" step="0.05" value="${t.strength}">`}` : '';
-    const riverOpt = t.tool === 'river' ? `<label>River size at the mouth</label><select data-t="riverW">${[[1, 'Stream'], [2.2, 'River'], [4, 'Great river']].map(([v, l]) => `<option value="${v}" ${+t.riverW === v ? 'selected' : ''}>${l}</option>`).join('')}</select>` : '';
+    const riverOpt = (t.tool === 'river' || t.tool === 'road' ? lineModeHTML() : '') + (t.tool === 'river' ? `<label>River size</label><div class="seg small">${[[1, 'Stream'], [2.2, 'River'], [4, 'Great river']].map(([v, l]) => `<button class="${+t.riverW === v ? 'on' : ''}" data-wriver="${v}">${l}</button>`).join('')}</div>` : '')
+      + (wpoly ? `<div class="row" style="margin-top:8px"><button class="small primary" id="w-finish">Finish ${wpoly.tool}</button><button class="small" id="w-cancel">Cancel</button></div>` : '');
     const labelOpt = t.tool === 'label' ? `<label>New label size</label><select data-t="labelSize">${[[0.7, 'Small'], [1, 'Medium'], [1.5, 'Large'], [2.2, 'Huge']].map(([v, l]) => `<option value="${v}" ${+t.labelSize === v ? 'selected' : ''}>${l}</option>`).join('')}</select>` : '';
     const drawn = (ed.rivers?.length || ed.roads?.length) ? `<p class="small muted" style="margin:8px 0 0">Drawn: ${ed.rivers.length} river${ed.rivers.length === 1 ? '' : 's'}, ${ed.roads.length} road${ed.roads.length === 1 ? '' : 's'}</p>` : '';
     const regen = `<div class="tg-label">Regenerate</div><div class="regen-row">
@@ -245,10 +248,11 @@ export function render(main) {
   }
 
   const seg = (key, opts, val) => `<div class="seg small">${opts.map(([v, l, tip]) => `<button class="${val === v ? 'on' : ''}" data-seg="${key}" data-v="${v}" title="${esc(tip || '')}">${l}</button>`).join('')}</div>`;
+  const lineModeHTML = () => `<label>How to draw</label><div class="seg small"><button class="${memo.lineMode === 'free' ? 'on' : ''}" data-lmode="free" title="Hold and drag, like a pen">✏️ Freehand</button><button class="${memo.lineMode === 'points' ? 'on' : ''}" data-lmode="points" title="Click from point to point; double-click or Enter to finish">📍 Point to point</button></div>`;
   function iconPanelHTML(t, style) {
     const sel = selIcon, look = sel ? (sel.look || '') : (t.iconLook || '');
     return `<label>Icon look</label><div class="seg small"><button class="${!look ? 'on' : ''}" data-ilook="" title="Coloured to match the map style">🎨 Match map</button><button class="${look === 'marker' ? 'on' : ''}" data-ilook="marker" title="Flat cream markers with a dark outline">◈ Marker</button></div>
-      <div class="icon-pick">${ICON_GROUPS.map(g => `<div class="tg-label">${g}</div><div class="icon-grid">${Object.entries(ICONS).filter(([, ic]) => ic.group === g).map(([id, ic]) =>
+      <div class="icon-pick">${iconGroups().map(g => `<div class="tg-label">${g}</div><div class="icon-grid">${Object.entries(ICONS).filter(([, ic]) => ic.group === g).map(([id, ic]) =>
       `<button class="icon-btn ${t.icon === id ? 'on' : ''}" data-icon="${id}" title="${esc(ic.label)}"><img src="${iconThumb(id, style, 44, look)}" alt=""></button>`).join('')}</div>`).join('')}</div>
       <label>${sel ? 'Selected icon size' : 'Icon size'} <span class="val">${(sel ? sel.s / iconBase() : t.iconSize).toFixed(1)}×</span></label>
       <input type="range" id="ic-size" min="0.3" max="4" step="0.1" value="${sel ? (sel.s / iconBase()).toFixed(1) : t.iconSize}">
@@ -273,7 +277,7 @@ export function render(main) {
     const wall = t.tool === 'wall' ? `<label>Wall shape</label>${seg('wallClosed', [['1', '⭕ Closed loop', 'Joins back to where you started'], ['0', '➖ Open line', 'A straight or winding wall that doesn’t close']], t.wallClosed ? '1' : '0')}` : '';
     const roadMode = t.tool === 'road' ? `<label>Road joins</label>${seg('roadSnap', [['1', '🔗 Connected', 'Points near another road latch onto it'], ['0', '✏️ Free', 'Points go exactly where you click']], t.roadSnap ? '1' : '0')}` : '';
     const bld = t.tool === 'bld-add' ? `<label>Layout</label>${seg('uniform', [['1', '▦ Uniform', 'Tight rows along the street, like the town'], ['0', '⁘ Loose', 'Scattered cottages']], t.uniform ? '1' : '0')}` : '';
-    const river = t.tool === 'river' ? `<label>River width</label>${seg('riverW', [['0.5', 'Stream'], ['1', 'River'], ['1.7', 'Wide']], String(t.riverW))}` : '';
+    const river = (t.tool === 'river' || t.tool === 'road' ? lineModeHTML() : '') + (t.tool === 'river' ? `<label>River size</label>${seg('riverW', [['0.5', 'Stream'], ['1', 'River'], ['1.7', 'Great river']], String(t.riverW))}` : '');
     const icons = t.tool === 'icon' ? iconPanelHTML(t, o.style) : '';
     const bendOpt = t.tool === 'bend' ? (bendSel ? `<div class="sel-town"><b>${esc(bendSel.label)}</b> <span class="muted small">· ${bendSel.line.ctl.length - 2} elbow${bendSel.line.ctl.length === 3 ? '' : 's'}</span>
         <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap"><button class="small" id="bd-straight">Straighten bends</button><button class="small" id="bd-done">Let go</button></div></div>` : `<p class="small muted" style="margin:8px 0 0">Click a road or river to start.</p>`) : '';
@@ -392,24 +396,31 @@ export function render(main) {
   main.querySelector('#z-fit').onclick = fit;
   let pan = null, spaceDown = false;
   pv.addEventListener('pointerdown', ev => {
-    if (ev.button === 2 && editing() && (poly || selIcon || bendSel)) {
+    closeContextMenu();
+    // right-click while drawing a line cancels it
+    if (ev.button === 2 && editing() && (poly || wpoly)) {
       ev.preventDefault(); ev.stopPropagation();
-      if (poly) { poly = null; toast('Drawing cancelled'); } else if (bendSel) bendSel = null; else selIcon = null;
+      poly = null; wpoly = null; drawLine(null); toast('Drawing cancelled');
       drawPoly(); drawControls(); return;
     }
     const wantPan = ev.button === 1 || ev.button === 2 || spaceDown || (ev.button === 0 && !editing());
     if (!wantPan || ev.target.closest('.zoom-btns')) return;
     ev.preventDefault(); ev.stopPropagation();
     pv.setPointerCapture(ev.pointerId);
-    pan = { sx: ev.clientX, sy: ev.clientY, x: view.x, y: view.y };
+    pan = { sx: ev.clientX, sy: ev.clientY, x: view.x, y: view.y, button: ev.button, ev };
     pv.classList.add('panning');
   }, true);
   pv.addEventListener('pointermove', ev => {
     if (!pan) return;
     view.x = pan.x + ev.clientX - pan.sx; view.y = pan.y + ev.clientY - pan.sy; view.fitted = false; applyView();
   });
-  const endPan = () => { if (pan) { pan = null; pv.classList.remove('panning'); } };
-  pv.addEventListener('pointerup', endPan); pv.addEventListener('pointercancel', endPan);
+  const endPan = e => {
+    if (!pan) return;
+    const p0 = pan; pan = null; pv.classList.remove('panning');
+    // a right-click that didn't drag opens the menu
+    if (p0.button === 2 && e && Math.hypot(e.clientX - p0.sx, e.clientY - p0.sy) < 5) genMenu(e);
+  };
+  pv.addEventListener('pointerup', endPan); pv.addEventListener('pointercancel', () => endPan());
   pv.addEventListener('contextmenu', ev => ev.preventDefault());
 
   async function regen(force = false) {
@@ -439,7 +450,7 @@ export function render(main) {
     } catch (e) { console.error(e); toast('Something went wrong drawing that map — try another seed'); }
     busy = false; busyEl.classList.remove('on');
     ov.classList.remove('on');
-    if (!stroke) { if (memo.mode === 'city' && poly) drawPoly(); else { clearCov(); drawIconSel(); drawBend(); } }
+    if (!stroke) { if (memo.mode === 'city' && poly) drawPoly(); else if (wpoly) drawWPoly(); else { clearCov(); drawIconSel(); drawBend(); } }
     if (view.fitted || prevW !== canvas.width || prevH !== canvas.height) fit(); else { drawFurniture(); scheduleDetail(); }
     drawMark();
     if (pending) { pending = false; regen(); }
@@ -708,6 +719,82 @@ export function render(main) {
     applyBend(bendSel); changed(); redrawBend(); drawControls();
   }
 
+
+  // ---------- world: rivers & roads point to point ----------
+  function drawWPoly(hover) {
+    if (!wpoly) { drawLine(null); return; }
+    const pts = hover ? [...wpoly.pts, hover] : wpoly.pts;
+    drawLine({ tool: wpoly.tool, pts: pts.length > 2 ? chaikin(pts, 2) : pts });
+    const c = cov.getContext('2d'), k = canvas.width / gdim()[0], sc = canvas.width / canvas.getBoundingClientRect().width;
+    for (const [i, p] of wpoly.pts.entries()) { c.beginPath(); c.arc((p[0] + 0.5) * k, (p[1] + 0.5) * k, (i ? 5 : 6.5) * sc, 0, Math.PI * 2); c.fillStyle = i ? '#fff' : '#d4a24c'; c.fill(); c.strokeStyle = '#000'; c.lineWidth = 1.6 * sc; c.stroke(); }
+  }
+  function finishWPoly() {
+    if (!wpoly) return;
+    const w0 = wpoly; wpoly = null; drawLine(null);
+    if (w0.pts.length >= 2) {
+      pushUndo();
+      const pts = (w0.pts.length > 2 ? chaikin(w0.pts, 3) : w0.pts).map(p => [+p[0].toFixed(2), +p[1].toFixed(2)]);
+      if (w0.tool === 'river') ed.rivers.push({ pts, w: +memo.tool.riverW || 2.2 }); else ed.roads.push({ pts });
+      changed();
+    }
+    drawControls();
+  }
+  // ---------- city: rivers & roads freehand ----------
+  function drawFree(st) {
+    clearCov();
+    const c = cov.getContext('2d'), u = cu();
+    c.setTransform(u, 0, 0, u, 0, 0); c.lineJoin = c.lineCap = 'round';
+    c.beginPath(); st.pts.forEach((p, i) => i ? c.lineTo(...p) : c.moveTo(...p));
+    const w = st.tool === 'river' ? ced.riverW * (+memo.ctool.riverW || 1) : ced.roadW;
+    c.strokeStyle = 'rgba(0,0,0,.45)'; c.lineWidth = w + 4 / u; c.stroke();
+    c.strokeStyle = st.tool === 'river' ? '#5aa2c4' : (memo.ctool.road || '#c2beb6'); c.lineWidth = w; c.stroke();
+  }
+  function finishFree(st) {
+    clearCov();
+    let pts = st.pts;
+    if (pts.length < 2) { undoStack.pop(); return; }
+    if (st.tool === 'road' && memo.ctool.roadSnap) {
+      const tol = cityTol(22) + ced.roadW / 2;
+      const a = snapToRoad(ced, pts[0], tol), b = snapToRoad(ced, pts[pts.length - 1], tol);
+      pts = [...pts]; if (a) pts[0] = a; if (b) pts[pts.length - 1] = b;
+    }
+    if (st.tool === 'river') addCityRiver(ced, pts, ced.riverW * (+memo.ctool.riverW || 1));
+    else { addCityRoad(ced, pts); if (memo.ctool.road) ced.roadColors[ced.roads.length - 1] = memo.ctool.road; }
+    changed(); drawControls();
+  }
+
+
+  // ---------- right-click menu (select / deselect, quick tools) ----------
+  function genMenu(ev) {
+    if (!data) return;
+    const items = [];
+    if (!editing()) {
+      items.push({ header: 'Map' }, { icon: '✏️', label: 'Edit this map', action: () => startEditing() });
+    } else {
+      const world = memo.mode === 'world', t = world ? memo.tool : memo.ctool;
+      const ic = hitIcon(ev), line = pickBendLine(bPos(ev));
+      items.push({ header: world ? 'World editor' : 'City editor' });
+      if (ic && ic !== selIcon) items.push({ icon: '☑', label: `Select ${ICONS[ic.t]?.label || 'icon'}`, action: () => { t.tool = 'icon'; bendSel = null; selIcon = ic; drawControls(); redrawBend(); } });
+      if (selIcon) items.push({ icon: '☐', label: 'Deselect icon', action: () => { selIcon = null; redrawBend(); drawControls(); } },
+        { icon: '⇋', label: 'Flip icon', action: () => { pushUndo(); selIcon.flip = !selIcon.flip; iconsChanged(); } },
+        { icon: '🗑', label: 'Remove icon', danger: true, action: () => { pushUndo(); const l = iconList(), i = l.indexOf(selIcon); if (i >= 0) l.splice(i, 1); selIcon = null; drawControls(); iconsChanged(); } });
+      if (line && (!bendSel || bendSel.ref.type !== line.type || bendSel.ref.i !== line.i)) items.push({ icon: '〽️', label: `Select this ${line.label.toLowerCase()} to bend it`, action: () => { t.tool = 'bend'; selIcon = null; bendSel = { ref: line, line: refLine(line), label: line.label }; drawControls(); redrawBend(); } });
+      if (bendSel) items.push({ icon: '☐', label: `Deselect the ${bendSel.label.toLowerCase()}`, action: () => { bendSel = null; redrawBend(); drawControls(); } },
+        { icon: '⌒', label: 'Straighten its bends', action: () => { pushUndo(); straighten(bendSel.line); applyBend(bendSel); changed(); redrawBend(); drawControls(); } });
+      if (world && t.tool === 'town' && selTown >= 0) items.push({ icon: '☐', label: 'Deselect town', action: () => { selTown = -1; drawControls(); drawMark(); } });
+      if (items.length > 1) items.push('-');
+      const quick = world ? [['raise', '⬆️', 'Raise land'], ['river', '〰️', 'Draw river'], ['road', '🛣️', 'Draw road'], ['bend', '〽️', 'Bend & elbows'], ['town', '🏘️', 'Towns'], ['label', '🏷️', 'Labels'], ['icon', '🐉', 'Map icons']]
+        : [['bld-add', '🏠', 'Add buildings'], ['wall', '🧱', 'Draw wall'], ['road', '🛣️', 'Draw road'], ['river', '〰️', 'Draw river'], ['bend', '〽️', 'Bend & elbows'], ['icon', '🐉', 'Map icons']];
+      for (const [k, i, l] of quick) if (k !== t.tool) items.push({ icon: i, label: l, action: () => { t.tool = k; selIcon = null; bendSel = null; poly = null; wpoly = null; clearCov(); drawControls(); } });
+      items.push('-');
+      if (undoStack.length) items.push({ icon: '↶', label: 'Undo', hint: 'Ctrl+Z', action: undo });
+      if (redoStack.length) items.push({ icon: '↷', label: 'Redo', hint: 'Ctrl+Y', action: redo });
+    }
+    items.push({ icon: '⤢', label: 'Fit the whole map', action: fit });
+    if (editing()) items.push({ icon: '✓', label: 'Done editing', action: () => { wEdit = cEdit = false; poly = null; wpoly = null; selIcon = null; bendSel = null; clearCov(); cur.style.display = 'none'; drawControls(); } });
+    contextMenu(ev.clientX, ev.clientY, items);
+  }
+
   let stroke = null;
   canvas.addEventListener('pointermove', ev => {
     if (!editing() || pan) return;
@@ -721,6 +808,12 @@ export function render(main) {
       cur.style.display = 'block';
     } else cur.style.display = 'none';
     if (stroke?.kind === 'bend') { bendMove(ev); return; }
+    if (stroke?.kind === 'cfree') {
+      const p = cityPos(ev), l = stroke.pts[stroke.pts.length - 1];
+      if (Math.hypot(p[0] - l[0], p[1] - l[1]) >= cityTol(5)) { stroke.pts.push(p); drawFree(stroke); }
+      return;
+    }
+    if (wpoly && memo.mode === 'world') { drawWPoly(gridPos(ev)); }
     if (stroke?.kind === 'icon') {
       if (!stroke.moved && Math.hypot(ev.clientX - stroke.sx, ev.clientY - stroke.sy) < 3) return;
       stroke.moved = true;
@@ -777,6 +870,12 @@ export function render(main) {
       if (t.tool === 'icon') { iconDown(ev); return; }
     if (t.tool === 'bend') { bendDown(ev); return; }
       if (t.tool === 'bend') { bendDown(ev); return; }
+      if ((t.tool === 'river' || t.tool === 'road') && memo.lineMode === 'free' && !poly) {
+        pushUndo();
+        const [q] = roadPoint(p);
+        stroke = { kind: 'cfree', tool: t.tool, pts: [q] };
+        return;
+      }
       if (POLY_TOOLS.includes(t.tool)) {
         if (!poly) poly = [];
         if (polyClosed() && poly.length > 2 && Math.hypot(p[0] - poly[0][0], p[1] - poly[0][1]) < cityTol(24)) { finishPoly(); return; }
@@ -812,6 +911,13 @@ export function render(main) {
     }
     const [gx, gy] = gridPos(ev), t = memo.tool;
     const tolG = 12 / canvas.getBoundingClientRect().width * gdim()[0] + 0.6;
+    if ((t.tool === 'river' || t.tool === 'road') && memo.lineMode === 'points') {
+      if (!wpoly) wpoly = { tool: t.tool, pts: [] };
+      const last = wpoly.pts[wpoly.pts.length - 1];
+      if (!last || Math.hypot(gx - last[0], gy - last[1]) > 0.3) wpoly.pts.push([gx, gy]);
+      drawWPoly(); if (wpoly.pts.length === 1) drawControls();
+      return;
+    }
     if (t.tool === 'river' || t.tool === 'road') { stroke = { kind: 'line', tool: t.tool, pts: [[+gx.toFixed(2), +gy.toFixed(2)]] }; drawLine(stroke); return; }
     if (t.tool === 'erase') {
       const near = (list) => list.findIndex(l => l.pts.some((p, j) => j && segD([gx, gy], l.pts[j - 1], p) < tolG));
@@ -843,11 +949,12 @@ export function render(main) {
     drawEditPreview(ed, ov, data?.gen);
     ov.classList.add('on');
   });
-  canvas.addEventListener('dblclick', ev => { if (editing() && bendTool()) { ev.preventDefault(); bendDbl(ev); return; } if (memo.mode === 'city' && cEdit && poly) { ev.preventDefault(); finishPoly(); } });
+  canvas.addEventListener('dblclick', ev => { if (editing() && wpoly) { ev.preventDefault(); finishWPoly(); return; } if (editing() && bendTool()) { ev.preventDefault(); bendDbl(ev); return; } if (memo.mode === 'city' && cEdit && poly) { ev.preventDefault(); finishPoly(); } });
   const endStroke = () => {
     if (!stroke) return;
     const s0 = stroke; stroke = null;
     if (s0.kind === 'bend') { stroke = s0; bendUp(); return; }
+    if (s0.kind === 'cfree') { finishFree(s0); return; }
     if (s0.kind === 'icon') {
       iconList().push(s0.ic);
       if (!s0.moved) undoStack.pop();
@@ -926,6 +1033,8 @@ export function render(main) {
     if (ev.code === 'Space' && !typing(ev)) { if (!spaceDown) { spaceDown = true; pv.classList.add('space-pan'); } ev.preventDefault(); return; }
     if (!editing() || typing(ev)) return;
     if (poly && ev.key === 'Enter') { ev.preventDefault(); finishPoly(); return; }
+    if (wpoly && ev.key === 'Enter') { ev.preventDefault(); finishWPoly(); return; }
+    if (wpoly && ev.key === 'Escape') { ev.preventDefault(); ev.stopImmediatePropagation(); wpoly = null; drawLine(null); drawControls(); return; }
     if (selIcon && (ev.key === 'Delete' || ev.key === 'Backspace')) { ev.preventDefault(); pushUndo(); const l = iconList(), i = l.indexOf(selIcon); if (i >= 0) l.splice(i, 1); selIcon = null; drawControls(); iconsChanged(); return; }
     if (bendSel && ev.key === 'Escape') { bendSel = null; redrawBend(); drawControls(); return; }
     if (selIcon && ev.key === 'Escape') { selIcon = null; drawPoly(); drawControls(); return; }
@@ -1004,8 +1113,12 @@ export function render(main) {
   ctl.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
     const o = memo[memo.mode];
-    if (b.dataset.tool) { selIcon = null; bendSel = null; clearCov(); memo.tool.tool = b.dataset.tool; if (b.dataset.tool !== 'town') selTown = -1; if (b.dataset.tool === 'realm' && +memo.tool.realm === -2 && ed.realms[0]) memo.tool.realm = ed.realms[0].id; drawControls(); }
+    if (b.dataset.tool) { selIcon = null; bendSel = null; wpoly = null; clearCov(); memo.tool.tool = b.dataset.tool; if (b.dataset.tool !== 'town') selTown = -1; if (b.dataset.tool === 'realm' && +memo.tool.realm === -2 && ed.realms[0]) memo.tool.realm = ed.realms[0].id; drawControls(); }
     else if (b.dataset.ctool) { selIcon = null; bendSel = null; poly = null; memo.ctool.tool = b.dataset.ctool; drawPoly(); drawControls(); }
+    else if (b.dataset.lmode) { memo.lineMode = b.dataset.lmode; poly = null; wpoly = null; drawPoly(); drawControls(); }
+    else if (b.dataset.wriver) { memo.tool.riverW = +b.dataset.wriver; drawControls(); }
+    else if (b.id === 'w-finish') finishWPoly();
+    else if (b.id === 'w-cancel') { wpoly = null; drawLine(null); drawControls(); }
     else if (b.dataset.seg) { const k = b.dataset.seg, v = b.dataset.v; memo.ctool[k] = k === 'riverW' ? +v : v === '1'; if (poly && k === 'wallClosed') drawPoly(); drawControls(); }
     else if (b.dataset.ilook != null) { const v = b.dataset.ilook; iconTool().iconLook = v; if (selIcon) { pushUndo(); if (v) selIcon.look = v; else delete selIcon.look; iconsChanged(); } drawControls(); }
     else if (b.dataset.icon) { iconTool().icon = b.dataset.icon; selIcon = null; drawPoly(); drawControls(); }

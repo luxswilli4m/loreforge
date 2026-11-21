@@ -113,6 +113,7 @@ export function worldAssetIds(w) {
     if (isAsset(m.gen?.edit)) ids.add(idOf(m.gen.edit));
     for (const sh of m.shots || []) if (isAsset(sh.image)) ids.add(idOf(sh.image));
   }
+  for (const a of w.assets || []) if (isAsset(a.trace)) ids.add(idOf(a.trace));
   return [...ids];
 }
 

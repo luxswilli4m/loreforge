@@ -19,6 +19,7 @@ import * as forge from './views/forge.js';
 import * as cloudView from './views/cloud.js';
 import * as gallery from './views/gallery.js';
 import * as cosmos from './views/cosmos.js';
+import * as assetForge from './views/assets.js';
 import { initCloud, onConflict, connected as cloudConnected, status as syncStatus } from './cloud.js';
 import { initTray } from './tools/tray.js';
 import { initAssets, migrateWorld } from './assets.js';
@@ -33,6 +34,7 @@ const NAV = [
   { href: '#/generate', icon: '✨', label: 'Map generator', match: /^generate/ },
   { href: '#/graph', icon: '🕸️', label: 'World Web', match: /^graph/ },
   { href: '#/cosmos', icon: '🌌', label: 'Cosmos', match: /^cosmos/ },
+  { href: '#/assets', icon: '🛠️', label: 'Asset Forge', match: /^assets/ },
   null,
   { href: '#/campaign', icon: '🎲', label: 'Campaign', match: /^(campaign|session)/ },
   { href: '#/timeline', icon: '⏳', label: 'Timeline', match: /^timeline/ },
@@ -102,6 +104,7 @@ export function route() {
     map: () => maps.renderMap(main, a),
     gallery: () => gallery.render(main, a),
     cosmos: () => cosmos.render(main),
+    assets: () => assetForge.render(main),
     graph: () => graph.render(main),
     campaign: () => campaign.renderList(main),
     session: () => campaign.renderSession(main, a),
