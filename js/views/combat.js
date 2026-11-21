@@ -7,6 +7,7 @@ import { esc, toast, openModal, closeModal, query, go, typeColor } from '../util
 import { rollAndLog } from '../tools/dice.js';
 import * as A from '../assets.js';
 import { combatStats, writeBack, ensureSheet, derive, ABIL, sgn, CR_XP, speedText } from './sheet.js';
+import { LIBRARIES, loadLibrary, findMonster, combatBase, statblockHTML } from '../gen/statblocks.js';
 
 export const CONDS = {
   Blinded: ['🙈', 'Can’t see and fails any check that needs sight. Attacks against it have advantage; its own attacks have disadvantage.'],
@@ -32,7 +33,7 @@ const THRESH = { 1: [25, 50, 75, 100], 2: [50, 100, 150, 200], 3: [75, 150, 225,
   11: [800, 1600, 2400, 3600], 12: [1000, 2000, 3000, 4500], 13: [1100, 2200, 3400, 5100], 14: [1250, 2500, 3800, 5700], 15: [1400, 2800, 4300, 6400], 16: [1600, 3200, 4800, 7200], 17: [2000, 3900, 5900, 8800], 18: [2100, 4200, 6300, 9500], 19: [2400, 4900, 7300, 10900], 20: [2800, 5700, 8500, 12700] };
 const multiplier = n => n <= 1 ? 1 : n === 2 ? 1.5 : n <= 6 ? 2 : n <= 10 ? 2.5 : n <= 14 ? 3 : 4;
 const PREF_KEY = 'loreforge:combat';
-const prefs = (() => { try { return { autoSort: true, skipDown: true, rollHp: false, allyHp: true, ...JSON.parse(localStorage.getItem(PREF_KEY) || '{}') }; } catch { return { autoSort: true, skipDown: true, rollHp: false, allyHp: true }; } })();
+const prefs = (() => { try { return { autoSort: true, skipDown: true, rollHp: false, allyHp: true, exh: '2014', ...JSON.parse(localStorage.getItem(PREF_KEY) || '{}') }; } catch { return { autoSort: true, skipDown: true, rollHp: false, allyHp: true }; } })();
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch { /* */ } };
 const chan = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('loreforge-combat') : null;
 
@@ -85,6 +86,7 @@ export function render(main) {
           <label class="check"><input type="checkbox" data-pref="skipDown" ${prefs.skipDown ? 'checked' : ''}> Skip defeated enemies’ turns</label>
           <label class="check"><input type="checkbox" data-pref="rollHp" ${prefs.rollHp ? 'checked' : ''}> Roll creatures’ hit points (when their sheet has hit dice)</label>
           <label class="check"><input type="checkbox" data-pref="allyHp" ${prefs.allyHp ? 'checked' : ''}> Player view shows allies’ exact HP</label>
+          <label>Exhaustion rules</label><select id="cb-exh"><option value="2014" ${prefs.exh !== '2024' ? 'selected' : ''}>2014: six levels with their own effects</option><option value="2024" ${prefs.exh === '2024' ? 'selected' : ''}>2024: −2 per level to d20 tests, −5 ft speed per level</option></select>
         </details>
       </aside>
       <section class="cb-main">
@@ -106,7 +108,7 @@ export function render(main) {
   function syncSheet(x) {
     if (!x.sync) return;
     const e = getEntry(x.entryId); if (!e?.sheet) return;
-    writeBack(e, { hp: x.hp, temp: x.temp, death: x.death });
+    writeBack(e, { hp: x.hp, temp: x.temp, death: x.death, exh: x.exh });
   }
   function add(base, n = 1) {
     const out = [];
@@ -116,7 +118,8 @@ export function render(main) {
       if (base.hpRoll && (prefs.rollHp || !hp)) { try { hp = rollAndLog(base.hpRoll).total; } catch { /* */ } }
       const x = { id: uid(), name: n > 1 || sameName ? `${base.name} ${sameName + i + 1}` : base.name, entryId: base.entryId || '', partyId: base.partyId || '', side: base.side || 'enemy',
         bonus: +base.bonus || 0, dex: base.dex || 10, init: '', hp: base.hp != null && n === 1 ? base.hp : hp || 0, maxHp: hp || 0, temp: base.temp || 0, ac: base.ac ?? '', conds: (base.conds || []).map(k => typeof k === 'string' ? { k } : k),
-        cr: base.cr || '', level: base.level || 0, notes: '', death: { s: 0, f: 0 }, lair: !!base.lair, sync: !!base.sync && n === 1 };
+        cr: base.cr || '', level: base.level || 0, notes: '', death: { s: 0, f: 0 }, lair: !!base.lair, sync: !!base.sync && n === 1,
+        speedFt: base.speedFt ?? 30, bst: base.bst || '', pfLevel: base.pfLevel ?? '', exh: +base.exh || 0, econ: {} };
       // anyone joining a fight already under way rolls straight away
       if (c.turnId || base.lair) x.init = rollInit(x);
       c.list.push(x); out.push(x);
@@ -132,7 +135,7 @@ export function render(main) {
     const party = w.party.find(p => p.entryId === e.id);
     const side = extra.side || (party || e.sheet?.player ? 'ally' : e.type === 'character' ? 'neutral' : 'enemy');
     return add({ name: e.name, entryId: e.id, side, bonus: s.initBonus, dex: s.dex, maxHp: s.maxHp, hp: e.type === 'character' ? s.hp : undefined, temp: e.type === 'character' ? s.temp : 0, ac: s.ac, cr: s.cr, level: s.level, hpRoll: s.hpRoll,
-      conds: e.type === 'character' ? s.conds : [], sync: e.type === 'character', partyId: party?.id, ...extra }, n);
+      conds: e.type === 'character' ? s.conds : [], sync: e.type === 'character', speedFt: s.speedFt, exh: e.type === 'character' ? s.exh : 0, partyId: party?.id, ...extra }, n);
   }
 
   // ---------- damage, healing and turns ----------
@@ -176,7 +179,7 @@ export function render(main) {
   }
   const isDown = x => x.side !== 'ally' && x.maxHp && x.hp <= 0;
   function startTurn(x) {
-    x.reaction = false; if (x.leg) x.leg.used = 0;
+    x.reaction = false; if (x.leg) x.leg.used = 0; x.econ = {};
     // conditions with a duration count down at the start of their turn
     for (const k of x.conds) if (k.rounds) { k.rounds--; if (k.rounds <= 0) { k.gone = true; log(`${x.name} is no longer ${k.k.toLowerCase()}`); } }
     x.conds = x.conds.filter(k => !k.gone);
@@ -204,10 +207,37 @@ export function render(main) {
     startTurn(byId(c.turnId)); focus = c.turnId; draw();
   }
 
+  // ---------- what each creature can still do this turn ----------
+  const ZERO_SPEED = ['Grappled', 'Restrained', 'Paralyzed', 'Petrified', 'Stunned', 'Unconscious'];
+  function speedOf(x) {
+    let sp = +x.speedFt || 0; const why = [];
+    const zero = x.conds.find(k => ZERO_SPEED.includes(k.k));
+    if (zero) return { sp: 0, why: [`${zero.k}: speed 0`] };
+    const e = +x.exh || 0;
+    if (prefs.exh === '2024') { if (e) { sp = Math.max(0, sp - 5 * e); why.push(`Exhaustion ${e}: −${speedText(5 * e)}`); } }
+    else if (e >= 5) { sp = 0; why.push('Exhaustion 5: speed 0'); }
+    else if (e >= 2) { sp = Math.floor(sp / 2); why.push('Exhaustion 2+: speed halved'); }
+    if (x.conds.some(k => k.k === 'Hasted')) { sp *= 2; why.push('Hasted: speed doubled'); }
+    return { sp, why };
+  }
+  function exhNote(x) {
+    const e = +x.exh || 0; if (!e) return '';
+    if (prefs.exh === '2024') return e >= 6 ? 'Dies' : `−${2 * e} to every d20 test, −${speedText(5 * e)} speed`;
+    return ['', 'Disadvantage on ability checks', '…and speed halved', '…and disadvantage on attacks and saving throws', '…and hit point maximum halved', '…and speed 0', 'Dies'][Math.min(6, e)];
+  }
+  function econHTML(x) {
+    if (x.lair) return '';
+    const E = x.econ || {}, { sp, why } = speedOf(x), move = sp * (1 + (E.dash || 0));
+    const pill = (k, label, used, tip) => `<button class="cb-econ ${used ? 'used' : ''}" data-econ="${k}" title="${tip} — click when used">${label}</button>`;
+    return `<div class="cb-econs">${pill('action', 'Action', E.action, 'Action')}${pill('bonus', 'Bonus', E.bonus, 'Bonus action')}${pill('reaction', 'Reaction', x.reaction, 'Reaction (comes back at the start of their turn)')}
+      ${pill('move', `Move ${speedText(move)}`, E.move, `Movement this turn${why.length ? ' — ' + why.join('; ') : ''}${E.dash ? ` (dashed ×${E.dash})` : ''}`)}<button class="cb-dash" data-econ="dash" title="Dash: uses the action (or the bonus action if the action is gone, like a rogue’s Cunning Action or a monk’s Step of the Wind) and adds their speed again. Right-click to use the bonus action.">🏃 Dash</button>
+      ${x.exh ? `<span class="cb-exh" title="${esc(exhNote(x))}">😩 ${x.exh}</span>` : ''}</div>`;
+  }
+
   // ---------- drawing ----------
   function draw() {
     const a = document.activeElement, keep = main.contains(a) && a.dataset.f ? { f: a.dataset.f, id: a.closest('[data-id]')?.dataset.id } : null;
-    drawBar(); drawList(); drawDetail(); drawDiff(); drawLog(); drawGroup();
+    drawBar(); drawList(); drawDetail(); drawDiff(); drawLog(); drawGroup(); fillStatblock();
     if (keep) { const n = main.querySelector(`[data-id="${keep.id}"] [data-f="${keep.f}"]`); n?.focus(); }
     persist();
   }
@@ -239,6 +269,7 @@ export function render(main) {
         <div class="cb-name">${isTurn ? '<span class="cb-arrow">▶</span>' : ''}<input data-f="name" value="${esc(x.name)}">${e ? `<a href="#/entry/${e.id}" class="cb-link" title="Open ${esc(e.name)} in the World Bible" style="color:${typeColor(e.type)}">↗</a>` : ''}
           ${x.conc ? '<span class="cb-badge conc" title="Concentrating">◎ Conc.</span>' : ''}${x.hidden ? '<span class="cb-badge" title="Hidden from the player view">🙈 hidden</span>' : ''}${x.reaction ? '<span class="cb-badge" title="Reaction used this round">⟲ used</span>' : ''}
           ${x.leg?.max ? `<span class="cb-leg" title="Legendary actions — click to use one">${Array.from({ length: x.leg.max }, (_, i) => `<button class="cb-legpip ${i < x.leg.used ? 'on' : ''}" data-act="leg" data-n="${i + 1}"></button>`).join('')}</span>` : ''}</div>
+        ${econHTML(x)}
         <div class="cb-conds">${x.conds.map((k, i) => `<button class="cb-cond" data-act="uncond" data-i="${i}" title="${esc(CONDS[k.k]?.[1] || k.k)} — click to remove">${CONDS[k.k]?.[0] || '🏷️'} ${esc(k.k)}${k.rounds ? ` <i>${k.rounds}</i>` : ''}</button>`).join('')}
           ${x.side === 'ally' && x.maxHp && x.hp <= 0 && !x.dead ? `<span class="cb-ds">Saves <span class="ok">${[1, 2, 3].map(n => `<button class="cb-dpip ${x.death.s >= n ? 'on' : ''}" data-act="ds" data-k="s" data-n="${n}"></button>`).join('')}</span><span class="bad">${[1, 2, 3].map(n => `<button class="cb-dpip ${x.death.f >= n ? 'on' : ''}" data-act="ds" data-k="f" data-n="${n}"></button>`).join('')}</span></span>` : ''}
           ${x.dead ? '<span class="cb-badge dead">💀 Dead</span>' : ''}</div>
@@ -287,14 +318,23 @@ export function render(main) {
         : `<button class="small" data-act="tobible">📚 Save to the World Bible</button>`}
       <div class="cb-kv" style="margin-top:8px"><span>Init bonus</span><input data-df="bonus" value="${x.bonus}" class="cb-mini"><span>Temp HP</span><input data-df="temp" value="${x.temp || ''}" class="cb-mini" placeholder="0">
         <span>${x.side === 'ally' ? 'Level' : 'CR'}</span><input data-df="${x.side === 'ally' ? 'level' : 'cr'}" value="${esc(x.side === 'ally' ? (x.level || '') : (x.cr || ''))}" class="cb-mini" placeholder="—">
-        <span>Legendary</span><input data-df="legmax" value="${x.leg?.max || ''}" class="cb-mini" placeholder="0"></div>
+        <span>Legendary</span><input data-df="legmax" value="${x.leg?.max || ''}" class="cb-mini" placeholder="0">
+        <span>Speed</span><span><input data-df="speed" value="${x.speedFt === '' ? '' : (speedText(x.speedFt).split(' ')[0])}" class="cb-mini"> ${speedText(1).split(' ')[1]} ${speedOf(x).sp !== +x.speedFt ? `<i class="small">(now ${speedText(speedOf(x).sp)})</i>` : ''}</span>
+        <span>Exhaustion</span><span><select data-df="exh">${[0, 1, 2, 3, 4, 5, 6].map(n => `<option ${+x.exh === n ? 'selected' : ''}>${n}</option>`).join('')}</select> <i class="small">${esc(exhNote(x))}</i></span></div>
       <div class="cb-toggles"><label class="check"><input type="checkbox" data-dt="conc" ${x.conc ? 'checked' : ''}> Concentrating</label><label class="check"><input type="checkbox" data-dt="reaction" ${x.reaction ? 'checked' : ''}> Reaction used</label><label class="check"><input type="checkbox" data-dt="hidden" ${x.hidden ? 'checked' : ''}> Hide from players</label></div>
       <h5>Conditions</h5>
       ${x.conds.length ? x.conds.map((k, i) => `<div class="cb-cdesc"><div class="row" style="gap:6px;align-items:center"><b style="flex:1">${CONDS[k.k]?.[0] || '🏷️'} ${esc(k.k)}</b><input class="cb-mini" data-cr="${i}" value="${k.rounds || ''}" placeholder="∞" title="Rounds left (counts down at the start of their turn)"> rounds<button class="icon small" data-act="uncond" data-i="${i}">✕</button></div>${CONDS[k.k] ? `<p class="small muted">${CONDS[k.k][1]}</p>` : ''}</div>`).join('') : '<p class="small muted">None.</p>'}
       <div class="row" style="gap:6px"><select id="d-cond"><option value="">＋ Add a condition…</option>${Object.keys(CONDS).map(k => `<option>${k}</option>`).join('')}</select><input id="d-ccustom" placeholder="or your own" style="max-width:110px"></div>
-      ${statBlock(x)}
+      ${statBlock(x)}${x.bst ? '<div id="cb-sb" class="cb-sb"><p class="small muted">Loading stat block…</p></div>' : ''}
       <h5>Notes</h5><textarea data-df="notes" rows="3" placeholder="Tactics, loot, what they want…">${esc(x.notes || '')}</textarea>
       <div class="row" style="gap:6px;margin-top:8px"><button class="small" data-act="dup">⧉ Copy</button><button class="small" data-act="kill">💀 ${x.dead ? 'Not dead' : 'Kill'}</button><span style="flex:1"></span><button class="small danger" data-act="remove">Remove</button></div>`;
+  }
+  // library creatures show their full stat block in the details panel
+  let sbFor = '';
+  async function fillStatblock() {
+    const x = byId(focus); if (!x?.bst || !main.querySelector('#cb-sb')) return;
+    const m = await findMonster(x.bst); const el = main.querySelector('#cb-sb'); if (!m || byId(focus) !== x || !el) return;
+    el.innerHTML = statblockHTML(m, { unit: v => speedText(v) }); sbFor = x.bst;
   }
   function drawDiff() {
     const allies = c.list.filter(x => x.side === 'ally' && !x.lair), foes = c.list.filter(x => x.side === 'enemy' && !x.lair);
@@ -318,16 +358,23 @@ export function render(main) {
 
   // ---------- searching and adding ----------
   const q = $('#cb-q'), foundEl = $('#cb-found');
+  // the bestiary libraries, loaded in the background so searching includes every monster
+  const libs = [];
+  for (const k of Object.keys(LIBRARIES)) loadLibrary(k).then(l => { libs.push([k, l]); if (q.value.trim()) search(); }).catch(() => {});
   function search() {
     const s = q.value.trim().toLowerCase();
     if (!s) { found = []; foundEl.innerHTML = ''; return; }
     const ents = w.entries.filter(e => (e.type === 'character' || e.type === 'creature') && e.name.toLowerCase().includes(s)).sort((a, b) => a.name.toLowerCase().indexOf(s) - b.name.toLowerCase().indexOf(s) || a.name.localeCompare(b.name)).slice(0, 8);
     const pty = w.party.filter(p => !p.entryId && p.name.toLowerCase().includes(s)).slice(0, 4);
-    found = [...ents.map(e => ({ e })), ...pty.map(p => ({ p })), { name: q.value.trim() }];
+    const lib = [];
+    for (const [k, l] of libs) for (const m of l) { if (lib.length >= 8) break; if (m.name.toLowerCase().includes(s)) lib.push({ m, k }); }
+    lib.sort((a, b) => a.m.name.toLowerCase().indexOf(s) - b.m.name.toLowerCase().indexOf(s) || a.m.name.length - b.m.name.length);
+    found = [...ents.map(e => ({ e })), ...pty.map(p => ({ p })), ...lib.slice(0, 6), { name: q.value.trim() }];
     fsel = Math.min(fsel, found.length - 1);
     foundEl.innerHTML = found.map((f, i) => {
       if (f.e) { const st = combatStats(f.e); return `<div class="cb-res ${i === fsel ? 'sel' : ''}" data-i="${i}"><span class="type-dot" style="--tc:${typeColor(f.e.type)}"></span><b>${esc(f.e.name)}</b><span class="muted small">${st.hasSheet ? `HP ${st.maxHp || '?'} · AC ${st.ac || '?'}${st.cr ? ` · CR ${esc(st.cr)}` : st.level ? ` · Lv ${st.level}` : ''}` : (TYPES[f.e.type]?.label + ' · no sheet yet')}</span></div>`; }
       if (f.p) return `<div class="cb-res ${i === fsel ? 'sel' : ''}" data-i="${i}">🛡️ <b>${esc(f.p.name)}</b><span class="muted small">party</span></div>`;
+      if (f.m) return `<div class="cb-res ${i === fsel ? 'sel' : ''}" data-i="${i}">🐲 <b>${esc(f.m.name)}</b><span class="muted small">${LIBRARIES[f.k].label} · ${f.m.sys === 'pf2e' ? `Lv ${f.m.level}` : `CR ${esc(f.m.cr)}`} · HP ${f.m.hp} · AC ${f.m.ac}</span></div>`;
       return `<div class="cb-res new ${i === fsel ? 'sel' : ''}" data-i="${i}">＋ Add “<b>${esc(f.name)}</b>” by hand</div>`;
     }).join('');
   }
@@ -335,6 +382,7 @@ export function render(main) {
     const f = found[i]; if (!f) return;
     const n = Math.max(1, Math.min(30, +$('#qa-n').value || 1));
     if (f.e) fromEntry(f.e, n, $('#qa-side').dataset.touched ? { side: $('#qa-side').value } : {});
+    else if (f.m) add({ ...combatBase(f.m), side: $('#qa-side').value }, n);
     else if (f.p) addParty(f.p);
     else quickAdd(f.name);
     q.value = ''; search(); $('#qa-n').value = 1; draw(); q.focus();
@@ -365,6 +413,7 @@ export function render(main) {
     toast(n ? `${n} party member${n > 1 ? 's' : ''} joined` : 'The party is already here'); draw();
   };
   $('#cb-lair').onclick = () => { add({ name: 'Lair action', side: 'neutral', lair: true }); draw(); };
+  main.querySelector('#cb-exh').onchange = ev => { prefs.exh = ev.target.value; savePrefs(); draw(); };
   main.querySelectorAll('[data-pref]').forEach(b => b.onchange = () => { prefs[b.dataset.pref] = b.checked; savePrefs(); if (b.dataset.pref === 'autoSort' && b.checked) sortList(); draw(); });
 
   // ---------- the list ----------
@@ -388,8 +437,10 @@ export function render(main) {
   });
   list.addEventListener('click', ev => {
     const row = ev.target.closest('[data-id]'); if (!row) return; const x = byId(row.dataset.id);
+    const ec = ev.target.closest('[data-econ]');
+    if (ec) { useEcon(x, ec.dataset.econ, false); draw(); return; }
     const b = ev.target.closest('[data-act]');
-    if (!b) { if (!ev.target.closest('input')) { focus = x.id; drawList(); drawDetail(); persist(); } return; }
+    if (!b) { if (!ev.target.closest('input')) { focus = x.id; drawList(); drawDetail(); fillStatblock(); persist(); } return; }
     const act = b.dataset.act;
     if (act === 'rollinit') { x.init = rollInit(x); if (prefs.autoSort) sortList(); }
     if (act === 'dmg' || act === 'heal') { const inp = row.querySelector('[data-f="dmg"]'); if (!inp.value.trim()) { inp.focus(); return toast(act === 'dmg' ? 'Type the damage first' : 'Type how much to heal'); } applyText(x, inp.value, act === 'heal' ? 'heal' : 'dmg'); }
@@ -399,6 +450,16 @@ export function render(main) {
     if (act === 'menu') { focus = x.id; }
     draw();
   });
+  list.addEventListener('contextmenu', ev => { const ec = ev.target.closest('[data-econ="dash"]'); if (!ec) return; ev.preventDefault(); const x = byId(ev.target.closest('[data-id]').dataset.id); useEcon(x, 'dash', true); draw(); });
+  function useEcon(x, k, bonusFirst) {
+    x.econ = x.econ || {};
+    if (k === 'reaction') { x.reaction = !x.reaction; return; }
+    if (k !== 'dash') { x.econ[k] = !x.econ[k]; return; }
+    const slot = bonusFirst ? (!x.econ.bonus ? 'bonus' : !x.econ.action ? 'action' : '') : (!x.econ.action ? 'action' : !x.econ.bonus ? 'bonus' : '');
+    if (!slot) return toast(`${x.name} has no action or bonus action left to Dash with`);
+    x.econ[slot] = true; x.econ.dash = (x.econ.dash || 0) + 1; x.econ.move = false;
+    log(`${x.name} dashed (${slot === 'bonus' ? 'bonus action' : 'action'})`);
+  }
   // drag rows to change the order (for ties, or a surprise)
   let dragRow = null;
   list.addEventListener('dragstart', ev => { const r = ev.target.closest('.cb-row'); if (!r || ev.target.closest('input')) return; dragRow = r.dataset.id; ev.dataTransfer.effectAllowed = 'move'; ev.dataTransfer.setData('text/plain', dragRow); r.classList.add('dragging'); });
@@ -454,6 +515,8 @@ export function render(main) {
       if (k === 'cr') x.cr = v;
       if (k === 'legmax') { const n = Math.max(0, Math.min(5, parseInt(v) || 0)); x.leg = n ? { max: n, used: Math.min(n, x.leg?.used || 0) } : null; }
       if (k === 'notes') { x.notes = t.value; persist(); return; }
+      if (k === 'speed') x.speedFt = v === '' ? 0 : (+v / (speedText(1).endsWith('m') ? 0.3 : 1));
+      if (k === 'exh') { x.exh = +v || 0; log(`${x.name}: exhaustion ${x.exh}`); if (x.exh >= 6 && prefs.exh) { x.dead = true; x.hp = 0; log(`${x.name} died of exhaustion`); } syncSheet(x); }
       draw();
     }
     if (t.dataset.dt) { x[t.dataset.dt] = t.checked; if (t.dataset.dt === 'conc') log(`${x.name} ${t.checked ? 'is concentrating' : 'stopped concentrating'}`); draw(); }
@@ -523,6 +586,8 @@ export function render(main) {
   // arriving from a character's page with "Add to combat"
   const addId = query().add;
   if (addId) { const e = getEntry(addId); if (e) { fromEntry(e); toast(`${e.name} joined the fight`); } history.replaceState(null, '', '#/combat'); }
+  const bst = query().bst;
+  if (bst) { const n = Math.max(1, Math.min(30, +query().n || 1)); history.replaceState(null, '', '#/combat'); findMonster(bst).then(m => { if (!m) return toast('That creature wasn’t found'); add({ ...combatBase(m), side: 'enemy' }, n); toast(`${n > 1 ? n + ' × ' : ''}${m.name} joined the fight`); draw(); }); }
   draw();
   return () => { clearInterval(timer); window.removeEventListener('keydown', onKey); chan?.removeEventListener('message', onMsg); };
 }

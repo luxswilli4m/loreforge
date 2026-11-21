@@ -1,5 +1,7 @@
 // Story Forge page: request → story grounded in the world → save as quest / entries / handout.
 import { W, TYPES, getEntry, newEntry, uid, save } from '../store.js';
+import { npcTemplate, npcOptions, npcById, monsterToSheet, statblockHTML } from '../gen/statblocks.js';
+import { ensureSheet, speedText } from './sheet.js';
 import { esc, md, go, toast, openModal, closeModal, typeColor, mentionLink, query } from '../util.js';
 import { KINDS, TONES, gatherContext, offlineStory, aiPrompt, parseAI } from '../tools/storyforge.js';
 import { PROVIDERS, getAI, setAI, aiReady, complete } from '../tools/ai.js';
@@ -140,6 +142,7 @@ export function render(main) {
             ${list('Rumours', r.rumours)}
           </div>
         </div>
+        ${statsHTML(r)}
         ${r.twist || r.target?.secret ? `<div class="secret"><div class="secret-label">🔒 GM only</div>${r.twist ? `<p><b>Twist:</b> ${esc(r.twist)}</p>` : ''}${r.target?.secret ? `<p><b>Secret:</b> ${esc(r.target.secret)}</p>` : ''}</div>` : ''}
         ${r.newEntries?.length ? `<h4>Suggested new entries</h4><p class="small muted">${r.newEntries.map(n => `${TYPES[n.type]?.icon} ${esc(n.name)}`).join(' · ')} — created when you save.</p>` : ''}
         <div class="forge-actions">
@@ -151,6 +154,9 @@ export function render(main) {
           <button data-act="copy">📋 Copy</button>
         </div>
       </div>`;
+    // the character's combat stats: picked to suit the story and the party's level, changeable here
+    const ss = out.querySelector('#fs-stats');
+    if (ss) ss.onchange = () => { r.stats = ss.value; out.querySelector('#fs-sb').innerHTML = statblockHTML({ ...npcById(r.stats), name: r.target.name }, { unit: v => speedText(v), rollable: false }); out.querySelector('#fs-sum').innerHTML = statSummary(npcById(r.stats)); };
     out.querySelector('.forge-actions').onclick = e => {
       const b = e.target.closest('[data-act]'); if (!b) return;
       const act = b.dataset.act;
@@ -168,6 +174,19 @@ export function render(main) {
   }
 }
 
+// ---------- combat stats for characters ----------
+const statSummary = m => `AC ${m.ac} · HP ${m.hp} · CR ${m.cr} · ${m.actions.filter(a => a.hit != null).map(a => esc(a.n)).join(', ') || 'no attacks'}`;
+function statsHTML(r) {
+  const t = r.target; if (!t || (t.type && t.type !== 'character')) return '';
+  if (!r.stats) r.stats = npcTemplate(`${t.name} ${t.description || ''} ${r.title || ''}`, req.level).monster.id;
+  const m = npcById(r.stats);
+  return `<div class="forge-stats"><h4>⚔️ Combat stats</h4>
+    <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap"><span class="small">Based on</span><select id="fs-stats" style="width:auto">${npcOptions().map(o => `<option value="${o.id}" ${o.id === r.stats ? 'selected' : ''}>${esc(o.name)} (CR ${o.cr})</option>`).join('')}</select>
+      <span class="small muted" id="fs-sum">${statSummary(m)}</span></div>
+    <details><summary class="small">Full stat block</summary><div id="fs-sb">${statblockHTML({ ...m, name: t.name }, { unit: v => speedText(v), rollable: false })}</div></details>
+    <p class="small muted" style="margin:4px 0 0">Saved with a full character sheet, ready for the combat tracker. Stat blocks from the SRD 5.1 (CC-BY-4.0).</p></div>`;
+}
+
 // ---------- saving ----------
 function ensureEntry(x, r) {
   if (!x) return null;
@@ -180,6 +199,13 @@ function ensureEntry(x, r) {
   e.secret = x.secret || '';
   e.tags = ['story-forge'];
   x.id = e.id;
+  // new characters come with a full stat block, so they can join a fight
+  if (e.type === 'character') {
+    const tpl = (x === r.target && r.stats && npcById(r.stats)) || npcTemplate(`${x.name} ${x.description || ''}`, req.level).monster;
+    e.sheet = monsterToSheet({ ...tpl, name: x.name }, { theme: 'parchment' }); e.sheet.src = ''; e.sheet.cr = tpl.cr;
+    e.sheet.notes = `Combat stats based on the SRD’s ${tpl.name} (CR ${tpl.cr}).`;
+    ensureSheet(e);
+  }
   const loc = getEntry(r.location);
   if (loc && e.type !== 'location') W().relations.push({ id: uid(), from: e.id, to: loc.id, label: e.type === 'creature' ? 'lairs near' : r.kind === 'bounty' ? 'hiding in' : 'found in' });
   if (x.memberOf) W().relations.push({ id: uid(), from: e.id, to: x.memberOf.id, label: 'member of' });

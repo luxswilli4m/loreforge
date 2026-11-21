@@ -22,6 +22,8 @@ import * as cosmos from './views/cosmos.js';
 import * as assetForge from './views/assets.js';
 import * as diceView from './views/dice.js';
 import * as combat from './views/combat.js';
+import { renderBuilderPage } from './views/creator.js';
+import * as bestiary from './views/bestiary.js';
 import { initCloud, onConflict, connected as cloudConnected, status as syncStatus } from './cloud.js';
 import { initTray } from './tools/tray.js';
 import { initAssets, migrateWorld } from './assets.js';
@@ -43,6 +45,8 @@ const NAV = [
   { href: '#/quests', icon: '🧭', label: 'Quests', match: /^(quests|quest)(\/|$)/ },
   { href: '#/journals', icon: '✒️', label: 'Journals', match: /^(journals|journal)/ },
   { href: '#/gm', icon: '🛡️', label: 'GM Screen', match: /^gm/ },
+  { href: '#/builder', icon: '🧙', label: 'Character builder', match: /^builder/ },
+  { href: '#/bestiary', icon: '🐲', label: 'Bestiary', match: /^bestiary/ },
   { href: '#/combat', icon: '⚔️', label: 'Combat tracker', match: /^combat/ },
   { href: '#/dice', icon: '🎯', label: 'Dice', match: /^dice/ },
   { href: '#/forge', icon: '🔮', label: 'Story Forge', match: /^forge/ },
@@ -111,6 +115,8 @@ export function route() {
     assets: () => assetForge.render(main),
     dice: () => diceView.render(main),
     combat: () => combat.render(main),
+    builder: () => renderBuilderPage(main),
+    bestiary: () => bestiary.render(main),
     playerview: () => combat.renderPlayerView(main),
     graph: () => graph.render(main),
     campaign: () => campaign.renderList(main),

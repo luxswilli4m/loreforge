@@ -17,12 +17,15 @@ function allClasses() {
 }
 const classOf = key => allClasses().find(([k]) => k === key)?.[1];
 
-export function openCreator(e, onDone) {
-  const sh = ensureSheet(e);
+// opts.classOnly: just make or edit a homebrew class (no character), e.g. from the Character builder page
+export function openCreator(e, onDone, opts = {}) {
+  const sh = e ? ensureSheet(e) : { cls: '', level: 1, abil: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 } };
+  e = e || { name: '', fields: [] };
   const guess = allClasses().find(([, c]) => String(sh.cls || '').toLowerCase().includes(c.name.toLowerCase()))?.[0];
   const st = { step: 0, cls: guess || '', level: +sh.level || 1, species: Object.entries(SPECIES).find(([, s]) => s.name === (e.fields.find(f => f.k === 'Race')?.v))?.[0] || 'human', bg: 'custom',
     method: 'standard', assign: {}, pool: [], manual: { ...sh.abil }, point: { str: 8, dex: 8, con: 8, int: 8, wis: 8, cha: 8 }, ownBonus: false, plus2: 'str', plus1: 'dex',
     skills: new Set(), hp: 'average', gear: true, replace: true, editing: null };
+  if (opts.classOnly) st.editing = opts.classOnly === 'new' ? { name: '', die: 8, saves: [], armour: [], weapons: ['simple'], skillN: 2, skills: [], cast: '', features: [] } : { ...opts.classOnly, custom: true };
   const STEPS = ['Class', 'Level & origin', 'Ability scores', 'Skills', 'Finish'];
 
   // ---------- the numbers ----------
@@ -69,8 +72,8 @@ export function openCreator(e, onDone) {
     }
     if (st.step === 3) {
       const list = classSkillList(C), locked = lockedSkills(), n = C.skillN || 0, picked = [...st.skills].filter(s => !locked.has(s) && list.includes(s)).length;
-      return `<p>Choose <b>${n}</b> skill${n === 1 ? '' : 's'} from your class (${picked}/${n}). Skills from your background and species are already ticked.</p>
-        <div class="cr-skills">${SKILLS.map(([k, l, a]) => { const lock = locked.has(k), on = lock || st.skills.has(k), avail = list.includes(k); return `<label class="check ${!avail && !lock ? 'muted' : ''}"><input type="checkbox" data-skill="${k}" ${on ? 'checked' : ''} ${lock || (!avail) || (!on && picked >= n) ? 'disabled' : ''}> ${l} <span class="small muted">${a.toUpperCase()}${lock ? ' · ' + (BACKGROUNDS[st.bg][1].includes(k) ? 'background' : 'species') : ''}</span></label>`; }).join('')}</div>`;
+      return `<p>Choose <b>${n}</b> skill${n === 1 ? '' : 's'} from your class (<b id="cr-picked">${picked}</b>/${n}). Skills from your background and species are already ticked.</p>
+        <div class="cr-skills">${SKILLS.map(([k, l, a]) => { const lock = locked.has(k), on = lock || st.skills.has(k), avail = list.includes(k); return `<label class="cr-skill ${!avail && !lock ? 'off' : ''} ${lock ? 'lock' : ''}"><input type="checkbox" data-skill="${k}" ${on ? 'checked' : ''} ${lock || (!avail) || (!on && picked >= n) ? 'disabled' : ''}><span class="cr-sk-name">${l}</span><span class="cr-sk-tag">${a.toUpperCase()}${lock ? ' · ' + (BACKGROUNDS[st.bg][1].includes(k) ? 'background' : 'species') : !avail ? ' · not for this class' : ''}</span></label>`; }).join('')}</div>`;
     }
     const fs = finalScores(), L = st.level, slots = slotsFor(C.cast, L);
     const hpAvg = C.die + mod(fs.con) + (L - 1) * (Math.floor(C.die / 2) + 1 + mod(fs.con));
@@ -135,14 +138,16 @@ export function openCreator(e, onDone) {
         if (a === 'back') { st.step = Math.max(0, st.step - 1); render(); }
         if (a === 'roll') { st.pool = Array.from({ length: 6 }, () => rollAndLog('4d6kh3').total).sort((x, y) => y - x); st.assign = {}; render(); }
         if (a === 'newclass') { st.editing = { name: '', die: 8, saves: [], armour: [], weapons: ['simple'], skillN: 2, skills: [], cast: '', features: [] }; render(); }
-        if (a === 'cancelclass') { st.editing = null; render(); }
+        if (a === 'cancelclass') { if (opts.classOnly) { closeModal(); onDone?.(); return; } st.editing = null; render(); }
         if (a === 'saveclass') {
           const c = readClassEditor(m, st.editing), w = W();
           w.classes = w.classes || [];
           if (c.id) w.classes[w.classes.findIndex(x => x.id === c.id)] = c; else { c.id = uid(); w.classes.push(c); }
-          delete c.custom; save(); st.cls = `c:${c.id}`; st.editing = null; toast(`${c.name} saved to this world’s classes`); render();
+          delete c.custom; save(); st.cls = `c:${c.id}`; st.editing = null; toast(`${c.name} saved to this world’s classes`);
+          if (opts.classOnly) { closeModal(); onDone?.(); return; }
+          render();
         }
-        if (a === 'delclass') { const w = W(); w.classes = (w.classes || []).filter(x => x.id !== st.editing.id); if (st.cls === `c:${st.editing.id}`) st.cls = ''; save(); st.editing = null; render(); }
+        if (a === 'delclass') { const w = W(); w.classes = (w.classes || []).filter(x => x.id !== st.editing.id); if (st.cls === `c:${st.editing.id}`) st.cls = ''; save(); st.editing = null; if (opts.classOnly) { closeModal(); onDone?.(); return; } render(); }
         if (a === 'create') { apply(); closeModal(); onDone(); }
       });
       m.addEventListener('change', ev => {
@@ -154,7 +159,14 @@ export function openCreator(e, onDone) {
         else if (t.id === 'cr-own') { st.ownBonus = t.checked; render(); }
         else if (t.id === 'cr-p2') { st.plus2 = t.value; render(); }
         else if (t.id === 'cr-p1') { st.plus1 = t.value; render(); }
-        else if (t.dataset.skill) { if (t.checked) st.skills.add(t.dataset.skill); else st.skills.delete(t.dataset.skill); render(); }
+        else if (t.dataset.skill) {
+          // update in place (redrawing the whole window here could swallow the next click)
+          if (t.checked) st.skills.add(t.dataset.skill); else st.skills.delete(t.dataset.skill);
+          const C = classOf(st.cls), list = classSkillList(C), locked = lockedSkills(), n = C.skillN || 0;
+          const picked = [...st.skills].filter(sk => !locked.has(sk) && list.includes(sk)).length;
+          m.querySelector('#cr-picked').textContent = picked;
+          m.querySelectorAll('[data-skill]').forEach(cb => { const k = cb.dataset.skill; if (locked.has(k) || !list.includes(k)) return; cb.disabled = !cb.checked && picked >= n; });
+        }
         else if (t.id === 'cr-replace') st.replace = t.checked;
         else if (t.id === 'cr-gear') st.gear = t.checked;
       });
@@ -214,4 +226,29 @@ export function openCreator(e, onDone) {
   }
   if (!st.cls) st.step = 0;
   render();
+}
+
+// ---------- the Character builder page ----------
+export function renderBuilderPage(main) {
+  const w = W();
+  const draw = () => {
+    const chars = w.entries.filter(x => x.type === 'character').sort((a, b) => a.name.localeCompare(b.name));
+    const own = w.classes || [];
+    main.innerHTML = `<div class="page-head"><h1>Character builder</h1><span class="muted small">Build a new character, rebuild an existing one, or make your own classes.</span><span style="flex:1"></span><button class="primary" id="bp-new">＋ New character</button></div>
+      <h3>Characters</h3>
+      <div class="bp-grid">${chars.map(c => { const sh = c.sheet; const art = sh?.portrait?.art; return `<div class="bp-card"><a href="#/entry/${c.id}">${art ? `<img src="${artURL(art, sh.portrait.label)}" alt="">` : '<div class="bp-blank">🧙</div>'}</a>
+        <div><b>${esc(c.name)}</b><div class="small muted">${esc(sh?.cls || 'No class yet')}</div></div><button class="small" data-build="${c.id}">🧙 ${sh?.cls ? 'Rebuild' : 'Build'}</button></div>`; }).join('') || '<p class="muted">No characters yet.</p>'}</div>
+      <h3 style="margin-top:20px">Your classes</h3>
+      <div class="bp-grid">${own.map(c => `<div class="bp-card"><img src="${artURL(c.art || 'fighter', c.name)}" alt=""><div><b>${esc(c.name)}</b><div class="small muted">d${c.die}${c.cast ? ' · ' + CAST_TYPES[c.cast].split(' (')[0].toLowerCase() : ''}</div></div><button class="small" data-editcls="${c.id}">✎ Edit</button></div>`).join('')}
+        <button class="bp-card bp-newcls" id="bp-cls"><span class="big">＋</span><b>Make your own class</b></button></div>
+      <p class="small muted">The standard classes are Barbarian, Bard, Cleric, Druid, Fighter, Monk, Paladin, Ranger, Rogue, Sorcerer, Warlock, Wizard and Artificer. Your classes appear alongside them in the builder.</p>`;
+    main.querySelector('#bp-new').onclick = async () => {
+      const { newEntryDialog } = await import('./entries.js');
+      newEntryDialog('character', ent => openCreator(ent, () => { location.hash = `#/entry/${ent.id}`; }));
+    };
+    main.querySelectorAll('[data-build]').forEach(b => b.onclick = () => { const ent = w.entries.find(x => x.id === b.dataset.build); openCreator(ent, () => { location.hash = `#/entry/${ent.id}`; }); });
+    main.querySelectorAll('[data-editcls]').forEach(b => b.onclick = () => openCreator(null, draw, { classOnly: own.find(c => c.id === b.dataset.editcls) }));
+    main.querySelector('#bp-cls').onclick = () => openCreator(null, draw, { classOnly: 'new' });
+  };
+  draw();
 }
