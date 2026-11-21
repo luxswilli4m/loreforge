@@ -31,6 +31,11 @@ export function render(main) {
         <div class="row"><div><label>🛒 Wagon</label><input type="number" data-sp="wagon" value="${sp.wagon}"></div><div><label>⛵ Ship</label><input type="number" data-sp="ship" value="${sp.ship}"></div></div>
       </div>
       <div class="card">
+        <h3>Units</h3>
+        <p class="muted small" style="margin:0 0 8px">How distances and weights show on character sheets, in the combat tracker and as the starting scale for new maps. Stored values convert automatically (5 ft = 1.5 m, 1 lb = 0.5 kg, as in metric D&D books).</p>
+        <div class="seg"><button data-units="metric" class="${(w.settings.units || 'metric') === 'metric' ? 'on' : ''}">📏 Metric (m, kg)</button><button data-units="imperial" class="${w.settings.units === 'imperial' ? 'on' : ''}">📐 Imperial (ft, lb)</button></div>
+      </div>
+      <div class="card">
         <h3>Look & feel</h3>
         <p class="muted small">Themes, torn-paper edges, backgrounds, text size and the easy-read font live on the Appearance page.</p>
         <a class="btn" href="#/appearance">🎨 Open Appearance</a>
@@ -56,6 +61,7 @@ export function render(main) {
       </div>
     </div>`;
   const $m = s => main.querySelector(s);
+  main.querySelectorAll('[data-units]').forEach(b => b.onclick = () => { w.settings.units = b.dataset.units; save(); main.querySelectorAll('[data-units]').forEach(x => x.classList.toggle('on', x === b)); toast(b.dataset.units === 'metric' ? 'Now using metres and kilograms' : 'Now using feet and pounds'); });
   $m('#wn').oninput = e => { w.name = e.target.value || 'Untitled world'; document.querySelector('#world-name').textContent = w.name; save(); };
   $m('#wd').oninput = e => { w.description = e.target.value; save(); };
   main.querySelectorAll('[data-sp]').forEach(i => i.oninput = () => { sp[i.dataset.sp] = Math.max(0.1, +i.value || 1); save(); });

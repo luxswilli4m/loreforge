@@ -6,7 +6,7 @@ import { W, save, uid, getEntry, newEntry, TYPES } from '../store.js';
 import { esc, toast, openModal, closeModal, query, go, typeColor } from '../util.js';
 import { rollAndLog } from '../tools/dice.js';
 import * as A from '../assets.js';
-import { combatStats, writeBack, ensureSheet, derive, ABIL, sgn, CR_XP, crNum } from './sheet.js';
+import { combatStats, writeBack, ensureSheet, derive, ABIL, sgn, CR_XP, speedText } from './sheet.js';
 
 export const CONDS = {
   Blinded: ['🙈', 'Can’t see and fails any check that needs sight. Attacks against it have advantage; its own attacks have disadvantage.'],
@@ -267,7 +267,7 @@ export function render(main) {
     if (!e?.sheet) return '';
     const sh = ensureSheet(e), d = derive(sh);
     return `<div class="cb-abils">${ABIL.map(([k, l]) => `<button class="cb-abil" data-roll="d20${d.m[k] >= 0 ? '+' : ''}${d.m[k]}" data-label="${esc(x.name)} ${l}"><span>${k.toUpperCase()}</span><b>${sh.abil[k]}</b><i>${sgn(d.m[k])}</i></button>`).join('')}</div>
-      <div class="cb-kv"><span>Speed</span><b>${esc(sh.speed || '—')}</b><span>Passive Perception</span><b>${d.passive}</b>${sh.cr !== '' ? `<span>CR</span><b>${esc(sh.cr)} (${d.xp ?? '?'} XP)</b>` : ''}${sh.level ? `<span>Level</span><b>${esc(sh.cls || '')} ${sh.level}</b>` : ''}</div>
+      <div class="cb-kv"><span>Speed</span><b>${speedText(sh.speedFt)}</b><span>Passive Perception</span><b>${d.passive}</b>${sh.cr !== '' ? `<span>CR</span><b>${esc(sh.cr)} (${d.xp ?? '?'} XP)</b>` : ''}${sh.level ? `<span>Level</span><b>${esc(sh.cls || '')} ${sh.level}</b>` : ''}</div>
       <div class="cb-saves">Saves: ${ABIL.map(([k]) => `<button class="cs-roll" data-roll="d20${d.saves[k] >= 0 ? '+' : ''}${d.saves[k]}" data-label="${esc(x.name)} ${k.toUpperCase()} save">${k.toUpperCase()} ${sgn(d.saves[k])}</button>`).join(' ')}</div>
       ${[...d.attacks, ...sh.attacks.filter(a => a.name)].length ? `<h5>Attacks</h5>${[...d.attacks, ...sh.attacks.filter(a => a.name)].map(a => { const hit = typeof a.hit === 'number' ? a.hit : parseInt(a.hit) || 0; return `<div class="cb-atk"><b>${esc(a.name)}</b><button class="cs-roll" data-roll="d20${hit >= 0 ? '+' : ''}${hit}" data-label="${esc(a.name)} to hit">${sgn(hit)}</button>${a.dmg ? `<button class="cs-roll" data-roll="${esc(a.dmg)}" data-label="${esc(a.name)} damage">${esc(a.dmg)} ${esc(a.type || '')}</button>` : ''}</div>`; }).join('')}` : ''}
       ${sh.spell.ability ? `<h5>Spells</h5><p class="small">Save DC <b>${d.dc}</b> · attack <b>${sgn(d.satk)}</b></p>${Object.entries(sh.spell.slots).filter(([, s]) => +s.max).map(([l, s]) => `<span class="cb-slot">L${l} ${(+s.max - (+s.used || 0))}/${s.max}</span>`).join(' ')}

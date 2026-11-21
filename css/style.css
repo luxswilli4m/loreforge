@@ -904,3 +904,40 @@ body.player-view #main-wrap { grid-column: 1 / -1; }
 .cs-gear .cs-coins { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
 .cs-gear .cs-coins label { padding: 2px 6px; min-width: 0; }
 .cs-gear .cs-coins .cs-in { width: 100%; min-width: 0; }
+
+/* ---------- item editor pieces ---------- */
+.combo { position: relative; }
+.combo-list { position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 2px); max-height: 240px; overflow-y: auto; background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.45); padding: 4px; }
+.combo-list button { display: block; width: 100%; text-align: left; justify-content: flex-start; border: 0; background: transparent; padding: 5px 8px; min-height: 0; border-radius: 6px; }
+.combo-list button.sel, .combo-list button:hover { background: var(--bg-3); }
+.combo-list button.cur { color: var(--accent-2); font-weight: 700; }
+.combo-list p { margin: 4px 8px; }
+.i-money { display: flex; gap: 4px; } .i-money input { min-width: 0; } .i-money select { width: 64px; flex: none; }
+.i-iconpick { display: flex; align-items: center; gap: 8px; }
+.i-iconbtn { width: 46px; height: 40px; font-size: 1.5em; padding: 0; justify-content: center; }
+.i-icongrid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; margin-top: 6px; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); max-height: 190px; overflow-y: auto; }
+.i-icongrid button { padding: 3px 0; min-height: 0; font-size: 1.2em; justify-content: center; border-color: transparent; }
+.i-icongrid button:hover { border-color: var(--accent); }
+.i-icongrid .i-auto { grid-column: 1 / -1; font-size: .85em; }
+.i-icongrid input { grid-column: 1 / -1; }
+.i-dice { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin-bottom: 4px; }
+.i-die { position: relative; min-width: 50px; padding: 6px 8px; justify-content: center; font-weight: 700; }
+.i-die b { position: absolute; top: -6px; right: -4px; font-size: .75em; color: var(--accent-2); }
+.i-die.on { outline: 2px solid var(--accent); background: rgba(212,162,76,.14); }
+.i-expr { font-family: var(--display); font-size: 1.2em; margin: 0 6px; min-width: 80px; }
+/* armour class total with its bonuses */
+.cs-ac-total { display: flex; align-items: flex-start; justify-content: center; gap: 2px; font-family: var(--cs-font); line-height: 1.05; }
+.cs-ac-total b { font-size: 1.9em; }
+.cs-ac-total sup { font-size: .95em; font-weight: 700; margin-top: 4px; }
+.cs-ac-total sup.pos { color: #2f8a3a; } .cs-ac-total sup.neg { color: #c0392b; }
+.cs-shield { cursor: help; }
+.cs-tip-row { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; }
+.cs-tip-row.pos b { color: #6fcf7f; } .cs-tip-row.neg b { color: #ff6a5a; }
+.cs-tip-row.total { border-top: 1px solid #5a4a3a; margin-top: 4px; padding-top: 4px; font-weight: 700; }
+/* comparing items */
+.cmp-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+.cmp-table th { text-align: left; font-family: var(--display); padding: 4px 6px; }
+.cmp-table td { padding: 5px 6px; border-top: 1px solid var(--line); }
+.cmp-table td:first-child { color: var(--muted); font-size: .85em; }
+.cmp-table td.up { color: #6fcf7f; font-weight: 700; } .cmp-table td.down { color: #ff6a5a; font-weight: 700; }
+.cmp-table .cs-emoji { font-size: 1.1em; }

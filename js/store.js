@@ -121,7 +121,7 @@ export function blankWorld(name) {
       eras: [{ name: 'Age of Embers', abbr: 'AE', start: 1 }],
       current: { year: 1, month: 0, day: 1 },
     },
-    settings: { speeds: { foot: 24, horse: 40, wagon: 16, ship: 72 } },
+    settings: { speeds: { foot: 24, horse: 40, wagon: 16, ship: 72 }, units: 'metric' },
   };
 }
 

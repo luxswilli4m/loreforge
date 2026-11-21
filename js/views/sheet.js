@@ -2,7 +2,7 @@
 // grid, like an action RPG), every D&D 5e stat, and its own themes. Everything is edited right on the sheet.
 // The combat tracker reads these stats (combatStats) and writes hit points back (writeBack).
 import { W, save, uid, getEntry } from '../store.js';
-import { esc, openModal, closeModal, pickFile, toast } from '../util.js';
+import { esc, openModal, closeModal, pickFile, toast, contextMenu } from '../util.js';
 import * as A from '../assets.js';
 import { rollAndLog } from '../tools/dice.js';
 import { CLASS_ART, artURL, guessArt } from '../gen/classArt.js';
@@ -12,6 +12,15 @@ export const ABIL = [['str', 'Strength'], ['dex', 'Dexterity'], ['con', 'Constit
 export const SKILLS = [['acrobatics', 'Acrobatics', 'dex'], ['animal', 'Animal Handling', 'wis'], ['arcana', 'Arcana', 'int'], ['athletics', 'Athletics', 'str'], ['deception', 'Deception', 'cha'], ['history', 'History', 'int'], ['insight', 'Insight', 'wis'], ['intimidation', 'Intimidation', 'cha'], ['investigation', 'Investigation', 'int'], ['medicine', 'Medicine', 'wis'], ['nature', 'Nature', 'int'], ['perception', 'Perception', 'wis'], ['performance', 'Performance', 'cha'], ['persuasion', 'Persuasion', 'cha'], ['religion', 'Religion', 'int'], ['sleight', 'Sleight of Hand', 'dex'], ['stealth', 'Stealth', 'dex'], ['survival', 'Survival', 'wis']];
 export const CR_XP = { 0: 10, '1/8': 25, '1/4': 50, '1/2': 100, 1: 200, 2: 450, 3: 700, 4: 1100, 5: 1800, 6: 2300, 7: 2900, 8: 3900, 9: 5000, 10: 5900, 11: 7200, 12: 8400, 13: 10000, 14: 11500, 15: 13000, 16: 15000, 17: 18000, 18: 20000, 19: 22000, 20: 25000, 21: 33000, 22: 41000, 23: 50000, 24: 62000, 25: 75000, 26: 90000, 27: 105000, 28: 120000, 29: 135000, 30: 155000 };
 export const crNum = cr => { const s = String(cr ?? '').trim(); if (!s) return null; if (s.includes('/')) { const [a, b] = s.split('/'); return +a / +b; } return +s; };
+// metric or imperial, from World settings (metric unless changed). Conversions follow the usual D&D ones: 5 ft = 1.5 m, 1 lb = 0.5 kg.
+export const isMetric = () => (W()?.settings?.units || 'metric') === 'metric';
+const num1 = v => String(+(+v).toFixed(2));
+export const weightText = lb => isMetric() ? `${num1((+lb || 0) * 0.5)} kg` : `${num1(+lb || 0)} lb`;
+export const speedText = ft => ft === '' || ft == null ? '—' : isMetric() ? `${num1(+ft * 0.3)} m` : `${num1(+ft)} ft`;
+const CONV = { ft: [0.3, 'm', 'ft'], lb: [0.5, 'kg', 'lb'] };
+const shown = (v, conv) => v === '' || v == null ? '' : isMetric() ? num1(+v * CONV[conv][0]) : num1(+v);
+const stored = (v, conv) => v === '' ? '' : isMetric() ? +v / CONV[conv][0] : +v;
+const unitOf = conv => CONV[conv][isMetric() ? 1 : 2];
 export const mod = s => Math.floor(((+s || 10) - 10) / 2);
 export const sgn = n => (n >= 0 ? '+' : '−') + Math.abs(n);
 
@@ -48,7 +57,7 @@ export function blankSheet(e) {
     theme: e?.type === 'creature' ? 'hellforge' : 'parchment', accent: '',
     cls: '', level: e?.type === 'creature' ? '' : 1, background: '', player: '', xp: '', size: 'Medium', ctype: '',
     cr: '', abil: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 }, saves: {}, skills: {},
-    profOverride: '', acOverride: parseInt(f('ac') || f('armor class') || f('armour class')) || '', initOverride: '', speed: '30 ft',
+    profOverride: '', acOverride: parseInt(f('ac') || f('armor class') || f('armour class')) || '', initOverride: '', speedFt: 30,
     hpMax: parseInt(f('hp') || f('hit points')) || '', hp: '', temp: '', hitDice: '', hitDiceUsed: '', hpRoll: '',
     death: { s: 0, f: 0 }, inspiration: false, exhaustion: 0, conds: [],
     attacks: [], spell: { ability: '', slots: {}, list: [] },
@@ -65,6 +74,8 @@ export function ensureSheet(e) {
   for (const k of ['abil', 'coins', 'death', 'spell']) sh[k] = { ...b[k], ...sh[k] };
   if (!sh.spell.slots) sh.spell.slots = {};
   if (!Array.isArray(sh.spell.list)) sh.spell.list = [];
+  // speed used to be free text ("30 ft"); it's now kept in feet and shown in the world's units
+  if (sh.speedFt === undefined || typeof sh.speed === 'string') { const t = String(sh.speed || '30'); const n = parseFloat(t) || 30; sh.speedFt = /\bm\b/.test(t) && !/ft|feet/.test(t) ? Math.round(n / 0.3) : n; delete sh.speed; }
   return sh;
 }
 
@@ -77,14 +88,20 @@ export function derive(sh) {
   const saves = Object.fromEntries(ABIL.map(([k]) => [k, m[k] + (sh.saves[k] ? prof : 0)]));
   const skills = Object.fromEntries(SKILLS.map(([k, , a]) => [k, m[a] + prof * (+sh.skills[k] || 0)]));
   const eq = s => sh.items.find(i => i.slot === s);
-  // armour class from what's worn
-  const armor = eq('body');
-  let acAuto = 10 + m.dex;
-  if (armor && +armor.ac) acAuto = +armor.ac + (armor.armorType === 'heavy' ? 0 : armor.armorType === 'medium' ? Math.min(2, m.dex) : m.dex);
+  // armour class: a base (worn armour, or 10 + Dex, or your own number) plus anything that adds or takes away
+  const armor = eq('body'), acBase = [];
+  if (armor && +armor.ac) { acBase.push([`${armor.name} (${armor.armorType || 'light'} armour)`, +armor.ac]); if (armor.armorType !== 'heavy') acBase.push([armor.armorType === 'medium' ? 'Dexterity (max +2)' : 'Dexterity', armor.armorType === 'medium' ? Math.min(2, m.dex) : m.dex]); }
+  else acBase.push(['Unarmoured', 10], ['Dexterity', m.dex]);
+  const acAuto = acBase.reduce((t, [, v]) => t + v, 0);
+  const own = sh.acOverride !== '' && sh.acOverride != null;
+  const acMods = [];
   const shield = eq('off');
-  if (shield?.kind === 'shield') acAuto += +shield.ac || 2;
-  for (const i of sh.items) if (i.slot && +i.acBonus) acAuto += +i.acBonus;
-  const ac = sh.acOverride !== '' && sh.acOverride != null ? +sh.acOverride : acAuto;
+  if (shield?.kind === 'shield') acMods.push([shield.name, +shield.ac || 2]);
+  for (const i of sh.items) if (i.slot && +i.acBonus) acMods.push([i.name, +i.acBonus]);
+  const acMod = acMods.reduce((t, [, v]) => t + v, 0);
+  const base = own ? +sh.acOverride : acAuto;
+  const ac = base + acMod;
+  const acParts = own ? [['Base you set', base]] : acBase;
   const init = sh.initOverride !== '' && sh.initOverride != null ? +sh.initOverride : m.dex;
   const sa = sh.spell.ability;
   const weight = sh.items.reduce((t, i) => t + (+i.weight || 0) * (+i.qty || 1), 0);
@@ -94,7 +111,7 @@ export function derive(sh) {
     const hit = m[ab] + prof + (+i.bonus || 0), dmgMod = m[ab] + (+i.bonus || 0);
     return { name: i.name, hit, dmg: i.dmg ? `${i.dmg}${dmgMod ? (dmgMod > 0 ? '+' : '') + dmgMod : ''}` : '', type: i.dmgType || '', auto: true };
   });
-  return { m, prof, saves, skills, ac, acAuto, init, passive: 10 + skills.perception, passiveInv: 10 + skills.investigation, passiveIns: 10 + skills.insight,
+  return { m, prof, saves, skills, ac, acAuto, acMod, acMods, acParts, init, passive: 10 + skills.perception, passiveInv: 10 + skills.investigation, passiveIns: 10 + skills.insight,
     dc: sa ? 8 + prof + m[sa] : null, satk: sa ? prof + m[sa] : null, weight, carry: (+sh.abil.str || 10) * 15, attacks, xp: CR_XP[String(sh.cr).trim()] ?? null };
 }
 
@@ -108,7 +125,7 @@ export function combatStats(e) {
   }
   const sh = ensureSheet(e), d = derive(sh);
   return { maxHp: +sh.hpMax || 0, hp: sh.hp === '' || sh.hp == null ? +sh.hpMax || 0 : +sh.hp, temp: +sh.temp || 0, ac: d.ac, initBonus: d.init, dex: +sh.abil.dex || 10, cr: sh.cr, level: +sh.level || 0,
-    hpRoll: sh.hpRoll || '', speed: sh.speed, passive: d.passive, conds: [...(sh.conds || [])], hasSheet: true };
+    hpRoll: sh.hpRoll || '', speed: speedText(sh.speedFt), passive: d.passive, conds: [...(sh.conds || [])], hasSheet: true };
 }
 // the combat tracker keeps a character's sheet up to date with the fight
 export function writeBack(e, { hp, temp, death }) {
@@ -183,7 +200,7 @@ function sheetHTML(e, opts = {}) {
           <button class="cs-portrait" data-act="portrait" title="Change the picture">${portraitHTML(e, sh)}<span class="cs-portrait-edit">🖼️ Change picture</span></button>
           <div class="cs-col">${['neck', 'ring1', 'ring2', 'main', 'off', 'ranged'].map(slotHTML).join('')}</div>
         </div>
-        <div class="cs-baghead"><b>Inventory</b><span class="cs-muted small">${bag.length} item${bag.length === 1 ? '' : 's'} · <span data-d="weight">${d.weight}</span> / ${d.carry} lb</span><span style="flex:1"></span><button class="cs-btn small" data-act="new-item">＋ Item</button><button class="cs-btn small" data-act="add-row" title="A bigger bag">＋ Row</button></div>
+        <div class="cs-baghead"><b>Inventory</b><span class="cs-muted small">${bag.length} item${bag.length === 1 ? '' : 's'} · <span data-d="weight">${weightText(d.weight)}</span> / ${weightText(d.carry)}</span><span style="flex:1"></span><button class="cs-btn small" data-act="new-item">＋ Item</button><button class="cs-btn small" data-act="add-row" title="A bigger bag">＋ Row</button></div>
         <div class="cs-bag">${Array.from({ length: cells }, (_, c) => { const it = bag.find(i => i.cell === c); return `<div class="cs-cell ${it ? 'full' : ''}" data-cell="${c}" ${it ? `data-item="${it.id}" draggable="true" style="--rar:${rarCol(it)}"` : ''}>${it ? `${itemIcon(it)}${+it.qty > 1 ? `<b class="cs-qty">${it.qty}</b>` : ''}` : ''}</div>`; }).join('')}</div>
         <div class="cs-coins">${['cp', 'sp', 'ep', 'gp', 'pp'].map(c => `<label class="coin-${c}"><span>${c.toUpperCase()}</span>${num('coins.' + c, '0')}</label>`).join('')}</div>
         <p class="cs-muted small cs-hint">Drag items between the bag and the slots, or double-click to equip. Click an item to edit it, or an empty square to add one. Armour, shields and AC bonuses set your AC; weapons in hand become attacks.</p>
@@ -191,9 +208,10 @@ function sheetHTML(e, opts = {}) {
 
       <section class="cs-stats">
         <div class="cs-vitals">
-          ${box('Armour class', `<input class="cs-in cs-big" data-k="acOverride" data-t="num" value="${val(sh, 'acOverride')}" placeholder="${d.acAuto}" title="Worked out from your armour and shield (${d.acAuto}); type to set your own">`, 'cs-shield')}
+          <div class="cs-box cs-shield" data-actip><div class="cs-box-in"><div class="cs-ac-total"><b data-d="ac">${d.ac}</b><sup data-d="acmod" class="${d.acMod < 0 ? 'neg' : 'pos'}">${d.acMod ? sgn(d.acMod) : ''}</sup></div>
+            <div class="cs-hp-row small">base <input class="cs-in w4" data-k="acOverride" data-t="num" value="${val(sh, 'acOverride')}" placeholder="${d.acAuto}" title="Leave empty to work it out from your armour (${d.acAuto}), or type your own base AC. Shields and items still add to it."></div></div><label>Armour class</label></div>
           ${box('Initiative', `<input class="cs-in cs-big" data-k="initOverride" data-t="num" value="${val(sh, 'initOverride')}" placeholder="${sgn(d.m.dex)}" title="Your Dexterity modifier; type to set your own">`)}
-          ${box('Speed', txt('speed', '30 ft', 'cs-big'))}
+          ${box(`Speed (${unitOf('ft')})`, `<input class="cs-in cs-big" data-k="speedFt" data-t="num" data-conv="ft" value="${shown(sh.speedFt, 'ft')}" placeholder="${shown(30, 'ft')}">`)}
         </div>
         <div class="cs-box cs-hp"><div class="cs-box-in"><div class="cs-hp-row">${num('hp', String(sh.hpMax || '—'), 'cs-big')}<span>/</span>${num('hpMax', 'max', 'cs-big')}</div>
           <div class="cs-hp-row small">Temp ${num('temp', '0', 'w4')}<button class="cs-btn small" data-act="hp-roll" title="Roll hit points from these dice">🎲</button>${txt('hpRoll', 'e.g. 4d8+4', 'w9')}</div></div><label>Hit points</label></div>
@@ -266,45 +284,168 @@ function portraitDialog(e, onDone) {
 }
 
 // ---------- the item editor ----------
+export const DMG_TYPES = ['acid', 'bludgeoning', 'cold', 'fire', 'force', 'lightning', 'necrotic', 'piercing', 'poison', 'psychic', 'radiant', 'slashing', 'thunder'];
+const COINS = { cp: ['Copper', 0.01], sp: ['Silver', 0.1], ep: ['Electrum', 0.5], gp: ['Gold', 1], pp: ['Platinum', 10] };
+// old items kept their value as text like "15 gp"
+function valueOf(i) { if (i.value === '' || i.value == null) return null; if (typeof i.value === 'number') return { n: i.value, cur: i.cur || 'gp' }; const m = /([\d.]+)\s*(cp|sp|ep|gp|pp)?/i.exec(i.value); return m ? { n: +m[1], cur: (m[2] || i.cur || 'gp').toLowerCase() } : null; }
+export const valueText = i => { const v = valueOf(i); return v ? `${num1(v.n)} ${v.cur}` : ''; };
+const gpOf = i => { const v = valueOf(i); return v ? v.n * COINS[v.cur][1] : 0; };
+const ICONS = ['🗡️', '⚔️', '🪓', '🔨', '🏹', '🪃', '🔱', '🪄', '🛡️', '🥋', '⛑️', '🪖', '👑', '📿', '💍', '🧣', '🧤', '🎗️', '🥾', '👢', '🧥', '👘', '🦺', '🕯️', '🔦', '🏮',
+  '🧪', '⚗️', '🍷', '🍺', '🍖', '🍞', '🧀', '🍎', '📜', '📕', '📗', '📘', '📙', '🗺️', '💎', '🔮', '🪙', '💰', '🗝️', '🔑', '🔧', '⚒️', '🪚', '🧭', '⌛', '🎲', '🎻', '🪕', '🥁', '🪈',
+  '🦴', '🪶', '🌿', '🍄', '🌹', '🐚', '🧿', '🪬', '⚱️', '🏺', '🪤', '⛓️', '🧶', '🪢', '🧰', '📦', '⭐', '🌙', '☀️', '🔥', '❄️', '⚡', '☠️', '👁️', '🐉', '🦂', '🕷️'];
+// a searchable dropdown: type to filter, arrows and Enter to pick
+function comboHTML(id, opts, value, { custom = false, placeholder = '' } = {}) {
+  const cur = opts.find(o => o.v === value);
+  return `<div class="combo" id="${id}" data-value="${esc(value ?? '')}" ${custom ? 'data-custom="1"' : ''}><input class="combo-in" value="${esc(cur ? `${cur.icon ? cur.icon + ' ' : ''}${cur.label}` : value || '')}" placeholder="${esc(placeholder)}" autocomplete="off"><div class="combo-list" hidden></div></div>`;
+}
+function wireCombo(root, id, opts, onChange) {
+  const box = root.querySelector('#' + id), inp = box.querySelector('input'), list = box.querySelector('.combo-list');
+  let shownOpts = [], sel = 0;
+  const label = o => `${o.icon ? o.icon + ' ' : ''}${o.label}`;
+  const draw = q => {
+    q = (q || '').toLowerCase();
+    shownOpts = opts.filter(o => !q || o.label.toLowerCase().includes(q));
+    sel = Math.max(0, Math.min(sel, shownOpts.length - 1));
+    list.innerHTML = shownOpts.map((o, i) => `<button type="button" class="${i === sel ? 'sel' : ''} ${o.v === box.dataset.value ? 'cur' : ''}" data-i="${i}">${esc(label(o))}</button>`).join('') || `<p class="small muted">${box.dataset.custom ? 'Press Enter to use this' : 'No matches'}</p>`;
+    list.hidden = false;
+    list.querySelector('.sel')?.scrollIntoView({ block: 'nearest' });
+  };
+  const pick = o => { box.dataset.value = o ? o.v : inp.value.trim(); inp.value = o ? label(o) : inp.value.trim(); list.hidden = true; onChange?.(box.dataset.value); };
+  inp.addEventListener('focus', () => { inp.select(); draw(''); });
+  inp.addEventListener('input', () => { sel = 0; draw(inp.value); });
+  inp.addEventListener('keydown', ev => {
+    if (ev.key === 'ArrowDown') { sel++; draw(inp.value === label(opts.find(o => o.v === box.dataset.value) || {}) ? '' : inp.value); ev.preventDefault(); }
+    else if (ev.key === 'ArrowUp') { sel = Math.max(0, sel - 1); draw(inp.value === label(opts.find(o => o.v === box.dataset.value) || {}) ? '' : inp.value); ev.preventDefault(); }
+    else if (ev.key === 'Enter') { ev.preventDefault(); if (shownOpts[sel]) pick(shownOpts[sel]); else if (box.dataset.custom) pick(null); }
+    else if (ev.key === 'Escape') { list.hidden = true; ev.stopPropagation(); }
+  });
+  list.addEventListener('mousedown', ev => { const b = ev.target.closest('[data-i]'); if (b) { ev.preventDefault(); pick(shownOpts[+b.dataset.i]); } });
+  inp.addEventListener('blur', () => setTimeout(() => {
+    list.hidden = true;
+    const cur = opts.find(o => o.v === box.dataset.value);
+    if (box.dataset.custom && inp.value.trim() && (!cur || inp.value !== label(cur))) { const exact = opts.find(o => o.label.toLowerCase() === inp.value.trim().toLowerCase()); pick(exact || null); }
+    else inp.value = cur ? label(cur) : box.dataset.custom ? inp.value : '';
+  }, 120));
+  return () => box.dataset.value;
+}
+// damage dice as a pool, like the dice table: click to add a die, right-click to take one away
+const DMG_DICE = [4, 6, 8, 10, 12, 20];
+const parseDice = t => { const pool = {}; for (const m of String(t || '').matchAll(/(\d*)d(\d+)/gi)) pool[+m[2]] = (pool[+m[2]] || 0) + (+m[1] || 1); return pool; };
+const diceExpr = pool => Object.keys(pool).map(Number).filter(k => pool[k] > 0).sort((a, b) => b - a).map(k => `${pool[k]}d${k}`).join('+');
+export const avgDice = t => { let a = 0; for (const m of String(t || '').matchAll(/(\d*)d(\d+)/gi)) a += (+m[1] || 1) * (+m[2] + 1) / 2; const flat = String(t || '').replace(/\d*d\d+/gi, '').match(/[+-]\s*\d+/g); if (flat) a += flat.reduce((x, f) => x + parseInt(f.replace(/\s/g, '')), 0); return a; };
+
 function itemDialog(e, item, onDone) {
   const sh = e.sheet, isNew = !sh.items.includes(item);
   const bibleItems = W().entries.filter(x => x.type === 'item').sort((a, b) => a.name.localeCompare(b.name));
+  const kindOpts = Object.entries(KINDS).map(([k, [l, ic]]) => ({ v: k, label: l, icon: ic })).sort((a, b) => a.label.localeCompare(b.label));
+  const dmgOpts = DMG_TYPES.map(t => ({ v: t, label: t[0].toUpperCase() + t.slice(1) }));
+  const bibleOpts = [{ v: '', label: '— not linked —' }, ...bibleItems.map(x => ({ v: x.id, label: x.name }))];
+  const v0 = valueOf(item);
+  let pool = parseDice(item.dmg), icon = item.icon || '';
+  const wUnitL = unitOf('lb');
   openModal(`<h2>${isNew ? 'New item' : 'Item'}</h2>
     <div class="row"><div style="flex:2"><label>Name</label><input id="i-name" value="${esc(item.name || '')}" placeholder="e.g. Longsword of Embers" autofocus></div>
-      <div><label>Kind</label><select id="i-kind">${Object.entries(KINDS).map(([k, [l, ic]]) => `<option value="${k}" ${item.kind === k ? 'selected' : ''}>${ic} ${l}</option>`).join('')}</select></div></div>
+      <div><label>Kind</label>${comboHTML('i-kind', kindOpts, item.kind || 'misc', { placeholder: 'Search kinds…' })}</div></div>
     <div class="row"><div><label>Rarity</label><select id="i-rar">${Object.entries(RARITY).map(([k, [l]]) => `<option value="${k}" ${(item.rarity || 'common') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
-      <div><label>Quantity</label><input id="i-qty" type="number" min="1" value="${item.qty || 1}"></div><div><label>Weight (lb, each)</label><input id="i-w" type="number" step="0.1" value="${item.weight ?? ''}"></div><div><label>Value</label><input id="i-val" value="${esc(item.value || '')}" placeholder="15 gp"></div></div>
-    <div class="row"><div><label>Icon</label><input id="i-icon" value="${esc(item.icon || '')}" placeholder="${KINDS[item.kind || 'misc'][1]} (any emoji)"></div>
+      <div><label>Quantity</label><input id="i-qty" type="number" min="1" value="${item.qty || 1}"></div><div><label>Weight (${wUnitL}, each)</label><input id="i-w" type="number" step="0.1" min="0" value="${shown(item.weight, 'lb')}"></div>
+      <div><label>Value</label><div class="i-money"><input id="i-val" type="number" min="0" step="any" value="${v0 ? v0.n : ''}" placeholder="15"><select id="i-cur">${Object.entries(COINS).map(([k, [l]]) => `<option value="${k}" ${(v0?.cur || 'gp') === k ? 'selected' : ''} title="${l}">${k}</option>`).join('')}</select></div></div></div>
+    <div class="row"><div><label>Icon</label><div class="i-iconpick"><button type="button" class="i-iconbtn" id="i-iconbtn" title="Choose an icon"></button><span class="small muted" id="i-iconnote"></span></div>
+        <div class="i-icongrid" id="i-icongrid" hidden><button type="button" class="i-auto" data-ic="">↺ Match the kind</button>${ICONS.map(ic => `<button type="button" data-ic="${ic}">${ic}</button>`).join('')}<input id="i-iconown" placeholder="or paste any emoji" maxlength="4"></div></div>
       <div><label>Picture</label><div class="row" style="gap:6px"><button class="small" id="i-img">${item.img ? 'Replace' : '⬆ Upload'}</button>${item.img ? '<button class="small danger" id="i-noimg">Remove</button>' : ''}</div></div>
-      <div style="flex:2"><label>World Bible item</label><select id="i-entry"><option value="">— not linked —</option>${bibleItems.map(x => `<option value="${x.id}" ${item.entryId === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div></div>
-    <fieldset class="i-grp" data-for="weapon"><legend>Weapon</legend><div class="row"><div><label>Damage</label><input id="i-dmg" value="${esc(item.dmg || '')}" placeholder="1d8"></div><div><label>Damage type</label><input id="i-dt" value="${esc(item.dmgType || '')}" placeholder="slashing"></div><div><label>Magic bonus</label><input id="i-bonus" type="number" value="${item.bonus ?? ''}" placeholder="0"></div></div>
+      <div style="flex:2"><label>World Bible item</label>${comboHTML('i-entry', bibleOpts, item.entryId || '', { placeholder: 'Search the World Bible…' })}</div></div>
+    <fieldset class="i-grp" data-for="weapon"><legend>Weapon</legend>
+      <label style="margin-top:0">Damage <span class="small muted">— click a die to add it, right-click to take one away</span></label>
+      <div class="i-dice">${DMG_DICE.map(n => `<button type="button" class="i-die" data-die="${n}">d${n}<b data-dc="${n}"></b></button>`).join('')}<span class="i-expr" id="i-expr"></span><button type="button" class="small" id="i-dclear">Clear</button></div>
+      <div class="row"><div><label>Damage type</label>${comboHTML('i-dt', dmgOpts, item.dmgType || '', { custom: true, placeholder: 'Search or type…' })}</div><div><label>Magic bonus</label><input id="i-bonus" type="number" value="${item.bonus ?? ''}" placeholder="0"></div></div>
       <div class="row"><label class="check"><input type="checkbox" id="i-fin" ${item.finesse ? 'checked' : ''}> Finesse</label><label class="check"><input type="checkbox" id="i-rng" ${item.ranged ? 'checked' : ''}> Ranged</label><label class="check"><input type="checkbox" id="i-two" ${item.two ? 'checked' : ''}> Two-handed</label></div></fieldset>
     <fieldset class="i-grp" data-for="armor shield"><legend>Armour</legend><div class="row"><div><label id="i-aclab">${item.kind === 'shield' ? 'AC bonus' : 'Base AC'}</label><input id="i-ac" type="number" value="${item.ac ?? ''}" placeholder="${item.kind === 'shield' ? '2' : '11'}"></div>
       <div class="i-armortype"><label>Type</label><select id="i-at">${['light', 'medium', 'heavy'].map(t => `<option ${item.armorType === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div></div></fieldset>
-    <div class="row"><div><label>AC bonus while worn</label><input id="i-acb" type="number" value="${item.acBonus ?? ''}" placeholder="e.g. 1 for a Ring of Protection"></div><label class="check" style="align-self:flex-end"><input type="checkbox" id="i-att" ${item.attune ? 'checked' : ''}> Needs attunement</label></div>
+    <div class="row"><div><label>AC bonus while worn</label><input id="i-acb" type="number" value="${item.acBonus ?? ''}" placeholder="e.g. 1, or −1 for a penalty"></div><label class="check" style="align-self:flex-end"><input type="checkbox" id="i-att" ${item.attune ? 'checked' : ''}> Needs attunement</label></div>
     <label>Description</label><textarea id="i-notes" rows="3" placeholder="What it does, where it came from">${esc(item.notes || '')}</textarea>
     <div class="modal-actions">${isNew ? '' : '<button class="danger" data-a="del">Delete</button><span style="flex:1"></span>'}<button data-a="no">Cancel</button><button class="primary" data-a="yes">${isNew ? 'Add to bag' : 'Save'}</button></div>`, m => {
-    const $ = s => m.querySelector(s);
-    const groups = () => { const k = $('#i-kind').value; m.querySelectorAll('.i-grp').forEach(g => g.hidden = !g.dataset.for.split(' ').includes(k)); $('#i-aclab').textContent = k === 'shield' ? 'AC bonus' : 'Base AC'; m.querySelector('.i-armortype').hidden = k === 'shield'; };
-    groups(); $('#i-kind').onchange = groups;
+    const $ = q => m.querySelector(q);
+    let kind = item.kind || 'misc';
+    const drawIcon = () => { $('#i-iconbtn').textContent = icon || KINDS[kind]?.[1] || '📦'; $('#i-iconnote').textContent = icon ? 'your choice' : `matches ${KINDS[kind]?.[0].toLowerCase() || 'the kind'}`; };
+    const groups = () => { m.querySelectorAll('.i-grp').forEach(g => g.hidden = !g.dataset.for.split(' ').includes(kind)); $('#i-aclab').textContent = kind === 'shield' ? 'AC bonus' : 'Base AC'; m.querySelector('.i-armortype').hidden = kind === 'shield'; drawIcon(); };
+    const getKind = wireCombo(m, 'i-kind', kindOpts, v => { kind = v; groups(); });
+    const getDt = wireCombo(m, 'i-dt', dmgOpts);
+    let entryId = item.entryId || '';
+    wireCombo(m, 'i-entry', bibleOpts, v => { entryId = v; const x = getEntry(v); if (x && !$('#i-name').value.trim()) $('#i-name').value = x.name; if (x?.image && !img) img = x.image; });
+    groups();
+    // damage dice
+    const drawDice = () => { for (const n of DMG_DICE) { const b = m.querySelector(`[data-dc="${n}"]`); b.textContent = pool[n] ? '×' + pool[n] : ''; b.parentElement.classList.toggle('on', !!pool[n]); } $('#i-expr').textContent = diceExpr(pool) || 'no dice yet'; };
+    m.querySelectorAll('[data-die]').forEach(b => { b.onclick = () => { const n = +b.dataset.die; pool[n] = Math.min(20, (pool[n] || 0) + 1); drawDice(); }; b.oncontextmenu = ev => { ev.preventDefault(); const n = +b.dataset.die; pool[n] = Math.max(0, (pool[n] || 0) - 1); drawDice(); }; });
+    $('#i-dclear').onclick = () => { pool = {}; drawDice(); };
+    drawDice();
+    // icon
+    $('#i-iconbtn').onclick = () => { $('#i-icongrid').hidden = !$('#i-icongrid').hidden; };
+    $('#i-icongrid').addEventListener('click', ev => { const b = ev.target.closest('[data-ic]'); if (!b) return; icon = b.dataset.ic; drawIcon(); $('#i-icongrid').hidden = true; });
+    $('#i-iconown').addEventListener('input', ev => { if (ev.target.value.trim()) { icon = ev.target.value.trim(); drawIcon(); } });
     let img = item.img || '';
     $('#i-img').onclick = async () => { const f = await pickFile('image/*'); if (!f) return; img = (await A.storeImage(f, { maxDim: 256 })).ref; $('#i-img').textContent = '✓ Picture added'; };
     if ($('#i-noimg')) $('#i-noimg').onclick = () => { img = ''; $('#i-noimg').remove(); $('#i-img').textContent = '⬆ Upload'; };
-    $('#i-entry').onchange = ev => { const x = getEntry(ev.target.value); if (x && !$('#i-name').value.trim()) $('#i-name').value = x.name; if (x?.image && !img) img = x.image; };
     m.addEventListener('click', ev => {
       const a = ev.target.dataset.a;
       if (a === 'no') closeModal();
       if (a === 'del') { sh.items = sh.items.filter(i => i !== item); closeModal(); onDone(); }
       if (a === 'yes') {
         const n = v => v === '' ? '' : +v;
-        Object.assign(item, { name: $('#i-name').value.trim() || KINDS[$('#i-kind').value][0], kind: $('#i-kind').value, rarity: $('#i-rar').value, qty: Math.max(1, +$('#i-qty').value || 1), weight: n($('#i-w').value), value: $('#i-val').value.trim(),
-          icon: $('#i-icon').value.trim(), img, entryId: $('#i-entry').value, dmg: $('#i-dmg').value.trim(), dmgType: $('#i-dt').value.trim(), bonus: n($('#i-bonus').value), finesse: $('#i-fin').checked, ranged: $('#i-rng').checked, two: $('#i-two').checked,
+        kind = getKind() || kind;
+        Object.assign(item, { name: $('#i-name').value.trim() || KINDS[kind][0], kind, rarity: $('#i-rar').value, qty: Math.max(1, +$('#i-qty').value || 1), weight: stored($('#i-w').value, 'lb'),
+          value: n($('#i-val').value), cur: $('#i-cur').value, icon, img, entryId, dmg: diceExpr(pool), dmgType: getDt() || '', bonus: n($('#i-bonus').value), finesse: $('#i-fin').checked, ranged: $('#i-rng').checked, two: $('#i-two').checked,
           ac: n($('#i-ac').value), armorType: $('#i-at').value, acBonus: n($('#i-acb').value), attune: $('#i-att').checked, notes: $('#i-notes').value });
         // something worn in a slot it no longer fits goes back in the bag
         if (item.slot && !SLOTS[item.slot].kinds.includes(item.kind)) { item.slot = ''; item.cell = freeCell(sh); }
         if (isNew) sh.items.push(item);
         closeModal(); onDone();
       }
+    });
+  });
+}
+
+// ---------- comparing two items of the same kind ----------
+function compareDialog(e, a, onEquip) {
+  const others = [];
+  for (const x of e.sheet.items) if (x !== a && x.kind === a.kind) others.push({ it: x, who: '', own: true });
+  for (const en of W().entries) if (en !== e && en.sheet?.items) for (const x of en.sheet.items) if (x.kind === a.kind) others.push({ it: x, who: en.name, own: false });
+  if (!others.length) return toast(`No other ${KINDS[a.kind]?.[0].toLowerCase() || 'item'}s to compare with yet`);
+  const rows = (x, y) => {
+    const R = [];
+    const cmp = (label, va, vb, fmt = v => v, better = 1) => { const d = (+vb || 0) - (+va || 0); R.push(`<tr><td>${label}</td><td>${fmt(va)}</td><td>${fmt(vb)}</td><td class="${!d ? '' : d * better > 0 ? 'up' : 'down'}">${!d ? '=' : (d > 0 ? '▲ ' : '▼ ') + num1(Math.abs(d))}</td></tr>`); };
+    const txt = (label, va, vb) => R.push(`<tr><td>${label}</td><td>${va || '—'}</td><td>${vb || '—'}</td><td>${va === vb ? '=' : ''}</td></tr>`);
+    txt('Rarity', RARITY[x.rarity || 'common'][0], RARITY[y.rarity || 'common'][0]);
+    if (a.kind === 'weapon') {
+      cmp('Average damage', avgDice(x.dmg) + (+x.bonus || 0), avgDice(y.dmg) + (+y.bonus || 0), v => num1(v));
+      txt('Damage', `${x.dmg || '—'}${+x.bonus ? ' ' + sgn(+x.bonus) : ''}`, `${y.dmg || '—'}${+y.bonus ? ' ' + sgn(+y.bonus) : ''}`);
+      cmp('To hit (magic)', +x.bonus || 0, +y.bonus || 0, v => sgn(+v));
+      txt('Damage type', x.dmgType, y.dmgType);
+      const props = i => [i.finesse && 'finesse', i.ranged && 'ranged', i.two && 'two-handed'].filter(Boolean).join(', ');
+      txt('Properties', props(x), props(y));
+    }
+    if (a.kind === 'armor') { cmp('Base AC', +x.ac || 0, +y.ac || 0); txt('Type', x.armorType || 'light', y.armorType || 'light'); }
+    if (a.kind === 'shield') cmp('AC bonus', +x.ac || 2, +y.ac || 2, v => sgn(+v));
+    if (+x.acBonus || +y.acBonus) cmp('AC while worn', +x.acBonus || 0, +y.acBonus || 0, v => sgn(+v));
+    const wc = v => (+v || 0) * (isMetric() ? 0.5 : 1);
+    cmp(`Weight (${unitOf('lb')})`, wc(x.weight), wc(y.weight), v => num1(v), -1);
+    cmp('Value (gp)', gpOf(x), gpOf(y), v => num1(v));
+    txt('Attunement', x.attune ? 'needed' : 'no', y.attune ? 'needed' : 'no');
+    return R.join('');
+  };
+  openModal(`<h2>Compare ${esc(a.name)}</h2>
+    <label>With</label><select id="cmp-with">${others.map((o, i) => `<option value="${i}">${esc(o.it.name)}${o.it.slot ? ' (equipped)' : ''}${o.who ? ` — ${esc(o.who)}’s` : ''}</option>`).join('')}</select>
+    <div id="cmp-out"></div>
+    <div class="modal-actions"><span style="flex:1"></span><button data-a="close">Close</button></div>`, m => {
+    const draw = () => {
+      const o = others[+m.querySelector('#cmp-with').value];
+      m.querySelector('#cmp-out').innerHTML = `<table class="cmp-table"><tr><th></th><th style="color:${rarCol(a)}">${itemIcon(a)} ${esc(a.name)}</th><th style="color:${rarCol(o.it)}">${itemIcon(o.it)} ${esc(o.it.name)}</th><th></th></tr>${rows(a, o.it)}</table>
+        <p class="small muted">▲ / ▼ show how the second one compares with ${esc(a.name)}.</p>
+        ${o.own && !o.it.slot ? `<button class="small" data-a="equip">Equip ${esc(o.it.name)} instead</button>` : ''}`;
+    };
+    m.querySelector('#cmp-with').onchange = draw; draw();
+    m.addEventListener('click', ev => {
+      const act = ev.target.dataset.a;
+      if (act === 'close') closeModal();
+      if (act === 'equip') { const o = others[+m.querySelector('#cmp-with').value]; closeModal(); onEquip(o.it, a.slot); }
     });
   });
 }
@@ -315,14 +456,15 @@ function freeCell(sh, from = 0) {
 }
 function tipHTML(i) {
   const lines = [];
-  if (i.kind === 'weapon' && i.dmg) lines.push(`${esc(i.dmg)}${+i.bonus ? ` +${i.bonus}` : ''} ${esc(i.dmgType || '')} damage`);
+  if (i.kind === 'weapon' && i.dmg) lines.push(`${esc(i.dmg)}${+i.bonus ? ` ${sgn(+i.bonus)}` : ''} ${esc(i.dmgType || '')} damage`);
+  if (i.kind === 'weapon' && +i.bonus) lines.push(`${sgn(+i.bonus)} to hit`);
   if (i.kind === 'weapon') { const p = [i.finesse && 'finesse', i.ranged && 'ranged', i.two && 'two-handed'].filter(Boolean); if (p.length) lines.push(p.join(', ')); }
   if (i.kind === 'armor' && i.ac) lines.push(`AC ${i.ac} · ${i.armorType || 'light'} armour`);
-  if (i.kind === 'shield') lines.push(`+${i.ac || 2} AC`);
-  if (+i.acBonus) lines.push(`+${i.acBonus} AC while worn`);
+  if (i.kind === 'shield') lines.push(`${sgn(+i.ac || 2)} AC`);
+  if (+i.acBonus) lines.push(`${sgn(+i.acBonus)} AC while worn`);
   return `<div class="cs-tip-name" style="color:${rarCol(i)}">${esc(i.name)}</div><div class="cs-tip-kind">${RARITY[i.rarity || 'common'][0]} ${KINDS[i.kind]?.[0].toLowerCase() || 'item'}${i.attune ? ' (requires attunement)' : ''}</div>
     ${lines.map(l => `<div class="cs-tip-line">${l}</div>`).join('')}${i.notes ? `<div class="cs-tip-notes">${esc(i.notes)}</div>` : ''}
-    <div class="cs-tip-foot">${[+i.qty > 1 && `×${i.qty}`, i.weight && `${i.weight} lb`, i.value && esc(i.value)].filter(Boolean).join(' · ')}</div>`;
+    <div class="cs-tip-foot">${[+i.qty > 1 && `×${i.qty}`, i.weight && weightText(i.weight), valueText(i)].filter(Boolean).join(' · ')}</div>`;
 }
 
 // ---------- putting the sheet on a page ----------
@@ -343,8 +485,9 @@ export function mountSheet(host, e, opts = {}) {
     const set = (k, v) => host.querySelectorAll(`[data-d="${k}"]`).forEach(el => el.textContent = v);
     for (const [k] of ABIL) { set('mod.' + k, sgn(d.m[k])); set('save.' + k, sgn(d.saves[k])); }
     for (const [k] of SKILLS) set('skill.' + k, sgn(d.skills[k]));
-    set('passive', d.passive); set('passiveIns', d.passiveIns); set('passiveInv', d.passiveInv); set('dc', d.dc ?? '—'); set('satk', d.satk == null ? '—' : sgn(d.satk)); set('weight', d.weight); set('xp', d.xp ?? '—');
+    set('passive', d.passive); set('passiveIns', d.passiveIns); set('passiveInv', d.passiveInv); set('dc', d.dc ?? '—'); set('satk', d.satk == null ? '—' : sgn(d.satk)); set('weight', weightText(d.weight)); set('xp', d.xp ?? '—');
     const ac = host.querySelector('[data-k="acOverride"]'); if (ac) ac.placeholder = d.acAuto;
+    set('ac', d.ac); const am = host.querySelector('[data-d="acmod"]'); if (am) { am.textContent = d.acMod ? sgn(d.acMod) : ''; am.className = d.acMod < 0 ? 'neg' : 'pos'; }
     const ini = host.querySelector('[data-k="initOverride"]'); if (ini) ini.placeholder = sgn(d.m.dex);
     const pr = host.querySelector('[data-k="profOverride"]'); if (pr && sh().profOverride === '') pr.placeholder = sgn(d.prof);
   };
@@ -355,6 +498,7 @@ export function mountSheet(host, e, opts = {}) {
     const k = t.dataset.k; if (!k) return;
     let v = t.type === 'checkbox' ? t.checked : t.value;
     if (t.dataset.t === 'num') v = t.value.trim() === '' ? '' : +t.value.replace(/[^\d.+-]/g, '') || 0;
+    if (t.dataset.conv && v !== '') v = stored(v, t.dataset.conv);
     setP(sh(), k, v); touch(); refresh();
     if (k === 'theme' || k === 'accent') draw();
   });
@@ -395,11 +539,34 @@ export function mountSheet(host, e, opts = {}) {
     clearTimeout(clickT);
     const S = sh(), it = S.items.find(i => i.id === t.dataset.item); if (!it) return;
     closeModal();
-    if (it.slot) { it.slot = ''; it.cell = freeCell(S); }
-    else { const slot = Object.keys(SLOTS).find(s => SLOTS[s].kinds.includes(it.kind) && !S.items.some(i => i.slot === s && (it.kind !== 'weapon' || s !== 'ranged' || it.ranged))) || Object.keys(SLOTS).find(s => SLOTS[s].kinds.includes(it.kind));
-      if (!slot) return toast(`${KINDS[it.kind]?.[0] || 'That'} can’t be worn — it stays in the bag`);
-      equip(S, it, slot); }
+    if (it.slot) unwear(S, it); else if (!wear(S, it)) return;
     touch(); draw();
+  });
+  // put something on in the best free slot that fits it (ranged weapons prefer the ranged slot)
+  const fits = it => it.kind === 'weapon' ? (it.ranged ? ['ranged', 'main', 'off'] : ['main', 'off']) : Object.keys(SLOTS).filter(s => SLOTS[s].kinds.includes(it.kind));
+  function wear(S, it, prefer) {
+    const ok = fits(it);
+    if (!ok.length) { toast(`${KINDS[it.kind]?.[0] || 'That'} can’t be worn — it stays in the bag`); return false; }
+    const slot = (prefer && ok.includes(prefer) && prefer) || ok.find(s => !S.items.some(i => i.slot === s)) || ok[0];
+    equip(S, it, slot); return true;
+  }
+  function unwear(S, it) { it.slot = ''; it.cell = freeCell(S); }
+  // right-click an item: equip or take off, compare, edit, delete
+  host.addEventListener('contextmenu', ev => {
+    const t = ev.target.closest('[data-item]'); if (!t) return;
+    ev.preventDefault(); hideTip(); clearTimeout(clickT);
+    const S = sh(), it = S.items.find(i => i.id === t.dataset.item); if (!it) return;
+    const done = () => { touch(); draw(); };
+    contextMenu(ev.clientX, ev.clientY, [
+      { header: it.name },
+      it.slot ? { label: 'Unequip', icon: '⤵️', action: () => { unwear(S, it); done(); } }
+        : { label: fits(it).length ? 'Equip' : 'Can’t be worn', icon: '🛡️', action: () => { if (wear(S, it)) done(); } },
+      { label: 'Compare…', icon: '⚖️', action: () => compareDialog(e, it, (other, slot) => { wear(S, other, slot); done(); }) },
+      { label: 'Edit', icon: '✎', action: () => itemDialog(e, it, done) },
+      { label: 'Duplicate', icon: '⧉', action: () => { S.items.push({ ...JSON.parse(JSON.stringify(it)), id: uid(), slot: '', cell: freeCell(S) }); done(); } },
+      '-',
+      { label: 'Delete', icon: '🗑', danger: true, action: () => { S.items = S.items.filter(i => i !== it); done(); } },
+    ]);
   });
   function equip(S, it, slot) {
     const there = S.items.find(i => i.slot === slot && i !== it);
@@ -431,6 +598,15 @@ export function mountSheet(host, e, opts = {}) {
   // a hover card for items, like in an action RPG
   function hideTip() { tip?.remove(); tip = null; }
   host.addEventListener('mouseover', ev => {
+    const acb = ev.target.closest('[data-actip]');
+    if (acb) {
+      const d = derive(sh());
+      if (!tip) { tip = document.createElement('div'); tip.className = 'cs-tip'; document.body.appendChild(tip); }
+      tip.innerHTML = `<div class="cs-tip-name">Armour class ${d.ac}</div>${d.acParts.map(([l, v]) => `<div class="cs-tip-row"><span>${esc(l)}</span><b>${l === 'Unarmoured' || l.includes('armour') || l === 'Base you set' ? v : sgn(v)}</b></div>`).join('')}
+        ${d.acMods.map(([l, v]) => `<div class="cs-tip-row ${v < 0 ? 'neg' : 'pos'}"><span>${esc(l)}</span><b>${sgn(v)}</b></div>`).join('')}<div class="cs-tip-row total"><span>Total</span><b>${d.ac}</b></div>`;
+      const r = acb.getBoundingClientRect(); tip.style.left = Math.min(innerWidth - 270, r.left) + 'px'; tip.style.top = Math.min(innerHeight - tip.offsetHeight - 8, r.bottom + 6) + 'px';
+      return;
+    }
     const t = ev.target.closest('[data-item]'); if (!t) { hideTip(); return; }
     const it = sh().items.find(i => i.id === t.dataset.item); if (!it) return;
     if (!tip) { tip = document.createElement('div'); tip.className = 'cs-tip'; document.body.appendChild(tip); }

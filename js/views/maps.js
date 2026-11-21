@@ -23,7 +23,7 @@ async function newMapDialog(parentId = '', pin = null) {
   try { img = await A.storeImage(f, { maxDim: 4096, quality: 0.88 }); } catch { toast('Could not read that image'); return null; }
   const def = pin ? (pin.label || getEntry(pin.entryId)?.name || '') : f.name.replace(/\.[^.]+$/, '');
   const name = await promptDialog('Name this map', def) || def || 'Untitled map';
-  const m = { id: uid(), name, image: img.ref, w: img.w, h: img.h, parentId, scale: { pxPerUnit: 0, unit: 'miles' }, pins: [] };
+  const m = { id: uid(), name, image: img.ref, w: img.w, h: img.h, parentId, scale: { pxPerUnit: 0, unit: (W().settings?.units || 'metric') === 'metric' ? 'km' : 'miles' }, pins: [] };
   W().maps.push(m);
   if (pin) pin.submapId = m.id;
   save();
