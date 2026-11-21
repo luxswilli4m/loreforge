@@ -24,6 +24,7 @@ import * as diceView from './views/dice.js';
 import * as combat from './views/combat.js';
 import { renderBuilderPage } from './views/creator.js';
 import * as bestiary from './views/bestiary.js';
+import * as battle from './views/battle.js';
 import { initCloud, onConflict, connected as cloudConnected, status as syncStatus } from './cloud.js';
 import { initTray } from './tools/tray.js';
 import { initAssets, migrateWorld } from './assets.js';
@@ -48,6 +49,7 @@ const NAV = [
   { href: '#/builder', icon: '🧙', label: 'Character builder', match: /^builder/ },
   { href: '#/bestiary', icon: '🐲', label: 'Bestiary', match: /^bestiary/ },
   { href: '#/combat', icon: '⚔️', label: 'Combat tracker', match: /^combat/ },
+  { href: '#/battle', icon: '🗺️', label: 'Battle map', match: /^battle/ },
   { href: '#/dice', icon: '🎯', label: 'Dice', match: /^dice/ },
   { href: '#/forge', icon: '🔮', label: 'Story Forge', match: /^forge/ },
   { href: '#/library', icon: '🏛️', label: 'Library', match: /^(library|doc)/ },
@@ -117,6 +119,8 @@ export function route() {
     combat: () => combat.render(main),
     builder: () => renderBuilderPage(main),
     bestiary: () => bestiary.render(main),
+    battle: () => battle.render(main),
+    battleview: () => battle.renderPlayerBattle(main),
     playerview: () => combat.renderPlayerView(main),
     graph: () => graph.render(main),
     campaign: () => campaign.renderList(main),

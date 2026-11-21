@@ -33,12 +33,73 @@ const THRESH = { 1: [25, 50, 75, 100], 2: [50, 100, 150, 200], 3: [75, 150, 225,
   11: [800, 1600, 2400, 3600], 12: [1000, 2000, 3000, 4500], 13: [1100, 2200, 3400, 5100], 14: [1250, 2500, 3800, 5700], 15: [1400, 2800, 4300, 6400], 16: [1600, 3200, 4800, 7200], 17: [2000, 3900, 5900, 8800], 18: [2100, 4200, 6300, 9500], 19: [2400, 4900, 7300, 10900], 20: [2800, 5700, 8500, 12700] };
 const multiplier = n => n <= 1 ? 1 : n === 2 ? 1.5 : n <= 6 ? 2 : n <= 10 ? 2.5 : n <= 14 ? 3 : 4;
 const PREF_KEY = 'loreforge:combat';
-const prefs = (() => { try { return { autoSort: true, skipDown: true, rollHp: false, allyHp: true, exh: '2014', ...JSON.parse(localStorage.getItem(PREF_KEY) || '{}') }; } catch { return { autoSort: true, skipDown: true, rollHp: false, allyHp: true }; } })();
+const prefs = (() => { try { return { autoSort: true, skipDown: true, rollHp: false, allyHp: true, exh: '2014', diag: 'circle', ...JSON.parse(localStorage.getItem(PREF_KEY) || '{}') }; } catch { return { autoSort: true, skipDown: true, rollHp: false, allyHp: true }; } })();
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch { /* */ } };
 const chan = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('loreforge-combat') : null;
 
+// ---------- shared turn logic (the combat tracker and the battle map both use it) ----------
+export const getPrefs = () => prefs;
+export function logTo(c, m) { c.log = c.log || []; c.log.unshift({ r: c.round, m, t: Date.now() }); if (c.log.length > 200) c.log.length = 200; }
+export const isDown = x => x.side !== 'ally' && x.maxHp && x.hp <= 0;
+export const sortCombat = c => c.list.sort((a, b) => ((+b.init || 0) - (+a.init || 0)) || (b.lair ? 1 : 0) - (a.lair ? 1 : 0) || (b.bonus - a.bonus) || ((b.dex || 10) - (a.dex || 10)));
+export const rollInitFor = x => x.lair ? 20 : rollAndLog(`d20${x.bonus >= 0 ? '+' : ''}${x.bonus}`).total;
+export function startTurnFor(c, x) {
+  x.reaction = false; if (x.leg) x.leg.used = 0; x.econ = {};
+  // conditions with a duration count down at the start of their turn
+  for (const k of x.conds) if (k.rounds) { k.rounds--; if (k.rounds <= 0) { k.gone = true; logTo(c, `${x.name} is no longer ${k.k.toLowerCase()}`); } }
+  x.conds = x.conds.filter(k => !k.gone);
+  if (x.side === 'ally' && x.maxHp && x.hp <= 0 && !x.dead) toast(`${x.name} makes a death saving throw`);
+}
+// move the turn on (or back); starts the fight, rolling anyone's missing initiative, if it hasn't begun
+export function advanceTurn(c, dir = 1) {
+  const L = c.list; if (!L.length) return;
+  if (!c.turnId) {
+    for (const x of L) if (x.init === '' || x.init == null) x.init = rollInitFor(x);
+    sortCombat(c);
+    c.round = 1; c.started = Date.now(); c.turnId = L.find(x => !(prefs.skipDown && isDown(x)))?.id || L[0].id;
+    logTo(c, '— Combat started: round 1 —'); startTurnFor(c, L.find(x => x.id === c.turnId)); return;
+  }
+  let i = L.findIndex(x => x.id === c.turnId), guard = 0;
+  do {
+    i += dir;
+    if (i >= L.length) { i = 0; c.round++; logTo(c, `— Round ${c.round} —`); }
+    if (i < 0) { i = L.length - 1; c.round = Math.max(1, c.round - 1); }
+  } while (prefs.skipDown && isDown(L[i]) && ++guard < L.length);
+  c.turnId = L[i].id;
+  if (dir > 0) startTurnFor(c, L[i]);
+}
+const ZERO_SPEED = ['Grappled', 'Restrained', 'Paralyzed', 'Petrified', 'Stunned', 'Unconscious'];
+// a creature's speed this turn, in feet, after conditions and exhaustion
+export function speedOf(x) {
+  let sp = +x.speedFt || 0; const why = [];
+  const zero = (x.conds || []).find(k => ZERO_SPEED.includes(k.k));
+  if (zero) return { sp: 0, why: [`${zero.k}: speed 0`] };
+  const e = +x.exh || 0;
+  if (prefs.exh === '2024') { if (e) { sp = Math.max(0, sp - 5 * e); why.push(`Exhaustion ${e}: −${speedText(5 * e)}`); } }
+  else if (e >= 5) { sp = 0; why.push('Exhaustion 5: speed 0'); }
+  else if (e >= 2) { sp = Math.floor(sp / 2); why.push('Exhaustion 2+: speed halved'); }
+  if ((x.conds || []).some(k => k.k === 'Hasted')) { sp *= 2; why.push('Hasted: speed doubled'); }
+  return { sp, why };
+}
+// how far it can still move this turn (dashing adds its speed again; moving on the battle map uses it up)
+export const moveLeft = x => Math.max(0, speedOf(x).sp * (1 + ((x.econ || {}).dash || 0)) - ((x.econ || {}).moved || 0));
+export function exhNote(x) {
+  const e = +x.exh || 0; if (!e) return '';
+  if (prefs.exh === '2024') return e >= 6 ? 'Dies' : `−${2 * e} to every d20 test, −${speedText(5 * e)} speed`;
+  return ['', 'Disadvantage on ability checks', '…and speed halved', '…and disadvantage on attacks and saving throws', '…and hit point maximum halved', '…and speed 0', 'Dies'][Math.min(6, e)];
+}
+export function useEconFor(c, x, k, bonusFirst) {
+  x.econ = x.econ || {};
+  if (k === 'reaction') { x.reaction = !x.reaction; return; }
+  if (k !== 'dash') { x.econ[k] = !x.econ[k]; return; }
+  const slot = bonusFirst ? (!x.econ.bonus ? 'bonus' : !x.econ.action ? 'action' : '') : (!x.econ.action ? 'action' : !x.econ.bonus ? 'bonus' : '');
+  if (!slot) return toast(`${x.name} has no action or bonus action left to Dash with`);
+  x.econ[slot] = true; x.econ.dash = (x.econ.dash || 0) + 1;
+  logTo(c, `${x.name} dashed (${slot === 'bonus' ? 'bonus action' : 'action'})`);
+}
+
 // older trackers stored conditions as plain names and the turn as a number
-function normalize(c) {
+export function normalize(c) {
   c.list = c.list || []; c.log = c.log || []; c.round = c.round || 1;
   for (const x of c.list) {
     x.conds = (x.conds || []).map(k => typeof k === 'string' ? { k } : k);
@@ -48,7 +109,7 @@ function normalize(c) {
   if (c.turnId && !c.list.some(x => x.id === c.turnId)) c.turnId = null;
   return c;
 }
-const status = x => !x.maxHp ? '' : x.hp <= 0 ? (x.dead ? 'Dead' : x.side === 'ally' ? 'Down' : 'Defeated') : x.hp <= x.maxHp / 2 ? 'Bloodied' : x.hp < x.maxHp ? 'Hurt' : 'Healthy';
+export const status = x => !x.maxHp ? '' : x.hp <= 0 ? (x.dead ? 'Dead' : x.side === 'ally' ? 'Down' : 'Defeated') : x.hp <= x.maxHp / 2 ? 'Bloodied' : x.hp < x.maxHp ? 'Hurt' : 'Healthy';
 
 export function render(main) {
   const w = W();
@@ -62,6 +123,7 @@ export function render(main) {
       <span style="flex:1"></span>
       <button id="cb-load" title="Load a saved encounter">📂 Encounters</button>
       <button id="cb-save" title="Save everyone here as an encounter to run later">💾 Save encounter</button>
+      <a class="btn" href="#/battle" title="Move everyone around on a map">🗺️ Battle map</a>
       <button id="cb-player" title="Open a window to show your players">🖥️ Player view</button>
       <button class="danger" id="cb-end">End combat</button></div>
     <div class="cb-bar" id="cb-bar"></div>
@@ -99,12 +161,14 @@ export function render(main) {
   const $ = s => main.querySelector(s);
 
   // ---------- helpers ----------
-  const log = m => { c.log.unshift({ r: c.round, m, t: Date.now() }); if (c.log.length > 200) c.log.length = 200; };
+  const log = m => logTo(c, m);
+  const next = (dir = 1) => { if (!c.list.length) return; if (!c.turnId && !c.list.length) return toast('Add someone to the fight first'); advanceTurn(c, dir); focus = c.turnId; draw(); };
+  const startTurn = x => startTurnFor(c, x);
   const byId = id => c.list.find(x => x.id === id);
   const order = () => c.list;
-  const sortList = () => c.list.sort((a, b) => ((+b.init || 0) - (+a.init || 0)) || (b.lair ? 1 : 0) - (a.lair ? 1 : 0) || (b.bonus - a.bonus) || ((b.dex || 10) - (a.dex || 10)));
+  const sortList = () => sortCombat(c);
   const persist = () => { c.focusId = focus; save(); broadcast(); };
-  const rollInit = x => x.lair ? 20 : rollAndLog(`d20${x.bonus >= 0 ? '+' : ''}${x.bonus}`).total;
+  const rollInit = rollInitFor;
   function syncSheet(x) {
     if (!x.sync) return;
     const e = getEntry(x.entryId); if (!e?.sheet) return;
@@ -119,7 +183,7 @@ export function render(main) {
       const x = { id: uid(), name: n > 1 || sameName ? `${base.name} ${sameName + i + 1}` : base.name, entryId: base.entryId || '', partyId: base.partyId || '', side: base.side || 'enemy',
         bonus: +base.bonus || 0, dex: base.dex || 10, init: '', hp: base.hp != null && n === 1 ? base.hp : hp || 0, maxHp: hp || 0, temp: base.temp || 0, ac: base.ac ?? '', conds: (base.conds || []).map(k => typeof k === 'string' ? { k } : k),
         cr: base.cr || '', level: base.level || 0, notes: '', death: { s: 0, f: 0 }, lair: !!base.lair, sync: !!base.sync && n === 1,
-        speedFt: base.speedFt ?? 30, bst: base.bst || '', pfLevel: base.pfLevel ?? '', exh: +base.exh || 0, econ: {} };
+        speedFt: base.speedFt ?? 30, size: base.size || 'Medium', bst: base.bst || '', pfLevel: base.pfLevel ?? '', exh: +base.exh || 0, econ: {} };
       // anyone joining a fight already under way rolls straight away
       if (c.turnId || base.lair) x.init = rollInit(x);
       c.list.push(x); out.push(x);
@@ -135,7 +199,7 @@ export function render(main) {
     const party = w.party.find(p => p.entryId === e.id);
     const side = extra.side || (party || e.sheet?.player ? 'ally' : e.type === 'character' ? 'neutral' : 'enemy');
     return add({ name: e.name, entryId: e.id, side, bonus: s.initBonus, dex: s.dex, maxHp: s.maxHp, hp: e.type === 'character' ? s.hp : undefined, temp: e.type === 'character' ? s.temp : 0, ac: s.ac, cr: s.cr, level: s.level, hpRoll: s.hpRoll,
-      conds: e.type === 'character' ? s.conds : [], sync: e.type === 'character', speedFt: s.speedFt, exh: e.type === 'character' ? s.exh : 0, partyId: party?.id, ...extra }, n);
+      conds: e.type === 'character' ? s.conds : [], sync: e.type === 'character', speedFt: s.speedFt, size: s.size, exh: e.type === 'character' ? s.exh : 0, partyId: party?.id, ...extra }, n);
   }
 
   // ---------- damage, healing and turns ----------
@@ -177,60 +241,14 @@ export function render(main) {
     if (kind === 'heal') heal(x, n); else if (kind === 'temp') { x.temp = Math.max(x.temp, n); log(`${x.name} gained ${n} temporary HP`); syncSheet(x); } else hurt(x, n);
     return true;
   }
-  const isDown = x => x.side !== 'ally' && x.maxHp && x.hp <= 0;
-  function startTurn(x) {
-    x.reaction = false; if (x.leg) x.leg.used = 0; x.econ = {};
-    // conditions with a duration count down at the start of their turn
-    for (const k of x.conds) if (k.rounds) { k.rounds--; if (k.rounds <= 0) { k.gone = true; log(`${x.name} is no longer ${k.k.toLowerCase()}`); } }
-    x.conds = x.conds.filter(k => !k.gone);
-    if (x.side === 'ally' && x.maxHp && x.hp <= 0 && !x.dead) toast(`${x.name} makes a death saving throw`);
-  }
-  function next(dir = 1) {
-    const L = order(); if (!L.length) return;
-    if (!c.turnId) { begin(); return; }
-    let i = L.findIndex(x => x.id === c.turnId), guard = 0;
-    do {
-      i += dir;
-      if (i >= L.length) { i = 0; c.round++; log(`— Round ${c.round} —`); }
-      if (i < 0) { i = L.length - 1; c.round = Math.max(1, c.round - 1); }
-    } while (prefs.skipDown && isDown(L[i]) && ++guard < L.length);
-    c.turnId = L[i].id;
-    if (dir > 0) startTurn(L[i]);
-    focus = c.turnId; draw();
-  }
-  function begin() {
-    if (!c.list.length) return toast('Add someone to the fight first');
-    for (const x of c.list) if (x.init === '' || x.init == null) x.init = rollInit(x);
-    sortList();
-    c.round = 1; c.started = Date.now(); c.turnId = c.list.find(x => !(prefs.skipDown && isDown(x)))?.id || c.list[0].id;
-    log(`— Combat started: round 1 —`);
-    startTurn(byId(c.turnId)); focus = c.turnId; draw();
-  }
 
   // ---------- what each creature can still do this turn ----------
-  const ZERO_SPEED = ['Grappled', 'Restrained', 'Paralyzed', 'Petrified', 'Stunned', 'Unconscious'];
-  function speedOf(x) {
-    let sp = +x.speedFt || 0; const why = [];
-    const zero = x.conds.find(k => ZERO_SPEED.includes(k.k));
-    if (zero) return { sp: 0, why: [`${zero.k}: speed 0`] };
-    const e = +x.exh || 0;
-    if (prefs.exh === '2024') { if (e) { sp = Math.max(0, sp - 5 * e); why.push(`Exhaustion ${e}: −${speedText(5 * e)}`); } }
-    else if (e >= 5) { sp = 0; why.push('Exhaustion 5: speed 0'); }
-    else if (e >= 2) { sp = Math.floor(sp / 2); why.push('Exhaustion 2+: speed halved'); }
-    if (x.conds.some(k => k.k === 'Hasted')) { sp *= 2; why.push('Hasted: speed doubled'); }
-    return { sp, why };
-  }
-  function exhNote(x) {
-    const e = +x.exh || 0; if (!e) return '';
-    if (prefs.exh === '2024') return e >= 6 ? 'Dies' : `−${2 * e} to every d20 test, −${speedText(5 * e)} speed`;
-    return ['', 'Disadvantage on ability checks', '…and speed halved', '…and disadvantage on attacks and saving throws', '…and hit point maximum halved', '…and speed 0', 'Dies'][Math.min(6, e)];
-  }
   function econHTML(x) {
     if (x.lair) return '';
-    const E = x.econ || {}, { sp, why } = speedOf(x), move = sp * (1 + (E.dash || 0));
+    const E = x.econ || {}, { why } = speedOf(x), move = moveLeft(x);
     const pill = (k, label, used, tip) => `<button class="cb-econ ${used ? 'used' : ''}" data-econ="${k}" title="${tip} — click when used">${label}</button>`;
     return `<div class="cb-econs">${pill('action', 'Action', E.action, 'Action')}${pill('bonus', 'Bonus', E.bonus, 'Bonus action')}${pill('reaction', 'Reaction', x.reaction, 'Reaction (comes back at the start of their turn)')}
-      ${pill('move', `Move ${speedText(move)}`, E.move, `Movement this turn${why.length ? ' — ' + why.join('; ') : ''}${E.dash ? ` (dashed ×${E.dash})` : ''}`)}<button class="cb-dash" data-econ="dash" title="Dash: uses the action (or the bonus action if the action is gone, like a rogue’s Cunning Action or a monk’s Step of the Wind) and adds their speed again. Right-click to use the bonus action.">🏃 Dash</button>
+      ${pill('move', `Move ${speedText(move)}`, E.move || move <= 0, `Movement left this turn${why.length ? ' — ' + why.join('; ') : ''}${E.dash ? ` (dashed ×${E.dash})` : ''}`)}<button class="cb-dash" data-econ="dash" title="Dash: uses the action (or the bonus action if the action is gone, like a rogue’s Cunning Action or a monk’s Step of the Wind) and adds their speed again. Right-click to use the bonus action.">🏃 Dash</button>
       ${x.exh ? `<span class="cb-exh" title="${esc(exhNote(x))}">😩 ${x.exh}</span>` : ''}</div>`;
   }
 
@@ -451,15 +469,8 @@ export function render(main) {
     draw();
   });
   list.addEventListener('contextmenu', ev => { const ec = ev.target.closest('[data-econ="dash"]'); if (!ec) return; ev.preventDefault(); const x = byId(ev.target.closest('[data-id]').dataset.id); useEcon(x, 'dash', true); draw(); });
-  function useEcon(x, k, bonusFirst) {
-    x.econ = x.econ || {};
-    if (k === 'reaction') { x.reaction = !x.reaction; return; }
-    if (k !== 'dash') { x.econ[k] = !x.econ[k]; return; }
-    const slot = bonusFirst ? (!x.econ.bonus ? 'bonus' : !x.econ.action ? 'action' : '') : (!x.econ.action ? 'action' : !x.econ.bonus ? 'bonus' : '');
-    if (!slot) return toast(`${x.name} has no action or bonus action left to Dash with`);
-    x.econ[slot] = true; x.econ.dash = (x.econ.dash || 0) + 1; x.econ.move = false;
-    log(`${x.name} dashed (${slot === 'bonus' ? 'bonus action' : 'action'})`);
-  }
+  const useEcon = (x, k, b) => useEconFor(c, x, k, b);
+
   // drag rows to change the order (for ties, or a surprise)
   let dragRow = null;
   list.addEventListener('dragstart', ev => { const r = ev.target.closest('.cb-row'); if (!r || ev.target.closest('input')) return; dragRow = r.dataset.id; ev.dataTransfer.effectAllowed = 'move'; ev.dataTransfer.setData('text/plain', dragRow); r.classList.add('dragging'); });
@@ -529,7 +540,7 @@ export function render(main) {
   // ---------- top bar ----------
   $('#cb-bar').addEventListener('click', ev => {
     const id = ev.target.closest('button')?.id;
-    if (id === 'cb-next') next(1);
+    if (id === 'cb-next') { if (!c.list.length) return toast('Add someone to the fight first'); next(1); }
     if (id === 'cb-prev') next(-1);
     if (id === 'cb-sort') { sortList(); draw(); }
     if (id === 'cb-roll') { let n = 0; for (const x of c.list) if (ev.shiftKey || x.init === '' || x.init == null) { x.init = rollInit(x); n++; } if (!n) toast('Everyone has rolled — Shift-click to re-roll everyone'); sortList(); draw(); }

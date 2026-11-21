@@ -160,7 +160,7 @@ export function combatStats(e) {
   }
   const sh = ensureSheet(e), d = derive(sh);
   return { maxHp: +sh.hpMax || 0, hp: sh.hp === '' || sh.hp == null ? +sh.hpMax || 0 : +sh.hp, temp: +sh.temp || 0, ac: d.ac, initBonus: d.init, dex: +sh.abil.dex || 10, cr: sh.cr, level: +sh.level || 0,
-    hpRoll: sh.hpRoll || '', speed: speedText(sh.speedFt), speedFt: sh.speedFt ?? 30, exh: +sh.exhaustion || 0, passive: d.passive, conds: [...(sh.conds || [])], hasSheet: true };
+    hpRoll: sh.hpRoll || '', speed: speedText(sh.speedFt), speedFt: sh.speedFt ?? 30, size: sh.size || 'Medium', exh: +sh.exhaustion || 0, passive: d.passive, conds: [...(sh.conds || [])], hasSheet: true };
 }
 // the combat tracker keeps a character's sheet up to date with the fight
 export function writeBack(e, { hp, temp, death, exh }) {

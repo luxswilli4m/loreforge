@@ -1062,3 +1062,20 @@ body.player-view #main-wrap { grid-column: 1 / -1; }
 .cb-sb { margin-top: 10px; } .cb-sb .sb { font-size: .85em; }
 .forge-stats { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin: 10px 0; }
 .forge-stats .sb { margin-top: 8px; max-width: 640px; }
+
+/* ---------- battle map ---------- */
+.bm { display: flex; flex-direction: column; gap: 8px; height: calc(100vh - 120px); min-height: 480px; }
+.bm-top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.bm-top select { width: auto; max-width: 320px; }
+.bm-turn { font-family: var(--display); font-size: 1.1em; } .bm-turn b { color: var(--accent-2); }
+.bm-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 10px; }
+.bm-stage { position: relative; min-height: 0; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: #12100e; }
+.bm-stage canvas { display: block; touch-action: none; }
+.bm-hint { position: absolute; left: 12px; bottom: 12px; background: rgba(0,0,0,.75); color: #fff; padding: 4px 10px; border-radius: 6px; font-size: .85em; pointer-events: none; }
+.bm-hint:empty, .bm-hint[hidden] { display: none; }
+.bm-side { margin: 0; overflow-y: auto; }
+.bm-move { font-size: 1.05em; margin: 4px 0; } .bm-move b { color: #6fdc86; font-size: 1.2em; }
+.bm-econs .cb-econ, .bm-econs .cb-dash { font-size: .8em; padding: 3px 10px; }
+.bm-pv { position: relative; } .bm-pv-turn { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.75); color: #fff; padding: 6px 16px; border-radius: 999px; font-family: var(--display); font-size: 1.2em; }
+.bm-pv-turn b { color: #ffd24a; }
+@media (max-width: 900px) { .bm-body { grid-template-columns: 1fr; grid-template-rows: 1fr auto; } .bm-side { max-height: 40vh; } }

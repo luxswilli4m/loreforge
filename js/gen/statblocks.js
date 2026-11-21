@@ -20,8 +20,8 @@ export const crNum = cr => { const s = String(cr ?? ''); return s.includes('/') 
 
 // what the combat tracker needs from a library creature
 export function combatBase(m) {
-  if (m.sys === 'pf2e') return { name: m.name, bonus: m.per, dex: 10 + 2 * (m.abil.dex || 0), maxHp: m.hp, ac: m.ac, level: '', cr: '', pfLevel: m.level, speedFt: m.speed.walk || 25, bst: `${m.lib}:${m.id}` };
-  return { name: m.name, bonus: mod(m.abil.dex), dex: m.abil.dex, maxHp: m.hp, hpRoll: m.hpRoll, ac: m.ac, cr: m.cr, speedFt: m.speed.walk ?? 30, bst: `${m.lib}:${m.id}` };
+  if (m.sys === 'pf2e') return { name: m.name, bonus: m.per, dex: 10 + 2 * (m.abil.dex || 0), maxHp: m.hp, ac: m.ac, level: '', cr: '', pfLevel: m.level, size: m.size, speedFt: m.speed.walk || 25, bst: `${m.lib}:${m.id}` };
+  return { name: m.name, bonus: mod(m.abil.dex), dex: m.abil.dex, maxHp: m.hp, hpRoll: m.hpRoll, ac: m.ac, cr: m.cr, size: m.size, speedFt: m.speed.walk ?? 30, bst: `${m.lib}:${m.id}` };
 }
 
 // ---------- the classic stat block ----------
