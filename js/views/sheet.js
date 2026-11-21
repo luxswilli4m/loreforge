@@ -206,12 +206,8 @@ function sheetHTML(e, opts = {}) {
           <select class="cs-cond-add" data-act="cond"><option value="">＋ condition</option>${CONDITIONS.filter(c => !(sh.conds || []).includes(c)).map(c => `<option>${c}</option>`).join('')}</select>
         </div>
         <div class="cs-conds"><span class="cs-label">Exhaustion</span>${pip('exhaustion', 6, sh.exhaustion)}</div>
-        <div class="cs-panel"><h5>Skills</h5>${SKILLS.map(skillRow).join('')}</div>
-      </section>
-    </div>
-
-    <div class="cs-below">
-      <div class="cs-panel cs-wide">
+        <div class="cs-panel cs-skills"><h5>Skills</h5>${SKILLS.map(skillRow).join('')}</div>
+        <div class="cs-panel cs-atkpanel">
         <h5>Attacks</h5>
         <table class="cs-table"><tr><th>Name</th><th>To hit</th><th>Damage</th><th>Type</th><th></th></tr>
           ${d.attacks.map(a => `<tr class="auto"><td>${esc(a.name)} <span class="cs-muted small">(equipped)</span></td><td><button class="cs-roll" data-roll="d20${a.hit >= 0 ? '+' : ''}${a.hit}" data-label="${esc(a.name)} to hit">${sgn(a.hit)}</button></td><td>${a.dmg ? `<button class="cs-roll" data-roll="${esc(a.dmg)}" data-label="${esc(a.name)} damage">${esc(a.dmg)}</button>` : '—'}</td><td>${esc(a.type)}</td><td></td></tr>`).join('')}
@@ -228,6 +224,10 @@ function sheetHTML(e, opts = {}) {
           <td><input class="cs-in" data-k="spell.list.${i}.note" value="${esc(sp.note || '')}" placeholder="notes, damage, range"></td><td><button class="cs-x" data-del="spell.list" data-i="${i}">✕</button></td></tr>`).join('')}</table>
         <button class="cs-btn small" data-act="add-spell">＋ Spell</button>
       </div>
+      </section>
+    </div>
+
+    <div class="cs-below">
       <div class="cs-panel"><h5>Features & traits</h5>${area('features', creature ? 'Special traits, actions, reactions…' : 'Class and race features, feats…', 8)}
         ${creature ? `<h5>Legendary actions</h5>${area('legendary', 'e.g. 3 per round: Detect, Tail attack, Wing attack (costs 2)', 3)}` : ''}</div>
       <div class="cs-panel"><h5>Proficiencies</h5>${area('profs', 'Armour, weapons, tools…', 3)}<h5>Languages</h5>${area('languages', 'Common, Elvish…', 2)}<h5>Senses</h5>${area('senses', 'Darkvision 60 ft…', 2)}</div>
