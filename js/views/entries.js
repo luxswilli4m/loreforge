@@ -2,6 +2,7 @@ import { W, TYPES, getEntry, newEntry, deleteEntry, backlinks, mentionsIn, save,
 import { suggestName } from '../tools/generators.js';
 import * as A from '../assets.js';
 import { parentOf, childrenOf, ancestorsOf, isDescendant, mapsFor, placeOfMap, relColor, relKindPicker, wireRelKindPicker } from '../hierarchy.js';
+import { mountSheet } from './sheet.js';
 import { esc, md, typeBadge, typeColor, mentionLink, openModal, closeModal, confirmDialog, editorHTML, attachEditor, pickFile, imageToDataURL, toast, go, rerender } from '../util.js';
 
 let listFilter = { q: '', tag: '' };
@@ -113,6 +114,8 @@ export function readHTML(e, compact = false) {
 export function renderView(main, id) {
   const e = getEntry(id);
   if (!e) { main.innerHTML = `<div class="empty"><div class="big">❓</div>Entry not found. <a href="#/entries">Back to World Bible</a></div>`; return; }
+  const hasSheet = e.type === 'character' || e.type === 'creature';
+  let tab = hasSheet ? (localStorage.getItem('loreforge:entrytab') || 'sheet') : 'story';
   main.innerHTML = `
     <div class="page-head"><div class="breadcrumbs" style="flex:1"><a href="#/entries">World Bible</a> › <a href="#/entries/${e.type}">${TYPES[e.type]?.plural}</a></div>
       <button id="fav" title="${e.fav ? 'Unpin from sidebar' : 'Pin to sidebar'}" class="${e.fav ? 'active' : ''}">${e.fav ? '⭐ Pinned' : '☆ Pin'}</button>
@@ -120,7 +123,21 @@ export function renderView(main, id) {
       <a class="btn" href="#/graph?focus=${e.id}">🕸️ Web</a>
       <a class="btn primary" href="#/entry/${e.id}/edit" style="background:var(--accent);color:var(--on-accent)">✎ Edit</a>
       <button class="danger" id="del">Delete</button></div>
-    ${readHTML(e)}`;
+    ${hasSheet ? `<div class="entry-tabs"><button data-etab="sheet" class="${tab === 'sheet' ? 'on' : ''}">🛡️ Character sheet</button><button data-etab="story" class="${tab === 'story' ? 'on' : ''}">📖 Story & links</button>
+      ${e.type === 'character' || e.type === 'creature' ? `<a class="btn small" href="#/combat?add=${e.id}" style="margin-left:auto">⚔️ Add to combat</a>` : ''}</div>` : ''}
+    <div id="etab-sheet" ${tab === 'sheet' ? '' : 'hidden'}></div>
+    <div id="etab-story" ${tab === 'story' ? '' : 'hidden'}>${readHTML(e)}</div>`;
+  let stopSheet = null;
+  if (hasSheet) {
+    const showTab = t => {
+      tab = t; try { localStorage.setItem('loreforge:entrytab', t); } catch { /* */ }
+      main.querySelectorAll('[data-etab]').forEach(b => b.classList.toggle('on', b.dataset.etab === t));
+      main.querySelector('#etab-sheet').hidden = t !== 'sheet'; main.querySelector('#etab-story').hidden = t !== 'story';
+      if (t === 'sheet' && !stopSheet) stopSheet = mountSheet(main.querySelector('#etab-sheet'), e);
+    };
+    main.querySelectorAll('[data-etab]').forEach(b => b.onclick = () => showTab(b.dataset.etab));
+    if (tab === 'sheet') showTab('sheet');
+  }
   main.querySelector('#del').onclick = async () => {
     if (await confirmDialog(`Delete “${e.name}”? Links to it elsewhere will show as broken.`)) { deleteEntry(e.id); go(`#/entries/${e.type}`); }
   };
@@ -129,6 +146,7 @@ export function renderView(main, id) {
   main.querySelectorAll('[data-delrel]').forEach(b => b.onclick = () => {
     W().relations = W().relations.filter(r => r.id !== b.dataset.delrel); save(); rerender();
   });
+  return () => stopSheet?.();
 }
 
 export function relationDialog(e, onDone) {

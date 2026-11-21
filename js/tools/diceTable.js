@@ -35,6 +35,8 @@ const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(pr
 let win = null, api = null;
 export const isDiceTableOpen = () => !!win;
 export function openDiceTable() { if (win) { win.classList.add('pulse'); setTimeout(() => win?.classList.remove('pulse'), 300); return api; } return build(); }
+// the same table, built into a page (the Dice page) rather than floating; returns { roll, close }
+export function mountDiceTable(host) { return build(host); }
 
 // a small picture of each die shape for the pool buttons
 function dieSVG(n) {
@@ -52,10 +54,10 @@ function shape(n, r) {
   return poly(6, -Math.PI / 2);
 }
 
-function build() {
-  win = document.createElement('div');
-  win.id = 'dice-table';
-  win.innerHTML = `
+function build(host) {
+  const root = document.createElement('div');
+  if (host) root.className = 'dice-table embedded'; else { root.id = 'dice-table'; root.className = 'dice-table'; win = root; }
+  root.innerHTML = `
     <div class="dt-head" id="dt-drag"><b>🎲 Dice table</b>
       <select id="dt-theme" title="Tray">${Object.entries(THEMES).map(([k, t]) => `<option value="${k}">${t.label}</option>`).join('')}<option value="custom">🖼️ My own picture…</option></select>
       <select id="dt-mat" title="What the dice are made of">${Object.entries(MATS).map(([k, m]) => `<option value="${k}">🎲 ${m.label}</option>`).join('')}</select>
@@ -74,8 +76,8 @@ function build() {
       </div>
       <div class="dt-stage" id="dt-stage"><canvas id="dt-cv"></canvas><div class="dt-hint">Click the tray to roll again</div></div>
     </div>`;
-  document.body.appendChild(win);
-  const $ = q => win.querySelector(q);
+  (host || document.body).appendChild(root);
+  const $ = q => root.querySelector(q);
   const cv = $('#dt-cv'), ctx = cv.getContext('2d'), stage = $('#dt-stage');
   let W = 600, H = 400, dice = [], raf = 0, pending = null, bgImg = null, lastRes = null, bgCanvas = null;
 
@@ -150,22 +152,22 @@ function build() {
     return parts.length ? parts.join('+') + (m ? (m > 0 ? '+' : '') + m : '') : '';
   };
   function drawPool() {
-    for (const n of TYPES) { const c = win.querySelector(`[data-count="${n}"]`); c.textContent = prefs.pool[n] > 0 ? '×' + prefs.pool[n] : ''; c.parentElement.classList.toggle('on', prefs.pool[n] > 0); }
+    for (const n of TYPES) { const c = root.querySelector(`[data-count="${n}"]`); c.textContent = prefs.pool[n] > 0 ? '×' + prefs.pool[n] : ''; c.parentElement.classList.toggle('on', prefs.pool[n] > 0); }
     const ex = poolExpr();
     $('#dt-expr').textContent = ex ? ex.replace(/\+/g, ' + ').replace(/\+ -/g, '− ') : 'No dice yet';
     $('#dt-roll').disabled = !ex;
   }
   const addDie = (n, d) => { prefs.pool[n] = Math.max(0, Math.min(30, (prefs.pool[n] || 0) + d)); lastQuick = ''; savePrefs(); drawPool(); };
-  win.querySelectorAll('[data-add]').forEach(b => {
+  root.querySelectorAll('[data-add]').forEach(b => {
     b.onclick = () => addDie(+b.dataset.add, 1);
     b.oncontextmenu = e => { e.preventDefault(); addDie(+b.dataset.add, -1); };
   });
-  win.querySelectorAll('[data-mod]').forEach(b => b.onclick = () => { prefs.mod = (+prefs.mod || 0) + +b.dataset.mod; $('#dt-mod').value = prefs.mod; savePrefs(); drawPool(); });
+  root.querySelectorAll('[data-mod]').forEach(b => b.onclick = () => { prefs.mod = (+prefs.mod || 0) + +b.dataset.mod; $('#dt-mod').value = prefs.mod; savePrefs(); drawPool(); });
   $('#dt-mod').oninput = e => { prefs.mod = +e.target.value || 0; savePrefs(); drawPool(); };
   $('#dt-clear').onclick = () => { prefs.pool = {}; prefs.mod = 0; $('#dt-mod').value = 0; savePrefs(); drawPool(); };
   const doRoll = expr => { try { pending = 'self'; const r = rollAndLog(expr); pending = null; throwDice(r); } catch (err) { pending = null; toast(err.message); } };
   $('#dt-roll').onclick = () => { const ex = poolExpr(); lastQuick = ''; if (ex) doRoll(ex); };
-  win.querySelectorAll('[data-quick]').forEach(b => b.onclick = () => { lastQuick = b.dataset.quick; doRoll(b.dataset.quick); });
+  root.querySelectorAll('[data-quick]').forEach(b => b.onclick = () => { lastQuick = b.dataset.quick; doRoll(b.dataset.quick); });
   let lastQuick = '';
   stage.addEventListener('click', () => { if (dice.some(d => !d.settled)) return; const ex = lastQuick || poolExpr() || lastRes?.input; if (ex) doRoll(ex); });
   // rolls made anywhere else (the tray, the GM screen) tumble here too while the table is open
@@ -378,20 +380,22 @@ function build() {
   // ---------- window: drag to move, close ----------
   const head = $('#dt-drag');
   head.addEventListener('pointerdown', e => {
-    if (e.target.closest('button,select,input,label')) return;
-    const r = win.getBoundingClientRect(), ox = e.clientX - r.left, oy = e.clientY - r.top;
+    if (host || e.target.closest('button,select,input,label')) return;
+    const r = root.getBoundingClientRect(), ox = e.clientX - r.left, oy = e.clientY - r.top;
     head.setPointerCapture(e.pointerId);
-    const mv = ev => { win.style.left = Math.max(0, Math.min(innerWidth - 120, ev.clientX - ox)) + 'px'; win.style.top = Math.max(0, Math.min(innerHeight - 60, ev.clientY - oy)) + 'px'; win.style.right = 'auto'; win.style.bottom = 'auto'; win.style.transform = 'none'; };
+    const mv = ev => { root.style.left = Math.max(0, Math.min(innerWidth - 120, ev.clientX - ox)) + 'px'; root.style.top = Math.max(0, Math.min(innerHeight - 60, ev.clientY - oy)) + 'px'; root.style.right = 'auto'; root.style.bottom = 'auto'; root.style.transform = 'none'; };
     const up = () => { head.removeEventListener('pointermove', mv); head.removeEventListener('pointerup', up); };
     head.addEventListener('pointermove', mv); head.addEventListener('pointerup', up);
   });
-  const close = () => { cancelAnimationFrame(raf); ro.disconnect(); window.removeEventListener('lf-roll', onRoll); window.removeEventListener('keydown', onKey, true); win.remove(); win = null; api = null; };
+  const close = () => { cancelAnimationFrame(raf); ro.disconnect(); window.removeEventListener('lf-roll', onRoll); window.removeEventListener('keydown', onKey, true); root.remove(); if (!host) { win = null; api = null; } };
   $('#dt-close').onclick = close;
-  const onKey = e => { if (e.key === 'Escape' && win && !document.querySelector('.modal')) close(); };
+  const onKey = e => { if (!host && e.key === 'Escape' && win && !document.querySelector('.modal')) close(); };
   window.addEventListener('keydown', onKey, true);
   const ro = new ResizeObserver(() => { resize(); draw(); }); ro.observe(stage);
   drawPool();
   Promise.all([loadBg(), loadDieImg()]).then(() => { resize(); draw(); });
-  api = { roll: doRoll, close };
-  return api;
+  const me = { roll: doRoll, close };
+  if (!host) api = me;
+  if (host) $('#dt-close').style.display = 'none';
+  return me;
 }

@@ -12,7 +12,7 @@ export function render(main) {
   const w = W();
   const c = w.combat;
   main.innerHTML = `
-    <div class="page-head"><h1>GM Screen</h1><span class="muted small">Everything you need at the table. Press <kbd>D</kbd> anywhere for the dice tray.</span></div>
+    <div class="page-head"><h1>GM Screen</h1><span class="muted small">Everything you need at the table. The 🎲 button in the corner opens the dice tray anywhere.</span></div>
     <div class="gm-grid">
       <section class="card gm-dice">
         <h3>🎲 Dice</h3>
@@ -25,19 +25,10 @@ export function render(main) {
 
       <section class="card gm-combat">
         <div class="row" style="flex-wrap:wrap;gap:6px">
-          <h3 style="margin:0;flex:1">⚔️ Initiative <span class="muted small" id="round">Round ${c.round}</span></h3>
-          <button class="shrink small" id="cprev">◀ Prev</button>
-          <button class="shrink small primary" id="cnext">Next turn ▶</button>
+          <h3 style="margin:0;flex:1">⚔️ Combat <span class="muted small" id="round"></span></h3>
+          <a class="btn small primary" href="#/combat">Open the combat tracker ▶</a>
         </div>
-        <div class="row" style="flex-wrap:wrap;gap:6px;margin:10px 0">
-          <button class="shrink small" id="cadd">＋ Combatant</button>
-          <button class="shrink small" id="cfrom">＋ From World Bible</button>
-          <button class="shrink small" id="cparty">＋ Whole party</button>
-          <button class="shrink small" id="croll">🎲 Roll initiative</button>
-          <span style="flex:1"></span>
-          <button class="shrink small danger" id="cclear">End combat</button>
-        </div>
-        <div id="clist"></div>
+        <div id="clist" style="margin-top:10px"></div>
       </section>
 
       <section class="card gm-party">
@@ -72,111 +63,23 @@ export function render(main) {
   const onRoll = () => { if (history[0]) { $m('#dlast').innerHTML = rollHTML(history[0], esc); drawHist(); } };
   window.addEventListener('lf-roll', onRoll);
 
-  // ---------- combat ----------
-  const sorted = () => c.list.slice().sort((a, b) => (b.init - a.init) || (b.bonus - a.bonus) || a.name.localeCompare(b.name));
+  // ---------- combat (a summary; the full tracker has its own page) ----------
   function drawCombat() {
-    $m('#round').textContent = `Round ${c.round}`;
-    const list = sorted();
-    if (c.turn >= list.length) c.turn = 0;
-    $m('#clist').innerHTML = list.length ? list.map((x, i) => {
-      const pct = x.maxHp ? Math.max(0, Math.min(100, x.hp / x.maxHp * 100)) : 0;
-      const ent = getEntry(x.entryId);
-      return `<div class="combatant ${i === c.turn ? 'active' : ''} ${x.side} ${x.maxHp && x.hp <= 0 ? 'down' : ''}" data-id="${x.id}">
-        <input class="c-init" data-f="init" type="number" value="${x.init}" title="Initiative">
-        <div class="c-main">
-          <div class="c-name">${ent ? `<a href="#/entry/${ent.id}" class="mention" style="--tc:${typeColor(ent.type)}">${esc(x.name)}</a>` : `<b>${esc(x.name)}</b>`}
-            <span class="c-ac" title="Armour class">🛡 ${x.ac || '–'}</span></div>
-          ${x.maxHp ? `<div class="hpbar"><div style="width:${pct}%;background:${pct > 50 ? 'var(--ok)' : pct > 20 ? '#d9a13b' : 'var(--danger)'}"></div></div>` : ''}
-          <div class="c-conds">${x.conds.map(cd => `<span class="cond" data-cond="${cd}" title="Click to remove">${cd} ✕</span>`).join('')}<button class="icon small" data-addcond title="Add condition">＋ condition</button></div>
-        </div>
-        <div class="c-hp">${x.maxHp ? `<span>${x.hp}/${x.maxHp}</span>` : '<span class="muted">no HP</span>'}<input data-f="dmg" placeholder="−5 / +5" title="Type damage (−) or healing (+) and press Enter"></div>
-        <button class="icon" data-del title="Remove">✕</button>
-      </div>`;
-    }).join('') : '<p class="muted small">No one in combat. Add combatants, your party, or creatures from the World Bible.</p>';
-    save();
+    const L = c.list || [], cur = L.find(x => x.id === c.turnId);
+    $m('#round').textContent = cur ? `Round ${c.round} · ${cur.name}’s turn` : L.length ? 'Not started' : '';
+    $m('#clist').innerHTML = L.length ? L.map(x => `<div class="combatant ${x.id === c.turnId ? 'active' : ''} ${x.side} ${x.maxHp && x.hp <= 0 ? 'down' : ''}">
+        <span class="c-init">${x.init === '' || x.init == null ? '—' : x.init}</span>
+        <div class="c-main"><div class="c-name"><b>${esc(x.name)}</b><span class="c-ac">🛡 ${esc(String(x.ac ?? '–') || '–')}</span></div>
+          ${x.maxHp ? `<div class="hpbar"><div style="width:${Math.max(0, Math.min(100, x.hp / x.maxHp * 100))}%;background:${x.hp / x.maxHp > 0.5 ? 'var(--ok)' : x.hp / x.maxHp > 0.25 ? '#d9a13b' : 'var(--danger)'}"></div></div>` : ''}</div>
+        <div class="c-hp">${x.maxHp ? `${x.hp}/${x.maxHp}` : ''}</div></div>`).join('')
+      : '<p class="muted small">No fight going on. Open the combat tracker to start one.</p>';
   }
-  const addCombatant = x => { c.list.push(Object.assign({ id: uid(), init: 0, bonus: 0, hp: 0, maxHp: 0, ac: '', side: 'enemy', conds: [], entryId: '' }, x)); drawCombat(); };
-  function combatantDialog(pre = {}) {
-    openModal(`<h2>Add combatant</h2>
-      <div class="row"><div><label>Name</label><input id="cn" value="${esc(pre.name || '')}" autofocus></div><div class="shrink" style="width:110px"><label>Count</label><input id="cc" type="number" min="1" max="20" value="1"></div></div>
-      <div class="row"><div><label>Init bonus</label><input id="cb" type="number" value="${pre.bonus ?? 0}"></div><div><label>Max HP</label><input id="ch" placeholder="e.g. 7 or 2d8+2" value="${esc(pre.hp || '')}"></div><div><label>AC</label><input id="ca" value="${esc(pre.ac || '')}"></div></div>
-      <label>Side</label><div class="seg small"><button data-side="enemy" class="on">Enemy</button><button data-side="ally">Ally</button></div>
-      <div class="modal-actions"><button data-a="no">Cancel</button><button class="primary" data-a="yes">Add & roll initiative</button></div>`, m => {
-      let side = 'enemy';
-      m.addEventListener('click', e => {
-        const s = e.target.closest('[data-side]'); if (s) { side = s.dataset.side; m.querySelectorAll('[data-side]').forEach(b => b.classList.toggle('on', b === s)); }
-        const a = e.target.dataset.a; if (!a) return;
-        if (a === 'yes') {
-          const name = m.querySelector('#cn').value.trim() || 'Combatant';
-          const n = Math.max(1, Math.min(20, +m.querySelector('#cc').value || 1));
-          const bonus = +m.querySelector('#cb').value || 0;
-          const hpTxt = m.querySelector('#ch').value.trim();
-          for (let i = 0; i < n; i++) {
-            let hp = 0; try { hp = hpTxt ? (/d/.test(hpTxt) ? rollAndLog(hpTxt).total : +hpTxt) : 0; } catch { hp = 0; }
-            const init = rollAndLog(`d20${bonus >= 0 ? '+' : ''}${bonus}`).total;
-            c.list.push({ id: uid(), name: n > 1 ? `${name} ${i + 1}` : name, init, bonus, hp, maxHp: hp, ac: m.querySelector('#ca').value.trim(), side, conds: [], entryId: pre.entryId || '' });
-          }
-          drawCombat();
-        }
-        closeModal();
-      });
-    });
-  }
-  $m('#cadd').onclick = () => combatantDialog();
-  $m('#cfrom').onclick = () => pickEntryDialog('Add to combat from the World Bible', '', ent => {
-    const f = k => ent.fields.find(x => x.k.toLowerCase() === k)?.v || '';
-    combatantDialog({ name: ent.name, entryId: ent.id, hp: f('hp') || f('hit points'), ac: f('ac') || f('armor class') || f('armour class') });
-  });
-  $m('#cparty').onclick = () => {
-    if (!w.party.length) return toast('Add party members first');
-    for (const p of w.party) if (!c.list.some(x => x.partyId === p.id)) {
-      c.list.push({ id: uid(), partyId: p.id, name: p.name, init: rollAndLog(`d20+${+p.init || 0}`).total, bonus: +p.init || 0, hp: +p.hp || 0, maxHp: +p.hp || 0, ac: p.ac, side: 'ally', conds: [], entryId: p.entryId || '' });
-    }
-    drawCombat(); toast('Party joined — initiative rolled');
-  };
-  $m('#croll').onclick = () => { for (const x of c.list) x.init = rollAndLog(`d20${x.bonus >= 0 ? '+' : ''}${x.bonus}`).total; c.turn = 0; c.round = 1; drawCombat(); };
-  $m('#cnext').onclick = () => { if (!c.list.length) return; c.turn++; if (c.turn >= c.list.length) { c.turn = 0; c.round++; } drawCombat(); };
-  $m('#cprev').onclick = () => { if (!c.list.length) return; c.turn--; if (c.turn < 0) { c.turn = c.list.length - 1; c.round = Math.max(1, c.round - 1); } drawCombat(); };
-  $m('#cclear').onclick = async () => { if (await confirmDialog('End combat and clear the tracker?', 'End combat')) { c.list = []; c.round = 1; c.turn = 0; drawCombat(); } };
-  const clist = $m('#clist');
-  clist.addEventListener('change', e => {
-    const row = e.target.closest('.combatant'); if (!row) return;
-    const x = c.list.find(y => y.id === row.dataset.id);
-    if (e.target.dataset.f === 'init') { x.init = +e.target.value || 0; drawCombat(); }
-  });
-  clist.addEventListener('keydown', e => {
-    if (e.key !== 'Enter' || e.target.dataset.f !== 'dmg') return;
-    const row = e.target.closest('.combatant');
-    const x = c.list.find(y => y.id === row.dataset.id);
-    const v = e.target.value.trim(); if (!v) return;
-    let n; try { n = /d/.test(v) ? rollAndLog(v.replace(/^[+-]/, '')).total * (v[0] === '+' ? 1 : -1) : +v; } catch { return toast('Try −5 or +5'); }
-    if (v[0] !== '+' && v[0] !== '-' && !/d/.test(v)) n = -Math.abs(n); // plain number = damage
-    x.hp = Math.max(0, Math.min(x.maxHp || Infinity, x.hp + n));
-    drawCombat();
-    toast(n < 0 ? `${x.name} takes ${-n} damage` : `${x.name} heals ${n}`);
-  });
-  clist.addEventListener('click', e => {
-    const row = e.target.closest('.combatant'); if (!row) return;
-    const x = c.list.find(y => y.id === row.dataset.id);
-    if (e.target.closest('[data-del]')) { c.list = c.list.filter(y => y !== x); drawCombat(); }
-    const cd = e.target.closest('[data-cond]'); if (cd) { x.conds = x.conds.filter(k => k !== cd.dataset.cond); drawCombat(); }
-    if (e.target.closest('[data-addcond]')) {
-      openModal(`<h2>Condition for ${esc(x.name)}</h2><div class="filters">${CONDITIONS.map(k => `<button class="chip ${x.conds.includes(k) ? 'on' : ''}" data-k="${k}">${k}</button>`).join('')}</div>
-        <div class="modal-actions"><button class="primary" data-a="done">Done</button></div>`, m => {
-        m.addEventListener('click', ev => {
-          const b = ev.target.closest('[data-k]');
-          if (b) { const k = b.dataset.k; x.conds = x.conds.includes(k) ? x.conds.filter(y => y !== k) : [...x.conds, k]; b.classList.toggle('on'); }
-          if (ev.target.dataset.a) { closeModal(); drawCombat(); }
-        });
-      });
-    }
-  });
 
   // ---------- party ----------
   function drawParty() {
-    $m('#plist').innerHTML = w.party.length ? `<table class="party-table"><tr><th>Name</th><th>AC</th><th>HP</th><th>Init</th><th>PP</th><th></th></tr>
-      ${w.party.map(p => `<tr data-id="${p.id}">${['name', 'ac', 'hp', 'init', 'pp'].map(f => `<td><input data-f="${f}" value="${esc(p[f] ?? '')}" ${f === 'name' ? '' : 'class="num"'}></td>`).join('')}<td><button class="icon small" data-pdel>✕</button></td></tr>`).join('')}</table>
-      <p class="muted small" style="margin:6px 0 0">PP = passive perception. Edits save automatically.</p>` : '<p class="muted small">Add your players’ characters for quick reference and one-click initiative.</p>';
+    $m('#plist').innerHTML = w.party.length ? `<table class="party-table"><tr><th>Name</th><th>Lv</th><th>AC</th><th>HP</th><th>Init</th><th>PP</th><th></th></tr>
+      ${w.party.map(p => `<tr data-id="${p.id}">${['name', 'level', 'ac', 'hp', 'init', 'pp'].map(f => `<td><input data-f="${f}" value="${esc(p[f] ?? '')}" ${f === 'name' ? '' : 'class="num"'}></td>`).join('')}<td><button class="icon small" data-pdel>✕</button></td></tr>`).join('')}</table>
+      <p class="muted small" style="margin:6px 0 0">Lv = level (for encounter difficulty), PP = passive perception. Edits save automatically. Party members linked to the World Bible use their character sheets in the combat tracker.</p>` : '<p class="muted small">Add your players’ characters for quick reference and one-click initiative.</p>';
   }
   $m('#padd').onclick = () => { w.party.push({ id: uid(), name: 'New hero', ac: '', hp: '', init: 0, pp: '' }); save(); drawParty(); };
   $m('#plist').addEventListener('input', e => { const tr = e.target.closest('tr'); const p = w.party.find(x => x.id === tr.dataset.id); p[e.target.dataset.f] = e.target.value; save(); });

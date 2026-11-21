@@ -355,6 +355,19 @@ export function render(main) {
     }
   });
   cv.addEventListener('dblclick', () => finishPoints());
+  // turn the selected shape: mouse wheel, or A / D (15° steps when snapping, 5° otherwise; Shift for 1°)
+  let lastTurn = 0;
+  function turnSel(dir, ev) {
+    if (sel < 0 || !cur.shapes[sel]) return false;
+    const step = ev.shiftKey ? 1 : ed.snap && !ev.altKey ? 15 : 5;
+    if (Date.now() - lastTurn > 700) pushUndo(); // one undo step per burst of turning
+    lastTurn = Date.now();
+    const sh = cur.shapes[sel], bb = bbox(sh);
+    cur.shapes[sel] = clean(turned(sh, [(bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2], dir * step * Math.PI / 180));
+    touch(); draw(); clearTimeout(turnSel.t); turnSel.t = setTimeout(drawSide, 300);
+    return true;
+  }
+  cv.addEventListener('wheel', e => { if (sel >= 0 && !e.ctrlKey && turnSel(Math.sign(e.deltaY || e.deltaX), e)) e.preventDefault(); }, { passive: false });
   cv.addEventListener('pointerleave', () => { hoverPt = null; if (!drag) draw(); });
   // ---------- ready-made shapes: drag from the gallery, or click to drop in the middle ----------
   function placeShape(i, at) {
@@ -388,6 +401,7 @@ export function render(main) {
     if (e.key === 'Enter') { finishPoints(); return; }
     if (e.key === 'Escape') { draft = null; sel = -1; refresh(); return; }
     if ((e.key === 'Delete' || e.key === 'Backspace') && sel >= 0) { e.preventDefault(); pushUndo(); cur.shapes.splice(sel, 1); sel = -1; touch(); refresh(); return; }
+    if (sel >= 0 && !e.ctrlKey && !e.metaKey && (e.key === 'a' || e.key === 'A' || e.key === 'd' || e.key === 'D')) { e.preventDefault(); e.stopImmediatePropagation(); turnSel(e.key.toLowerCase() === 'a' ? -1 : 1, e); return; }
     if (sel >= 0 && e.key.startsWith('Arrow')) { e.preventDefault(); const st = e.shiftKey ? 5 : 1; pushUndo(); moveShape(cur.shapes[sel], e.key === 'ArrowLeft' ? -st : e.key === 'ArrowRight' ? st : 0, e.key === 'ArrowUp' ? -st : e.key === 'ArrowDown' ? st : 0); touch(); refresh(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.stopImmediatePropagation(); e.shiftKey ? doRedo() : doUndo(); }
     else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); e.stopImmediatePropagation(); doRedo(); }

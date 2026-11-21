@@ -1,4 +1,4 @@
-// Floating dice tray available on every page (button bottom-right, or press D).
+// Floating dice tray available on every page (the 🎲 button bottom-right).
 import { rollAndLog, rollHTML, history } from './dice.js';
 import { esc, toast } from '../util.js';
 import { openDiceTable } from './diceTable.js';
@@ -6,7 +6,7 @@ import { openDiceTable } from './diceTable.js';
 let open = false;
 export function initTray() {
   const fab = document.createElement('button');
-  fab.id = 'dice-fab'; fab.title = 'Dice tray (D)'; fab.textContent = '🎲';
+  fab.id = 'dice-fab'; fab.title = 'Dice tray'; fab.textContent = '🎲';
   const tray = document.createElement('div');
   tray.id = 'dice-tray'; tray.className = 'hidden';
   tray.innerHTML = `<div class="row"><b style="flex:1">Dice tray</b><button class="icon small" data-close>✕</button></div>

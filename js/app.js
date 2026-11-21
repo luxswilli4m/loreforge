@@ -20,6 +20,8 @@ import * as cloudView from './views/cloud.js';
 import * as gallery from './views/gallery.js';
 import * as cosmos from './views/cosmos.js';
 import * as assetForge from './views/assets.js';
+import * as diceView from './views/dice.js';
+import * as combat from './views/combat.js';
 import { initCloud, onConflict, connected as cloudConnected, status as syncStatus } from './cloud.js';
 import { initTray } from './tools/tray.js';
 import { initAssets, migrateWorld } from './assets.js';
@@ -41,6 +43,8 @@ const NAV = [
   { href: '#/quests', icon: '🧭', label: 'Quests', match: /^(quests|quest)(\/|$)/ },
   { href: '#/journals', icon: '✒️', label: 'Journals', match: /^(journals|journal)/ },
   { href: '#/gm', icon: '🛡️', label: 'GM Screen', match: /^gm/ },
+  { href: '#/combat', icon: '⚔️', label: 'Combat tracker', match: /^combat/ },
+  { href: '#/dice', icon: '🎯', label: 'Dice', match: /^dice/ },
   { href: '#/forge', icon: '🔮', label: 'Story Forge', match: /^forge/ },
   { href: '#/library', icon: '🏛️', label: 'Library', match: /^(library|doc)/ },
   null,
@@ -105,6 +109,9 @@ export function route() {
     gallery: () => gallery.render(main, a),
     cosmos: () => cosmos.render(main),
     assets: () => assetForge.render(main),
+    dice: () => diceView.render(main),
+    combat: () => combat.render(main),
+    playerview: () => combat.renderPlayerView(main),
     graph: () => graph.render(main),
     campaign: () => campaign.renderList(main),
     session: () => campaign.renderSession(main, a),
@@ -218,7 +225,7 @@ window.addEventListener('beforeunload', () => { saveNow(); });
 const tray = initTray();
 function shortcutsHelp() {
   openModal(`<h2>Keyboard shortcuts</h2><table class="fields-table">
-    ${[['Ctrl / ⌘ + Z', 'Undo (anything this session)'], ['Ctrl / ⌘ + Y', 'Redo'], ['Ctrl / ⌘ + K', 'Search everything'], ['N', 'New World Bible entry'], ['D', 'Open / close the dice tray'], ['?', 'This list'], ['Ctrl / ⌘ + click a link', 'Open it in the side panel'],
+    ${[['Ctrl / ⌘ + Z', 'Undo (anything this session)'], ['Ctrl / ⌘ + Y', 'Redo'], ['Ctrl / ⌘ + K', 'Search everything'], ['N', 'New World Bible entry'], ['?', 'This list'], ['Ctrl / ⌘ + click a link', 'Open it in the side panel'],
       ['@ (while typing)', 'Link an entry'], ['Esc', 'Close dialogs and menus'], ['Right-click (World Web)', 'Connect, add notes, create entries'], ['Shift + drag (World Web)', 'Connect two nodes']]
       .map(([k, v]) => `<tr><td><kbd>${k}</kbd></td><td>${v}</td></tr>`).join('')}</table>
     <div class="modal-actions"><button class="primary" onclick="document.getElementById('modal-root').innerHTML=''">Got it</button></div>`);
@@ -227,8 +234,7 @@ document.addEventListener('keydown', e => {
   if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
   if (/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return;
   if ($('#modal-root').innerHTML) return;
-  if (e.key === 'd' || e.key === 'D') { e.preventDefault(); tray.toggle(); }
-  else if ((e.key === 'n' || e.key === 'N') && W()) { e.preventDefault(); newEntryDialog('character'); }
+  if ((e.key === 'n' || e.key === 'N') && W()) { e.preventDefault(); newEntryDialog('character'); }
   else if (e.key === '?') { e.preventDefault(); shortcutsHelp(); }
 });
 
