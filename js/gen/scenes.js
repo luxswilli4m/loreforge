@@ -37,7 +37,7 @@ export function raise(S, x0, y0, x1, y1, z) { for (let y = y0; y <= y1; y++) for
 export const add = (S, o) => (S.objs.push(o), o);
 
 // ---------- drawing ----------
-export function renderScene(S) {
+export function renderScene(S, opts = {}) {
   const maxZ = Math.max(0, ...S.z);
   const W = (S.cols + S.rows) * TW / 2 + 40, H = (S.cols + S.rows) * TH / 2 + maxZ + 160;
   const ox = S.rows * TW / 2 + 20, oy = maxZ + 120;
@@ -49,7 +49,7 @@ export function renderScene(S) {
 
   // sky and haze behind everything
   const sky = g.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#8fb3c9'); sky.addColorStop(0.5, '#c9d6c8'); sky.addColorStop(1, '#3e5a3a');
-  g.fillStyle = sky; g.fillRect(0, 0, W, H);
+  if (opts.sky !== false) { g.fillStyle = sky; g.fillRect(0, 0, W, H); }
 
   // ---------- terrain: tiles back to front, with cliff sides where the ground drops ----------
   const waterTile = k => k === 'water';
@@ -313,7 +313,7 @@ export function renderScene(S) {
 
   // shadows are drawn by each object; finish with light and haze
   const vg = g.createRadialGradient(W * 0.35, H * 0.3, H * 0.2, W / 2, H / 2, Math.max(W, H) * 0.75); vg.addColorStop(0, 'rgba(255,230,170,.10)'); vg.addColorStop(1, 'rgba(20,15,30,.38)');
-  g.fillStyle = vg; g.fillRect(0, 0, W, H);
+  g.save(); if (opts.sky === false) g.globalCompositeOperation = 'source-atop'; g.fillStyle = vg; g.fillRect(0, 0, W, H); g.restore();
 
   // squares nobody can stand on: water, and the footprints of buildings, towers, walls, wells and fountains
   const blocked = S.ground.map(k => k === 'water');

@@ -1,4 +1,4 @@
-// Battle map: the fight from the combat tracker, on a map. Any map works (uploaded, generated or an isometric scene);
+// Battle map: the fight from the combat tracker, on a map. Any map works (an encounter map, or one of your uploaded or generated maps);
 // every square is 5 ft. Pick up a token and its reachable squares light up from its speed and what it has used this turn;
 // it can't be dropped further away (hold Shift to move it freely). A Player view window mirrors the map for the table.
 import { W, save } from '../store.js';
@@ -7,7 +7,8 @@ import * as A from '../assets.js';
 import { normalize, advanceTurn, speedOf, moveLeft, useEconFor, logTo, getPrefs, status } from './combat.js';
 import { speedText } from './sheet.js';
 import { getEntry } from '../store.js';
-import { SCENES, sceneRender } from '../gen/scenes.js';
+import { renderCity, cityFromBlob } from '../gen/city.js';
+import { BM_PRESETS, bmRender, blockedOf } from '../gen/battlemaps.js';
 
 const chan = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('loreforge-battle') : null;
 const SIZES = { Tiny: 1, Small: 1, Medium: 1, Large: 2, Huge: 3, Gargantuan: 4 };
@@ -57,23 +58,27 @@ export function render(main) {
       <aside class="card side-box bm-side" id="bm-side"></aside>
     </div></div>`;
   const $ = s => main.querySelector(s), cv = $('#bm-cv'), ctx = cv.getContext('2d'), stage = $('#bm-stage');
-  let img = null, G = gridOf(B, null), view = { x: 0, y: 0, k: 1 }, CW = 800, CH = 600, drag = null, hover = null, tool = 'move', ruler = null, sel = c.turnId;
+  let vec = null, det = null, detT = 0, img = null, G = gridOf(B, null), view = { x: 0, y: 0, k: 1 }, CW = 800, CH = 600, drag = null, hover = null, tool = 'move', ruler = null, sel = c.turnId;
   const tokenImgs = {};
 
   // ---------- the map choices ----------
   function drawSources() {
     const maps = w.maps.filter(m => m.image);
-    $('#bm-src').innerHTML = `<option value="">— choose a map —</option><optgroup label="Isometric scenes">${Object.entries(SCENES).map(([k, s]) => `<option value="scene:${k}" ${B.src === 'scene:' + k ? 'selected' : ''}>${s.icon} ${s.label}</option>`).join('')}</optgroup>
+    $('#bm-src').innerHTML = `<option value="">— choose a map —</option><optgroup label="Encounter maps">${Object.entries(BM_PRESETS).map(([k, s]) => `<option value="preset:${k}" ${B.src === 'preset:' + k ? 'selected' : ''}>${s.icon} ${s.label}</option>`).join('')}</optgroup>
       <optgroup label="Your maps">${maps.map(m => `<option value="map:${m.id}" ${B.src === 'map:' + m.id ? 'selected' : ''}>🗺️ ${esc(m.name)}</option>`).join('')}</optgroup><option value="blank" ${B.src === 'blank' ? 'selected' : ''}>▦ Blank grid</option>`;
   }
   async function loadSource() {
-    img = null; let sceneGrid = null;
-    if (B.src.startsWith('scene:')) { const r = sceneRender(B.src.slice(6)); if (r) { img = r.canvas; sceneGrid = r.grid; } }
+    img = null; vec = null; det = null; let sceneGrid = null;
+    if (B.src.startsWith('preset:')) { const r = await bmRender(B.src.slice(7)); if (r) { img = r.canvas; B.cell = r.cell; B.ox = 0; B.oy = 0; B.cellSet = true; sceneGrid = { type: 'square', cell: r.cell, ox: 0, oy: 0, cols: r.cols, rows: r.rows, blocked: r.blocked }; } }
     else if (B.src.startsWith('map:')) {
       const m = w.maps.find(x => x.id === B.src.slice(4));
       if (m) {
         const u = await A.url(m.image); img = await new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = u; });
         // a map with a scale knows how big 5 ft is
+        // generated city maps are drawn again, sharply, for whatever part is on screen
+        if (m.gen?.kind === 'city' && m.gen.edit) { try { const blob = await A.getBlob(m.gen.edit); if (blob) vec = { data: (await cityFromBlob(blob)).data, style: m.gen.style || 'parchment' }; } catch (e) { console.warn(e); } }
+        // encounter maps from the editor know their own grid and which squares are walls
+        if (m.gen?.kind === 'encounter' && m.gen.data && img) { const d = m.gen.data, cell = img.width / d.cols; B.cell = cell; B.ox = 0; B.oy = 0; sceneGrid = { type: 'square', cell, ox: 0, oy: 0, cols: d.cols, rows: d.rows, blocked: blockedOf(d) }; }
         if (!B.cellSet && m.scale?.pxPerUnit) { const per = { feet: 5, ft: 5, metres: 1.5, meters: 1.5, m: 1.5 }[m.scale.unit]; if (per) B.cell = Math.max(6, m.scale.pxPerUnit * per); }
       }
     }
@@ -117,7 +122,7 @@ export function render(main) {
   function draw() {
     ctx.clearRect(0, 0, CW, CH);
     ctx.fillStyle = '#12100e'; ctx.fillRect(0, 0, CW, CH);
-    if (img) ctx.drawImage(img, view.x, view.y, img.width * view.k, img.height * view.k);
+    if (img) { ctx.imageSmoothingQuality = 'high'; ctx.drawImage(img, view.x, view.y, img.width * view.k, img.height * view.k); if (det && vec) ctx.drawImage(det.canvas, ...scr(det.x, det.y), det.w * view.k, det.h * view.k); scheduleDetail(); }
     else { ctx.fillStyle = '#d8cbb0'; const a = scr(G.ox, G.oy); ctx.fillRect(a[0], a[1], G.cols * G.cell * view.k, G.rows * G.cell * view.k); }
     // grid
     if (B.showGrid !== false && (!img || G.type === 'square' || B.showGrid === true)) {
@@ -148,6 +153,22 @@ export function render(main) {
     // ruler
     if (ruler) { const a = scr(...toMap(G, ruler.a[0] + 0.5, ruler.a[1] + 0.5)), b = scr(...toMap(G, ruler.b[0] + 0.5, ruler.b[1] + 0.5)); ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke(); const d = feet(ruler.a, ruler.b, B.rule); label(b[0] + 10, b[1] - 10, speedText(d)); }
     broadcast();
+  }
+  // a sharp redraw of the visible part of a generated city map, once zooming has settled
+  function scheduleDetail() {
+    if (!vec || !img) return;
+    const dpr = devicePixelRatio || 1, s = view.k * dpr;
+    if (s <= 1.05) { det = null; return; }
+    const x = Math.max(0, -view.x / view.k), y = Math.max(0, -view.y / view.k), w2 = Math.min(img.width - x, CW / view.k), h2 = Math.min(img.height - y, CH / view.k);
+    if (w2 <= 0 || h2 <= 0) return;
+    if (det && Math.abs(det.s - s) < 0.01 && det.x <= x + 1 && det.y <= y + 1 && det.x + det.w >= x + w2 - 1 && det.y + det.h >= y + h2 - 1) return;
+    clearTimeout(detT);
+    detT = setTimeout(() => {
+      const pad = 0.15, X = Math.max(0, x - w2 * pad), Y = Math.max(0, y - h2 * pad), Wd = Math.min(img.width - X, w2 * (1 + 2 * pad)), Hd = Math.min(img.height - Y, h2 * (1 + 2 * pad));
+      const sc = Math.min(s, 4096 / Math.max(Wd, Hd));
+      const cvd = document.createElement('canvas');
+      try { renderCity(vec.data, cvd, vec.style, { view: { x: X, y: Y, w: Wd, h: Hd, s: sc } }); det = { canvas: cvd, x: X, y: Y, w: Wd, h: Hd, s }; draw(); } catch (e) { console.warn(e); vec = null; }
+    }, 180);
   }
   function label(x, y, text) { ctx.font = '700 13px Inter, sans-serif'; const w2 = ctx.measureText(text).width + 12; ctx.fillStyle = 'rgba(0,0,0,.75)'; ctx.fillRect(x, y - 16, w2, 22); ctx.fillStyle = '#fff'; ctx.fillText(text, x + 6, y); }
   function drawToken(x, t) {
@@ -194,11 +215,11 @@ export function render(main) {
       <p class="small muted">Drag a token to move it; it stops at the edge of its movement. Hold <kbd>Shift</kbd> to move it freely (doesn’t use movement). Right-click a token for more. Scroll to zoom, drag the background (or middle mouse) to pan.</p>
       <h4>Grid</h4>
       <label class="check"><input type="checkbox" id="bm-grid" ${B.showGrid !== false ? 'checked' : ''}> Show the grid</label>
-      ${G.type === 'square' ? `<label>Square size (5 ft) <span class="val">${Math.round(B.cell)} px</span></label><input type="range" id="bm-cell" min="8" max="200" step="1" value="${Math.round(B.cell)}">
-        <div class="row" style="gap:6px"><div><label>Nudge across</label><input type="range" id="bm-ox" min="0" max="${Math.round(B.cell)}" value="${Math.round(B.ox) % Math.max(1, Math.round(B.cell))}"></div><div><label>Nudge down</label><input type="range" id="bm-oy" min="0" max="${Math.round(B.cell)}" value="${Math.round(B.oy) % Math.max(1, Math.round(B.cell))}"></div></div>` : '<p class="small muted">Isometric scene: every tile is 5 ft.</p>'}
+      ${G.type === 'square' && !G.blocked ? `<label>Square size (5 ft) <span class="val">${Math.round(B.cell)} px</span></label><input type="range" id="bm-cell" min="8" max="200" step="1" value="${Math.round(B.cell)}">
+        <div class="row" style="gap:6px"><div><label>Nudge across</label><input type="range" id="bm-ox" min="0" max="${Math.round(B.cell)}" value="${Math.round(B.ox) % Math.max(1, Math.round(B.cell))}"></div><div><label>Nudge down</label><input type="range" id="bm-oy" min="0" max="${Math.round(B.cell)}" value="${Math.round(B.oy) % Math.max(1, Math.round(B.cell))}"></div></div>` : '<p class="small muted">Encounter map: the grid is built in, every square is 5 ft.</p>'}
       <label>Diagonals</label><select id="bm-rule"><option value="circle" ${B.rule === 'circle' ? 'selected' : ''}>Real distance (a circle)</option><option value="5e" ${B.rule === '5e' ? 'selected' : ''}>Every square 5 ft (5e default)</option><option value="alt" ${B.rule === 'alt' ? 'selected' : ''}>5–10–5 (variant)</option></select>
       <button class="small" id="bm-fit" style="margin-top:8px">⤢ Fit the map</button> <button class="small" id="bm-place">Place anyone missing</button>
-      ${B.src.startsWith('scene:') ? '<button class="small" id="bm-savescene" style="margin-top:6px">💾 Save this scene to Maps</button>' : ''}`;
+      ${B.src.startsWith('preset:') || w.maps.find(x => 'map:' + x.id === B.src)?.gen?.kind === 'encounter' ? '<button class="small" id="bm-edit" style="margin-top:6px">✏️ Open in the encounter map editor</button>' : ''}`;
   }
 
   // ---------- turns ----------
@@ -220,7 +241,7 @@ export function render(main) {
     const tb = e.target.closest('[data-tool]'); if (tb) { tool = tb.dataset.tool; ruler = null; drawSide(); draw(); return; }
     if (e.target.id === 'bm-fit') { fit(); draw(); }
     if (e.target.id === 'bm-place') { placeMissing(); draw(); persist(); }
-    if (e.target.id === 'bm-savescene') saveScene();
+    if (e.target.id === 'bm-edit') location.hash = B.src.startsWith('preset:') ? `#/encounter?preset=${B.src.slice(7)}` : `#/encounter?map=${B.src.slice(4)}`;
   });
   side.addEventListener('contextmenu', e => { const ec = e.target.closest('[data-econ="dash"]'); if (!ec) return; e.preventDefault(); const s = byId(sel) || byId(c.turnId); if (s) { useEconFor(c, s, 'dash', true); drawSide(); draw(); persist(); } });
   side.addEventListener('input', e => {
@@ -236,16 +257,6 @@ export function render(main) {
     if (['bm-cell', 'bm-ox', 'bm-oy'].includes(t.id)) { drawSide(); }
     persist();
   });
-  async function saveScene() {
-    const key = B.src.slice(6), r = sceneRender(key); if (!r) return;
-    const blob = await new Promise(res => r.canvas.toBlob(res, 'image/png'));
-    const file = new File([blob], `${key}.png`, { type: 'image/png' });
-    const pic = await A.storeImage(file);
-    const { uid } = await import('../store.js');
-    w.maps.push({ id: uid(), name: SCENES[key].label, image: pic.ref, w: r.canvas.width, h: r.canvas.height, parentId: '', scale: { pxPerUnit: 0, unit: 'feet' }, pins: [], iso: true });
-    save(); toast(`${SCENES[key].label} saved to your Maps`);
-  }
-
   // ---------- pointer: move tokens, measure, pan and zoom ----------
   const tokenAt = ev => {
     const [mx, my] = mapPt(ev);
@@ -340,7 +351,7 @@ export function render(main) {
   const ro = new ResizeObserver(resize); ro.observe(stage);
   drawSources(); resize();
   if (!B.src && query().src) B.src = query().src;
-  if (!B.src) B.src = w.maps.find(m => m.image) ? '' : 'scene:town';
+  if (!B.src) B.src = 'preset:' + Object.keys(BM_PRESETS)[0];
   if (B.src) loadSource(); else { drawSide(); draw(); }
   drawSide();
   return () => { ro.disconnect(); window.removeEventListener('keydown', onKey); chan?.removeEventListener('message', onMsg); };
@@ -356,7 +367,7 @@ export function renderPlayerBattle(main) {
   async function ensureMap() {
     const key = st.src + '|' + (st.mapRef || '');
     if (key === imgKey) return; imgKey = key; img = null;
-    if (st.src.startsWith('scene:')) { const r = sceneRender(st.src.slice(6)); img = r?.canvas; G = r?.grid; }
+    if (st.src.startsWith('preset:')) { const r = await bmRender(st.src.slice(7)); img = r?.canvas; G = r ? { type: 'square', cell: r.cell, ox: 0, oy: 0, cols: r.cols, rows: r.rows } : null; }
     else if (st.mapRef) { const u = await A.url(st.mapRef); img = await new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = u; }); G = null; }
     else G = null;
   }

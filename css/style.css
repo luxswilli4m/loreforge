@@ -1079,3 +1079,41 @@ body.player-view #main-wrap { grid-column: 1 / -1; }
 .bm-pv { position: relative; } .bm-pv-turn { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.75); color: #fff; padding: 6px 16px; border-radius: 999px; font-family: var(--display); font-size: 1.2em; }
 .bm-pv-turn b { color: #ffd24a; }
 @media (max-width: 900px) { .bm-body { grid-template-columns: 1fr; grid-template-rows: 1fr auto; } .bm-side { max-height: 40vh; } }
+
+/* ---------- encounter map editor ---------- */
+.enc { display: flex; flex-direction: column; gap: 8px; height: calc(100vh - 120px); min-height: 520px; }
+.enc-top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.enc-top #en-name { width: 240px; font-family: var(--display); font-size: 1.05em; }
+.enc-top select { width: auto; max-width: 260px; }
+.enc-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 52px minmax(0, 1fr) 300px; gap: 10px; }
+.enc-tools { display: flex; flex-direction: column; gap: 6px; }
+.enc-tools button { width: 48px; height: 48px; font-size: 1.35em; padding: 0; border-radius: 10px; }
+.enc-tools button.on { background: var(--accent); color: #fff; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(255,255,255,.15) inset; }
+.enc-stage { position: relative; min-height: 0; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: #14110e; }
+.enc-stage canvas { position: absolute; left: 0; top: 0; display: block; touch-action: none; }
+#en-ov { cursor: crosshair; }
+.enc-hint { position: absolute; left: 10px; right: 10px; bottom: 10px; background: rgba(0,0,0,.72); color: #f2ece0; padding: 5px 10px; border-radius: 6px; font-size: .8em; pointer-events: none; line-height: 1.35; }
+.enc-side { margin: 0; overflow-y: auto; }
+.enc-side h4 { margin: 14px 0 6px; } .enc-side h4:first-child { margin-top: 0; }
+.enc-swatches { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-top: 8px; }
+.enc-sw { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px; font-size: .72em; line-height: 1.1; }
+.enc-sw img { width: 100%; aspect-ratio: 1; border-radius: 6px; object-fit: cover; }
+.enc-sw.on, .enc-as.on, .enc-list button.on { outline: 2px solid var(--accent); outline-offset: -1px; background: var(--panel-2, rgba(255,255,255,.06)); }
+.enc-cats { flex-wrap: wrap; } .enc-cats button { flex: 1 1 auto; }
+.enc-assets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin: 8px 0; }
+.enc-as { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px; font-size: .72em; line-height: 1.1; background: radial-gradient(circle, #6a7a4a 0%, #3a4628 100%); color: #fff; text-shadow: 0 1px 2px #000; }
+.enc-as img { width: 56px; height: 56px; }
+.enc-list { display: flex; flex-direction: column; gap: 4px; } .enc-list button { display: flex; align-items: center; gap: 8px; text-align: left; }
+.enc-wsw { display: inline-block; width: 34px; height: 12px; border-radius: 3px; }
+.enc-dot { width: 26px; height: 26px; border-radius: 50%; padding: 0; border: 2px solid rgba(0,0,0,.4); } .enc-dot.on { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
+.enc-layers { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; }
+@media (max-width: 900px) { .enc-body { grid-template-columns: 52px minmax(0, 1fr); } .enc-side { grid-column: 1 / -1; max-height: 40vh; } }
+
+/* ---------- scene art cards ---------- */
+.ac-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.ac-card { padding: 0; border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; text-align: left; background: #120e0a; border: 1px solid var(--line); transition: transform .15s, box-shadow .15s; }
+.ac-card:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,.45); }
+.ac-card img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; display: block; background: linear-gradient(135deg, #2a2230, #14101a); }
+.ac-card span { padding: 8px 12px; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; color: var(--text); }
+.ac-card b { font-family: var(--display); } .ac-card small { color: var(--muted); font-style: italic; }
+.ac-big img { width: 100%; border-radius: 8px; display: block; }
