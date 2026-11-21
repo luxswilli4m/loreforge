@@ -953,3 +953,14 @@ body.player-view #main-wrap { grid-column: 1 / -1; }
 .cs-slot.blocked .cs-slot-label { color: #ff7a6a !important; }
 .i-props { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 0 10px; }
 .i-props .check { margin: 2px 0; }
+
+.cs-warn { background: rgba(192,57,43,.12); border: 1px solid rgba(192,57,43,.5); color: var(--cs-ink); border-radius: 8px; padding: 6px 10px; font-size: .85em; }
+.cs-mode { font-size: .65em; font-weight: 800; margin-left: 4px; padding: 0 4px; border-radius: 4px; vertical-align: middle; }
+.cs-mode.advantage { background: #2f8a3a; color: #fff; } .cs-mode.disadvantage { background: #c0392b; color: #fff; }
+.cs-table tr.nonprof td:first-child { color: #c0392b; }
+.cs-h5btn { float: right; font-size: .7em; text-transform: none; letter-spacing: 0; margin-top: -2px; }
+.cs-box[data-breakdown] { cursor: help; }
+.pr-table { width: 100%; border-collapse: collapse; }
+.pr-table th { text-align: left; padding: 6px; vertical-align: top; }
+.pr-table td { padding: 6px 8px; vertical-align: top; border-top: 1px solid var(--line); }
+.pr-table label { margin-top: 6px; }

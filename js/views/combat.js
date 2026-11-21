@@ -438,7 +438,7 @@ export function render(main) {
     if (act === 'remove') { c.list = c.list.filter(y => y !== x); if (c.turnId === x.id) c.turnId = c.list[0]?.id || null; log(`${x.name} left the fight`); focus = null; }
     if (act === 'tobible') {
       const e = newEntry(x.side === 'ally' || x.side === 'neutral' ? 'character' : 'creature', x.name.replace(/ \d+$/, ''));
-      const sh = ensureSheet(e); sh.hpMax = x.maxHp || ''; sh.acOverride = parseInt(x.ac) || ''; sh.cr = x.cr || ''; if (x.level) sh.level = x.level; sh.initOverride = x.bonus || '';
+      const sh = ensureSheet(e); sh.hpMax = x.maxHp || ''; sh.acOverride = parseInt(x.ac) || ''; sh.cr = x.cr || ''; if (x.level) sh.level = x.level; sh.initBonus = x.bonus || '';
       save(); for (const y of c.list) if (y.name.replace(/ \d+$/, '') === e.name && !y.entryId) y.entryId = e.id;
       toast(`${e.name} is now in the World Bible, with a sheet`);
     }

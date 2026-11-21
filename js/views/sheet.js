@@ -62,7 +62,7 @@ export function blankSheet(e) {
     theme: e?.type === 'creature' ? 'hellforge' : 'parchment', accent: '',
     cls: '', level: e?.type === 'creature' ? '' : 1, background: '', player: '', xp: '', size: 'Medium', ctype: '',
     cr: '', abil: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 }, saves: {}, skills: {},
-    profOverride: '', acOverride: parseInt(f('ac') || f('armor class') || f('armour class')) || '', initOverride: '', speedFt: 30,
+    profOverride: '', acOverride: parseInt(f('ac') || f('armor class') || f('armour class')) || '', initBonus: '', speedFt: 30, wprof: { simple: true, martial: true, light: true, medium: true, heavy: true, shield: true },
     hpMax: parseInt(f('hp') || f('hit points')) || '', hp: '', temp: '', hitDice: '', hitDiceUsed: '', hpRoll: '',
     death: { s: 0, f: 0 }, inspiration: false, exhaustion: 0, conds: [],
     attacks: [], spell: { ability: '', slots: {}, list: [] },
@@ -79,6 +79,8 @@ export function ensureSheet(e) {
   for (const k of ['abil', 'coins', 'death', 'spell']) sh[k] = { ...b[k], ...sh[k] };
   if (!sh.spell.slots) sh.spell.slots = {};
   if (!Array.isArray(sh.spell.list)) sh.spell.list = [];
+  // initiative used to be a number you typed over; it's now Dexterity plus bonuses
+  if (sh.initOverride !== undefined) { if (sh.initOverride !== '' && sh.initOverride != null) sh.initBonus = (+sh.initOverride - mod(sh.abil.dex)) || ''; delete sh.initOverride; }
   // speed used to be free text ("30 ft"); it's now kept in feet and shown in the world's units
   if (sh.speedFt === undefined || typeof sh.speed === 'string') { const t = String(sh.speed || '30'); const n = parseFloat(t) || 30; sh.speedFt = /\bm\b/.test(t) && !/ft|feet/.test(t) ? Math.round(n / 0.3) : n; delete sh.speed; }
   return sh;
@@ -103,11 +105,20 @@ export function derive(sh) {
   const shield = eq('off');
   if (shield?.kind === 'shield') acMods.push([shield.name, +shield.ac || 2]);
   for (const i of sh.items) if (i.slot && +i.acBonus) acMods.push([i.name, +i.acBonus]);
+  // armour or a shield you aren't proficient with
+  const R = profRules(), wornArmour = [armor, eq('off')?.kind === 'shield' ? eq('off') : null].filter(Boolean);
+  const nonArmour = wornArmour.filter(i => !isProficient(sh, i));
+  const armourRule = nonArmour.length ? R.armor.non : R.armor.prof;
+  if (nonArmour.length && +armourRule.ac) acMods.push([`Not proficient (${nonArmour.map(i => i.name).join(', ')})`, +armourRule.ac]);
+  const armorMode = armourRule.mode;
   const acMod = acMods.reduce((t, [, v]) => t + v, 0);
   const base = own ? +sh.acOverride : acAuto;
   const ac = base + acMod;
   const acParts = own ? [['Base you set', base]] : acBase;
-  const init = sh.initOverride !== '' && sh.initOverride != null ? +sh.initOverride : m.dex;
+  const initParts = [['Dexterity', m.dex]];
+  for (const i of sh.items) if (i.slot && +i.initBonus) initParts.push([i.name, +i.initBonus]);
+  if (+sh.initBonus) initParts.push(['Other bonus', +sh.initBonus]);
+  const init = initParts.reduce((t, [, v]) => t + v, 0), initMod = init - m.dex;
   const sa = sh.spell.ability;
   const weight = sh.items.reduce((t, i) => t + (+i.weight || 0) * (+i.qty || 1), 0);
   // attacks from the weapons in hand
@@ -116,14 +127,17 @@ export function derive(sh) {
   const offItem = eq('off');
   const attacks = ['main', 'off', 'ranged'].map(sl => [sl, eq(sl)]).filter(([, i]) => i && i.kind === 'weapon').map(([sl, i]) => {
     const ab = i.ranged ? 'dex' : i.finesse ? (m.dex > m.str ? 'dex' : 'str') : 'str';
-    const hit = m[ab] + prof + (+i.bonus || 0);
-    const dmgMod = (sl === 'off' ? Math.min(0, m[ab]) : m[ab]) + (+i.bonus || 0);
+    const pr = isProficient(sh, i), r = pr ? R.weapon.prof : R.weapon.non;
+    const hit = m[ab] + (r.addProf ? prof : 0) + (+r.hit || 0) + (+i.bonus || 0);
+    const dmgMod = (sl === 'off' ? Math.min(0, m[ab]) : m[ab]) + (+i.bonus || 0) + (+r.dmg || 0);
+    const mode = mixModes(r.mode, ab === 'str' || ab === 'dex' ? armorMode : 'normal');
     let dice = i.dmg || '', note = sl === 'off' ? 'off hand' : sl === 'ranged' ? 'ranged' : '';
     if (sl === 'main' && i.versatile && !offItem && !i.two) { dice = dice.replace(/d\d+/i, 'd' + i.versatile); note = 'two hands'; }
     if (i.range && (i.ranged || i.thrown || i.ammo)) note = [note, `${rangeShown(i.range)} ${unitOf('ft')}`].filter(Boolean).join(', ');
-    return { name: i.name, note, hit, dmg: dice ? `${dice}${dmgMod ? (dmgMod > 0 ? '+' : '') + dmgMod : ''}` : '', type: i.dmgType || '', auto: true };
+    if (!pr) note = [note, 'not proficient'].filter(Boolean).join(', ');
+    return { name: i.name, note, hit, mode, pr, dmg: dice ? `${dice}${dmgMod ? (dmgMod > 0 ? '+' : '') + dmgMod : ''}` : '', type: i.dmgType || '', auto: true };
   });
-  return { m, prof, saves, skills, ac, acAuto, acMod, acMods, acParts, init, passive: 10 + skills.perception, passiveInv: 10 + skills.investigation, passiveIns: 10 + skills.insight,
+  return { m, prof, saves, skills, ac, acAuto, acMod, acMods, acParts, init, initMod, initParts, armorMode, nonArmour, spellsOk: armourRule.spells, passive: 10 + skills.perception, passiveInv: 10 + skills.investigation, passiveIns: 10 + skills.insight,
     dc: sa ? 8 + prof + m[sa] : null, satk: sa ? prof + m[sa] : null, weight, carry: (+sh.abil.str || 10) * 15, attacks, xp: CR_XP[String(sh.cr).trim()] ?? null };
 }
 
@@ -173,12 +187,12 @@ function sheetHTML(e, opts = {}) {
   const twoH = sh.items.find(i => i.slot === 'main' && i.kind === 'weapon' && i.two);
   const slotHTML = s => {
     const it = sh.items.find(i => i.slot === s), S = SLOTS[s];
-    if (s === 'off' && twoH && !it) return `<div class="cs-slot slot-off blocked" data-slot="off" title="${esc(twoH.name)} needs both hands">${itemIcon(twoH, true)}<span class="cs-slot-label">Two-handed</span></div>`;
+    if (s === 'off' && twoH && !it) return `<div class="cs-slot slot-off blocked" data-slot="off" title="${esc(twoH.name)} is two-handed, so the off hand is in use"><span class="cs-ghost">${S.icon}</span><span class="cs-slot-label">Off hand</span></div>`;
     return `<div class="cs-slot slot-${s} ${it ? 'full' : ''}" data-slot="${s}" ${it ? `data-item="${it.id}" draggable="true" style="--rar:${rarCol(it)}"` : ''} title="${it ? '' : S.label}">
       ${it ? itemIcon(it, true) : `<span class="cs-ghost">${S.icon}</span>`}<span class="cs-slot-label">${it ? esc(it.name) : S.label}</span></div>`;
   };
   const pip = (k, n, on) => Array.from({ length: n }, (_, i) => `<button class="cs-pip ${i < on ? 'on' : ''}" data-pip="${k}" data-n="${i + 1}"></button>`).join('');
-  const skillRow = ([k, label, a]) => { const p = +sh.skills[k] || 0; return `<div class="cs-skill"><button class="cs-prof p${p}" data-skill="${k}" title="${['Not proficient', 'Proficient', 'Expertise'][p]} — click to change"></button><span class="cs-mod" data-d="skill.${k}" data-roll-mod="${label}">${sgn(d.skills[k])}</span><span>${label} <i>(${a.toUpperCase()})</i></span></div>`; };
+  const skillRow = ([k, label, a]) => { const p = +sh.skills[k] || 0; return `<div class="cs-skill"><button class="cs-prof p${p}" data-skill="${k}" title="${['Not proficient', 'Proficient', 'Expertise'][p]} — click to change"></button><span class="cs-mod" data-d="skill.${k}" data-ab="${a}" data-roll-mod="${label}">${sgn(d.skills[k])}</span><span>${label} <i>(${a.toUpperCase()})</i></span></div>`; };
   const spellLevels = [1, 2, 3, 4, 5, 6, 7, 8, 9];
   return `<div class="cs" style="${style}">
     <div class="cs-top">
@@ -199,12 +213,12 @@ function sheetHTML(e, opts = {}) {
 
     <div class="cs-main">
       <aside class="cs-side">
-        <div class="cs-abils">${ABIL.map(([k, l]) => `<div class="cs-abil"><label>${l}</label><div class="cs-abil-mod" data-d="mod.${k}" data-roll-mod="${l} check">${sgn(d.m[k])}</div>${num('abil.' + k, '10', 'cs-abil-score')}</div>`).join('')}</div>
+        <div class="cs-abils">${ABIL.map(([k, l]) => `<div class="cs-abil"><label>${l}</label><div class="cs-abil-mod" data-d="mod.${k}" data-ab="${k}" data-roll-mod="${l} check">${sgn(d.m[k])}</div>${num('abil.' + k, '10', 'cs-abil-score')}</div>`).join('')}</div>
         <div class="cs-mini">
           <div class="cs-chip"><button class="cs-check ${sh.inspiration ? 'on' : ''}" data-toggle="inspiration"></button>Inspiration</div>
           <div class="cs-chip"><input class="cs-in w4" data-k="profOverride" data-t="num" value="${val(sh, 'profOverride')}" placeholder="${sgn(d.prof)}" title="Proficiency bonus — worked out from level${creature ? ' or CR' : ''}; type to set your own"> Proficiency bonus</div>
         </div>
-        <div class="cs-panel"><h5>Saving throws</h5>${ABIL.map(([k, l]) => `<div class="cs-skill"><button class="cs-prof p${sh.saves[k] ? 1 : 0}" data-save="${k}" title="Proficient?"></button><span class="cs-mod" data-d="save.${k}" data-roll-mod="${l} save">${sgn(d.saves[k])}</span><span>${l}</span></div>`).join('')}</div>
+        <div class="cs-panel"><h5>Saving throws</h5>${ABIL.map(([k, l]) => `<div class="cs-skill"><button class="cs-prof p${sh.saves[k] ? 1 : 0}" data-save="${k}" title="Proficient?"></button><span class="cs-mod" data-d="save.${k}" data-ab="${k}" data-roll-mod="${l} save">${sgn(d.saves[k])}</span><span>${l}</span></div>`).join('')}</div>
         <div class="cs-panel cs-passive"><div><b data-d="passive">${d.passive}</b> Passive Perception</div><div><b data-d="passiveIns">${d.passiveIns}</b> Passive Insight</div><div><b data-d="passiveInv">${d.passiveInv}</b> Passive Investigation</div></div>
       </aside>
 
@@ -223,9 +237,10 @@ function sheetHTML(e, opts = {}) {
 
       <section class="cs-stats">
         <div class="cs-vitals">
-          <div class="cs-box cs-shield" data-actip><div class="cs-box-in"><div class="cs-ac-total"><b data-d="ac">${d.ac}</b><sup data-d="acmod" class="${d.acMod < 0 ? 'neg' : 'pos'}">${d.acMod ? sgn(d.acMod) : ''}</sup></div>
+          <div class="cs-box cs-shield" data-breakdown="ac"><div class="cs-box-in"><div class="cs-ac-total"><b data-d="ac">${d.ac}</b><sup data-d="acmod" class="${d.acMod < 0 ? 'neg' : 'pos'}">${d.acMod ? sgn(d.acMod) : ''}</sup></div>
             <div class="cs-hp-row small">base <input class="cs-in w4" data-k="acOverride" data-t="num" value="${val(sh, 'acOverride')}" placeholder="${d.acAuto}" title="Leave empty to work it out from your armour (${d.acAuto}), or type your own base AC. Shields and items still add to it."></div></div><label>Armour class</label></div>
-          ${box('Initiative', `<input class="cs-in cs-big" data-k="initOverride" data-t="num" value="${val(sh, 'initOverride')}" placeholder="${sgn(d.m.dex)}" title="Your Dexterity modifier; type to set your own">`)}
+          <div class="cs-box" data-breakdown="init"><div class="cs-box-in"><div class="cs-ac-total"><b data-d="init">${sgn(d.init)}</b><sup data-d="initmod" class="${d.initMod < 0 ? 'neg' : 'pos'}">${d.initMod ? sgn(d.initMod) : ''}</sup></div>
+            <div class="cs-hp-row small">bonus <input class="cs-in w4" data-k="initBonus" data-t="num" value="${val(sh, 'initBonus')}" placeholder="0" title="Anything extra, like the Alert feat. Dexterity and items are added for you."></div></div><label>Initiative</label></div>
           ${box(`Speed (${unitOf('ft')})`, `<input class="cs-in cs-big" data-k="speedFt" data-t="num" data-conv="ft" value="${shown(sh.speedFt, 'ft')}" placeholder="${shown(30, 'ft')}">`)}
         </div>
         <div class="cs-box cs-hp"><div class="cs-box-in"><div class="cs-hp-row">${num('hp', String(sh.hpMax || '—'), 'cs-big')}<span>/</span>${num('hpMax', 'max', 'cs-big')}</div>
@@ -234,6 +249,7 @@ function sheetHTML(e, opts = {}) {
           ${box('Hit dice', `<div class="cs-hp-row">${txt('hitDice', 'e.g. 3d10', 'w7')}</div><div class="cs-hp-row small">used ${num('hitDiceUsed', '0', 'w4')}</div>`)}
           ${box('Death saves', `<div class="cs-ds"><span>✔</span>${pip('death.s', 3, sh.death.s)}</div><div class="cs-ds"><span>✖</span>${pip('death.f', 3, sh.death.f)}</div>`)}
         </div>
+        ${d.nonArmour.length ? `<div class="cs-warn">⚠ Not proficient with ${d.nonArmour.map(i => esc(i.name)).join(' and ')}${d.armorMode !== 'normal' ? `: ${d.armorMode} on Strength and Dexterity checks, saves and attacks` : ''}${d.spellsOk ? '' : '; can’t cast spells'}.</div>` : ''}
         <div class="cs-conds">
           <span class="cs-label">Conditions</span>${(sh.conds || []).map(c => `<button class="cs-cond" data-cond="${esc(c)}" title="Remove">${esc(c)} ✕</button>`).join('')}
           <select class="cs-cond-add" data-act="cond"><option value="">＋ condition</option>${CONDITIONS.filter(c => !(sh.conds || []).includes(c)).map(c => `<option>${c}</option>`).join('')}</select>
@@ -243,7 +259,7 @@ function sheetHTML(e, opts = {}) {
         <div class="cs-panel cs-atkpanel">
         <h5>Attacks</h5>
         <table class="cs-table"><tr><th>Name</th><th>To hit</th><th>Damage</th><th>Type</th><th></th></tr>
-          ${d.attacks.map(a => `<tr class="auto"><td>${esc(a.name)} <span class="cs-muted small">(${esc(a.note || 'equipped')})</span></td><td><button class="cs-roll" data-roll="d20${a.hit >= 0 ? '+' : ''}${a.hit}" data-label="${esc(a.name)} to hit">${sgn(a.hit)}</button></td><td>${a.dmg ? `<button class="cs-roll" data-roll="${esc(a.dmg)}" data-label="${esc(a.name)} damage">${esc(a.dmg)}</button>` : '—'}</td><td>${esc(a.type)}</td><td></td></tr>`).join('')}
+          ${d.attacks.map(a => `<tr class="auto ${a.pr ? '' : 'nonprof'}"><td>${esc(a.name)} <span class="cs-muted small">(${esc(a.note || 'equipped')})</span></td><td><button class="cs-roll" data-roll="${d20(a.hit, a.mode)}" data-label="${esc(a.name)} to hit">${sgn(a.hit)}</button>${a.mode !== 'normal' ? `<span class="cs-mode ${a.mode}" title="${a.mode}">${a.mode === 'advantage' ? 'ADV' : 'DIS'}</span>` : ''}</td><td>${a.dmg ? `<button class="cs-roll" data-roll="${esc(a.dmg)}" data-label="${esc(a.name)} damage">${esc(a.dmg)}</button>` : '—'}</td><td>${esc(a.type)}</td><td></td></tr>`).join('')}
           ${sh.attacks.map((a, i) => `<tr><td><input class="cs-in" data-k="attacks.${i}.name" value="${esc(a.name || '')}" placeholder="Bite"></td><td class="cs-rollcell"><input class="cs-in w4" data-k="attacks.${i}.hit" value="${esc(a.hit ?? '')}" placeholder="+5"><button class="cs-roll" data-atk="${i}" data-part="hit" title="Roll to hit">🎲</button></td>
             <td class="cs-rollcell"><input class="cs-in" data-k="attacks.${i}.dmg" value="${esc(a.dmg || '')}" placeholder="2d6+3"><button class="cs-roll" data-atk="${i}" data-part="dmg" title="Roll damage">🎲</button></td><td><input class="cs-in" data-k="attacks.${i}.type" value="${esc(a.type || '')}" placeholder="piercing"></td><td><button class="cs-x" data-del="attacks" data-i="${i}">✕</button></td></tr>`).join('')}
         </table>
@@ -263,7 +279,9 @@ function sheetHTML(e, opts = {}) {
     <div class="cs-below">
       <div class="cs-panel"><h5>Features & traits</h5>${area('features', creature ? 'Special traits, actions, reactions…' : 'Class and race features, feats…', 8)}
         ${creature ? `<h5>Legendary actions</h5>${area('legendary', 'e.g. 3 per round: Detect, Tail attack, Wing attack (costs 2)', 3)}` : ''}</div>
-      <div class="cs-panel"><h5>Proficiencies</h5>${area('profs', 'Armour, weapons, tools…', 3)}<h5>Languages</h5>${area('languages', 'Common, Elvish…', 2)}<h5>Senses</h5>${area('senses', 'Darkvision 60 ft…', 2)}</div>
+      <div class="cs-panel"><h5>Proficiencies <button class="cs-btn small cs-h5btn" data-act="prof-rules" title="What being proficient, or not, does (house rules)">⚙ Rules</button></h5>
+        ${WPROF.map(([k, l]) => `<div class="cs-skill"><button class="cs-prof p${sh.wprof?.[k] ? 1 : 0}" data-wprof="${k}" title="Proficient? Click to change"></button><span>${l}</span></div>`).join('')}
+        <label class="cs-sub">Tools & other</label>${area('profs', 'Thieves’ tools, lute, navigator’s tools…', 2)}<h5>Languages</h5>${area('languages', 'Common, Elvish…', 2)}<h5>Senses</h5>${area('senses', 'Darkvision 60 ft…', 2)}</div>
       <div class="cs-panel"><h5>Defences</h5><label class="cs-sub">Resistances</label>${txt('resist', 'e.g. fire, cold')}<label class="cs-sub">Immunities</label>${txt('immune', 'e.g. poison')}<label class="cs-sub">Vulnerabilities</label>${txt('vuln', 'e.g. radiant')}<label class="cs-sub">Condition immunities</label>${txt('condImmune', 'e.g. charmed')}</div>
       ${creature ? '' : `<div class="cs-panel"><h5>Personality traits</h5>${area('traits', '', 2)}<h5>Ideals</h5>${area('ideals', '', 2)}<h5>Bonds</h5>${area('bonds', '', 2)}<h5>Flaws</h5>${area('flaws', '', 2)}</div>`}
       <div class="cs-panel"><h5>Notes</h5>${area('notes', 'Anything else', 8)}</div>
@@ -311,6 +329,28 @@ export function propList(i) {
   if (i.range && (i.ranged || i.thrown || i.ammo)) p.push(`range ${rangeShown(i.range)} ${unitOf('ft')}`);
   return p.join(', ');
 }
+// what being proficient (or not) with weapons and armour does. Rules as written by default; each world can change them.
+export const PROF_DEFAULTS = {
+  weapon: { prof: { addProf: true, hit: 0, dmg: 0, mode: 'normal' }, non: { addProf: false, hit: 0, dmg: 0, mode: 'normal' } },
+  armor: { prof: { ac: 0, mode: 'normal', spells: true }, non: { ac: 0, mode: 'disadvantage', spells: false } },
+};
+export function profRules() {
+  const r = W()?.settings?.profRules || {};
+  return { weapon: { prof: { ...PROF_DEFAULTS.weapon.prof, ...r.weapon?.prof }, non: { ...PROF_DEFAULTS.weapon.non, ...r.weapon?.non } },
+    armor: { prof: { ...PROF_DEFAULTS.armor.prof, ...r.armor?.prof }, non: { ...PROF_DEFAULTS.armor.non, ...r.armor?.non } } };
+}
+export const WPROF = [['simple', 'Simple weapons'], ['martial', 'Martial weapons'], ['light', 'Light armour'], ['medium', 'Medium armour'], ['heavy', 'Heavy armour'], ['shield', 'Shields']];
+export function isProficient(sh, i) {
+  if (i.profMode === 'yes') return true;
+  if (i.profMode === 'no') return false;
+  const p = sh.wprof || {};
+  if (i.kind === 'weapon') return !!p[i.wcat || 'simple'];
+  if (i.kind === 'armor') return !!p[i.armorType || 'light'];
+  if (i.kind === 'shield') return !!p.shield;
+  return true;
+}
+const mixModes = (...ms) => { const a = ms.includes('advantage'), d = ms.includes('disadvantage'); return a && !d ? 'advantage' : d && !a ? 'disadvantage' : 'normal'; };
+export const d20 = (mod, mode) => `${mode === 'advantage' ? '2d20kh1' : mode === 'disadvantage' ? '2d20kl1' : 'd20'}${mod >= 0 ? '+' : ''}${mod}`;
 export const DMG_TYPES = ['acid', 'bludgeoning', 'cold', 'fire', 'force', 'lightning', 'necrotic', 'piercing', 'poison', 'psychic', 'radiant', 'slashing', 'thunder'];
 const COINS = { cp: ['Copper', 0.01], sp: ['Silver', 0.1], ep: ['Electrum', 0.5], gp: ['Gold', 1], pp: ['Platinum', 10] };
 // old items kept their value as text like "15 gp"
@@ -384,6 +424,7 @@ function itemDialog(e, item, onDone) {
       <label style="margin-top:0">Damage <span class="small muted">— click a die to add it, right-click to take one away</span></label>
       <div class="i-dice">${DMG_DICE.map(n => `<button type="button" class="i-die" data-die="${n}">d${n}<b data-dc="${n}"></b></button>`).join('')}<span class="i-expr" id="i-expr"></span><button type="button" class="small" id="i-dclear">Clear</button></div>
       <div class="row"><div><label>Damage type</label>${comboHTML('i-dt', dmgOpts, item.dmgType || '', { custom: true, placeholder: 'Search or type…' })}</div><div><label>Magic bonus</label><input id="i-bonus" type="number" value="${item.bonus ?? ''}" placeholder="0"></div></div>
+      <div class="row"><div><label>Category</label><select id="i-wcat"><option value="simple" ${item.wcat !== 'martial' ? 'selected' : ''}>Simple weapon</option><option value="martial" ${item.wcat === 'martial' ? 'selected' : ''}>Martial weapon</option></select></div><div></div></div>
       <label>Properties</label>
       <div class="i-props">${WPROPS.map(([k, l, tip]) => `<label class="check" title="${tip}"><input type="checkbox" data-prop="${k}" ${item[k] ? 'checked' : ''}> ${l}</label>`).join('')}
         <label class="check" title="Can be used in one or two hands; two hands use a bigger die"><input type="checkbox" id="i-vers" ${item.versatile ? 'checked' : ''}> Versatile</label></div>
@@ -394,13 +435,14 @@ function itemDialog(e, item, onDone) {
       </div></fieldset>
     <fieldset class="i-grp" data-for="armor shield"><legend>Armour</legend><div class="row"><div><label id="i-aclab">${item.kind === 'shield' ? 'AC bonus' : 'Base AC'}</label><input id="i-ac" type="number" value="${item.ac ?? ''}" placeholder="${item.kind === 'shield' ? '2' : '11'}"></div>
       <div class="i-armortype"><label>Type</label><select id="i-at">${['light', 'medium', 'heavy'].map(t => `<option ${item.armorType === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div></div></fieldset>
-    <div class="row"><div><label>AC bonus while worn</label><input id="i-acb" type="number" value="${item.acBonus ?? ''}" placeholder="e.g. 1, or −1 for a penalty"></div><label class="check" style="align-self:flex-end"><input type="checkbox" id="i-att" ${item.attune ? 'checked' : ''}> Needs attunement</label></div>
+    <div class="row i-profrow" id="i-profrow"><div><label>Proficiency</label><select id="i-prof"><option value="">From the character sheet</option><option value="yes" ${item.profMode === 'yes' ? 'selected' : ''}>Always proficient with this one</option><option value="no" ${item.profMode === 'no' ? 'selected' : ''}>Never proficient with this one</option></select></div><div></div></div>
+    <div class="row"><div><label>Initiative bonus while worn</label><input id="i-initb" type="number" value="${item.initBonus ?? ''}" placeholder="e.g. 2"></div><div><label>AC bonus while worn</label><input id="i-acb" type="number" value="${item.acBonus ?? ''}" placeholder="e.g. 1, or −1"></div><label class="check" style="align-self:flex-end"><input type="checkbox" id="i-att" ${item.attune ? 'checked' : ''}> Needs attunement</label></div>
     <label>Description</label><textarea id="i-notes" rows="3" placeholder="What it does, where it came from">${esc(item.notes || '')}</textarea>
     <div class="modal-actions">${isNew ? '' : '<button class="danger" data-a="del">Delete</button><span style="flex:1"></span>'}<button data-a="no">Cancel</button><button class="primary" data-a="yes">${isNew ? 'Add to bag' : 'Save'}</button></div>`, m => {
     const $ = q => m.querySelector(q);
     let kind = item.kind || 'misc';
     const drawIcon = () => { $('#i-iconbtn').textContent = icon || KINDS[kind]?.[1] || '📦'; $('#i-iconnote').textContent = icon ? 'your choice' : `matches ${KINDS[kind]?.[0].toLowerCase() || 'the kind'}`; };
-    const groups = () => { m.querySelectorAll('.i-grp').forEach(g => g.hidden = !g.dataset.for.split(' ').includes(kind)); $('#i-aclab').textContent = kind === 'shield' ? 'AC bonus' : 'Base AC'; m.querySelector('.i-armortype').hidden = kind === 'shield'; drawIcon(); };
+    const groups = () => { m.querySelectorAll('.i-grp').forEach(g => g.hidden = !g.dataset.for.split(' ').includes(kind)); $('#i-profrow').hidden = !['weapon', 'armor', 'shield'].includes(kind); $('#i-aclab').textContent = kind === 'shield' ? 'AC bonus' : 'Base AC'; m.querySelector('.i-armortype').hidden = kind === 'shield'; drawIcon(); };
     const getKind = wireCombo(m, 'i-kind', kindOpts, v => { kind = v; groups(); });
     const getDt = wireCombo(m, 'i-dt', dmgOpts);
     let entryId = item.entryId || '';
@@ -430,7 +472,7 @@ function itemDialog(e, item, onDone) {
         Object.assign(item, { name: $('#i-name').value.trim() || KINDS[kind][0], kind, rarity: $('#i-rar').value, qty: Math.max(1, +$('#i-qty').value || 1), weight: stored($('#i-w').value, 'lb'),
           value: n($('#i-val').value), cur: $('#i-cur').value, icon, img, entryId, dmg: diceExpr(pool), dmgType: getDt() || '', bonus: n($('#i-bonus').value), ...Object.fromEntries(WPROPS.map(([k]) => [k, m.querySelector(`[data-prop="${k}"]`).checked])),
           versatile: $('#i-vers').checked ? +$('#i-versdie').value : '', range: rangeStored($('#i-range').value.trim()), mastery: $('#i-mastery').value,
-          ac: n($('#i-ac').value), armorType: $('#i-at').value, acBonus: n($('#i-acb').value), attune: $('#i-att').checked, notes: $('#i-notes').value });
+          ac: n($('#i-ac').value), armorType: $('#i-at').value, acBonus: n($('#i-acb').value), initBonus: n($('#i-initb').value), wcat: $('#i-wcat').value, profMode: $('#i-prof').value, attune: $('#i-att').checked, notes: $('#i-notes').value });
         // something worn in a slot it no longer fits goes back in the bag
         if (item.slot && !SLOTS[item.slot].kinds.includes(item.kind)) { item.slot = ''; item.cell = freeCell(sh); }
         if (isNew) sh.items.push(item);
@@ -438,6 +480,36 @@ function itemDialog(e, item, onDone) {
       }
     });
   });
+}
+
+// ---------- house rules for proficiency ----------
+function profRulesDialog(onDone) {
+  const R = profRules();
+  const modeSel = (id, v) => `<select id="${id}">${['normal', 'advantage', 'disadvantage'].map(x => `<option ${v === x ? 'selected' : ''}>${x}</option>`).join('')}</select>`;
+  const wcol = (k, r) => `<td><label class="check"><input type="checkbox" id="w-${k}-add" ${r.addProf ? 'checked' : ''}> add proficiency bonus</label>
+      <div class="row" style="gap:6px"><div><label>Extra to hit</label><input id="w-${k}-hit" type="number" value="${r.hit || 0}"></div><div><label>Extra damage</label><input id="w-${k}-dmg" type="number" value="${r.dmg || 0}"></div></div>
+      <label>Attack rolls</label>${modeSel(`w-${k}-mode`, r.mode)}</td>`;
+  const acol = (k, r) => `<td><div><label>AC change</label><input id="a-${k}-ac" type="number" value="${r.ac || 0}"></div>
+      <label>Strength & Dexterity rolls and attacks</label>${modeSel(`a-${k}-mode`, r.mode)}
+      <label class="check"><input type="checkbox" id="a-${k}-sp" ${r.spells ? 'checked' : ''}> can cast spells</label></td>`;
+  openModal(`<h2>⚙ Proficiency rules</h2>
+    <p class="small muted">What happens with weapons and armour a character is, or isn't, proficient with. These are house rules for this whole world; they start as the rules as written.</p>
+    <table class="pr-table"><tr><th></th><th>Proficient</th><th>Not proficient</th></tr>
+      <tr><th>⚔️ Weapons</th>${wcol('prof', R.weapon.prof)}${wcol('non', R.weapon.non)}</tr>
+      <tr><th>🛡️ Armour & shields</th>${acol('prof', R.armor.prof)}${acol('non', R.armor.non)}</tr></table>
+    <div class="modal-actions"><button data-a="reset">Back to the rules as written</button><span style="flex:1"></span><button data-a="no">Cancel</button><button class="primary" data-a="yes">Save rules</button></div>`, m => m.addEventListener('click', ev => {
+    const a = ev.target.dataset.a; if (!a) return;
+    const w = W();
+    if (a === 'reset') { delete w.settings.profRules; save(); closeModal(); onDone(); toast('Back to the rules as written'); return; }
+    if (a === 'yes') {
+      const q = id => m.querySelector('#' + id);
+      const wr = k => ({ addProf: q(`w-${k}-add`).checked, hit: +q(`w-${k}-hit`).value || 0, dmg: +q(`w-${k}-dmg`).value || 0, mode: q(`w-${k}-mode`).value });
+      const ar = k => ({ ac: +q(`a-${k}-ac`).value || 0, mode: q(`a-${k}-mode`).value, spells: q(`a-${k}-sp`).checked });
+      w.settings.profRules = { weapon: { prof: wr('prof'), non: wr('non') }, armor: { prof: ar('prof'), non: ar('non') } };
+      save(); toast('Proficiency rules saved for this world');
+    }
+    closeModal(); if (a === 'yes') onDone();
+  }));
 }
 
 // ---------- comparing two items of the same kind ----------
@@ -499,7 +571,8 @@ function tipHTML(i) {
   if (i.kind === 'armor' && i.ac) lines.push(`AC ${i.ac} · ${i.armorType || 'light'} armour`);
   if (i.kind === 'shield') lines.push(`${sgn(+i.ac || 2)} AC`);
   if (+i.acBonus) lines.push(`${sgn(+i.acBonus)} AC while worn`);
-  return `<div class="cs-tip-name" style="color:${rarCol(i)}">${esc(i.name)}</div><div class="cs-tip-kind">${RARITY[i.rarity || 'common'][0]} ${KINDS[i.kind]?.[0].toLowerCase() || 'item'}${i.attune ? ' (requires attunement)' : ''}</div>
+  if (+i.initBonus) lines.push(`${sgn(+i.initBonus)} initiative while worn`);
+  return `<div class="cs-tip-name" style="color:${rarCol(i)}">${esc(i.name)}</div><div class="cs-tip-kind">${RARITY[i.rarity || 'common'][0]} ${i.kind === 'weapon' ? (i.wcat === 'martial' ? 'martial ' : 'simple ') : ''}${KINDS[i.kind]?.[0].toLowerCase() || 'item'}${i.attune ? ' (requires attunement)' : ''}</div>
     ${lines.map(l => `<div class="cs-tip-line">${l}</div>`).join('')}${i.notes ? `<div class="cs-tip-notes">${esc(i.notes)}</div>` : ''}
     <div class="cs-tip-foot">${[+i.qty > 1 && `×${i.qty}`, i.weight && weightText(i.weight), valueText(i)].filter(Boolean).join(' · ')}</div>`;
 }
@@ -524,8 +597,7 @@ export function mountSheet(host, e, opts = {}) {
     for (const [k] of SKILLS) set('skill.' + k, sgn(d.skills[k]));
     set('passive', d.passive); set('passiveIns', d.passiveIns); set('passiveInv', d.passiveInv); set('dc', d.dc ?? '—'); set('satk', d.satk == null ? '—' : sgn(d.satk)); set('weight', weightText(d.weight)); set('xp', d.xp ?? '—');
     const ac = host.querySelector('[data-k="acOverride"]'); if (ac) ac.placeholder = d.acAuto;
-    set('ac', d.ac); const am = host.querySelector('[data-d="acmod"]'); if (am) { am.textContent = d.acMod ? sgn(d.acMod) : ''; am.className = d.acMod < 0 ? 'neg' : 'pos'; }
-    const ini = host.querySelector('[data-k="initOverride"]'); if (ini) ini.placeholder = sgn(d.m.dex);
+    set('ac', d.ac); set('init', sgn(d.init)); const im = host.querySelector('[data-d="initmod"]'); if (im) { im.textContent = d.initMod ? sgn(d.initMod) : ''; im.className = d.initMod < 0 ? 'neg' : 'pos'; } const am = host.querySelector('[data-d="acmod"]'); if (am) { am.textContent = d.acMod ? sgn(d.acMod) : ''; am.className = d.acMod < 0 ? 'neg' : 'pos'; }
     const pr = host.querySelector('[data-k="profOverride"]'); if (pr && sh().profOverride === '') pr.placeholder = sgn(d.prof);
   };
   draw();
@@ -545,14 +617,16 @@ export function mountSheet(host, e, opts = {}) {
     const S = sh();
     if (t.dataset.skill) { S.skills[t.dataset.skill] = ((+S.skills[t.dataset.skill] || 0) + 1) % 3; touch(); draw(); return; }
     if (t.dataset.save) { S.saves[t.dataset.save] = !S.saves[t.dataset.save]; touch(); draw(); return; }
+    if (t.dataset.wprof) { S.wprof = { ...(S.wprof || {}) }; S.wprof[t.dataset.wprof] = !S.wprof[t.dataset.wprof]; touch(); draw(); return; }
     if (t.dataset.toggle) { S[t.dataset.toggle] = !S[t.dataset.toggle]; touch(); draw(); return; }
     if (t.dataset.pip) { const cur = +getP(S, t.dataset.pip) || 0, n = +t.dataset.n; setP(S, t.dataset.pip, cur === n ? n - 1 : n); touch(); draw(); return; }
     if (t.dataset.cond) { S.conds = S.conds.filter(c => c !== t.dataset.cond); touch(); draw(); return; }
     if (t.dataset.del) { getP(S, t.dataset.del).splice(+t.dataset.i, 1); touch(); draw(); return; }
-    if (t.dataset.rollMod) { const v = parseInt(t.textContent.replace('−', '-')) || 0; try { rollAndLog(`d20${v >= 0 ? '+' : ''}${v}`); toast(`${e.name}: ${t.dataset.rollMod}`); } catch { /* */ } return; }
+    if (t.dataset.rollMod) { const v = parseInt(t.textContent.replace('−', '-')) || 0, d = derive(S), mode = ['str', 'dex'].includes(t.dataset.ab) ? d.armorMode : 'normal'; try { const r = rollAndLog(d20(v, mode)); toast(`${e.name}: ${t.dataset.rollMod}${mode !== 'normal' ? ` (${mode})` : ''} — ${r.total}`); } catch { /* */ } return; }
     if (t.dataset.roll) { try { const r = rollAndLog(t.dataset.roll); toast(`${t.dataset.label}: ${r.total}`); } catch (err) { toast(err.message); } return; }
     if (t.dataset.atk != null) { const a = S.attacks[+t.dataset.atk]; const ex = t.dataset.part === 'hit' ? `d20${/^[+-]/.test(String(a.hit).trim()) ? '' : '+'}${String(a.hit || 0).trim()}` : a.dmg; try { const r = rollAndLog(ex); toast(`${a.name || 'Attack'} ${t.dataset.part === 'hit' ? 'to hit' : 'damage'}: ${r.total}`); } catch (err) { toast(err.message); } return; }
     const act = t.dataset.act;
+    if (act === 'prof-rules') { profRulesDialog(() => draw()); return; }
     if (act === 'portrait') { hideTip(); portraitDialog(e, () => { touch(); draw(); }); return; }
     if (act === 'accent-reset') { S.accent = ''; touch(); draw(); return; }
     if (act === 'add-attack') { S.attacks.push({ name: '', hit: '', dmg: '', type: '' }); touch(); draw(); return; }
@@ -583,8 +657,10 @@ export function mountSheet(host, e, opts = {}) {
   // put something on in the best free slot that fits it (ranged weapons prefer the ranged slot)
   const fits = it => it.kind === 'weapon' ? (it.two ? (it.ranged ? ['ranged', 'main'] : ['main']) : it.ranged ? ['ranged', 'main', 'off'] : ['main', 'off']) : Object.keys(SLOTS).filter(s => SLOTS[s].kinds.includes(it.kind));
   function wear(S, it, prefer) {
-    const ok = fits(it);
-    if (!ok.length) { toast(`${KINDS[it.kind]?.[0] || 'That'} can’t be worn — it stays in the bag`); return false; }
+    let ok = fits(it);
+    const twoMain = S.items.find(i => i.slot === 'main' && i !== it && i.kind === 'weapon' && i.two);
+    if (twoMain) ok = ok.filter(s => s !== 'off');
+    if (!ok.length) { toast(twoMain && fits(it).includes('off') ? `${twoMain.name} needs both hands — take it off first` : `${KINDS[it.kind]?.[0] || 'That'} can’t be worn — it stays in the bag`); return false; }
     const slot = (prefer && ok.includes(prefer) && prefer) || ok.find(s => !S.items.some(i => i.slot === s)) || ok[0];
     return equip(S, it, slot);
   }
@@ -643,7 +719,14 @@ export function mountSheet(host, e, opts = {}) {
   // a hover card for items, like in an action RPG
   function hideTip() { tip?.remove(); tip = null; }
   host.addEventListener('mouseover', ev => {
-    const acb = ev.target.closest('[data-actip]');
+    const acb = ev.target.closest('[data-breakdown]');
+    if (acb && acb.dataset.breakdown === 'init') {
+      const d = derive(sh());
+      if (!tip) { tip = document.createElement('div'); tip.className = 'cs-tip'; document.body.appendChild(tip); }
+      tip.innerHTML = `<div class="cs-tip-name">Initiative ${sgn(d.init)}</div>${d.initParts.map(([l, v], i) => `<div class="cs-tip-row ${i ? (v < 0 ? 'neg' : 'pos') : ''}"><span>${esc(l)}</span><b>${sgn(v)}</b></div>`).join('')}<div class="cs-tip-row total"><span>Total</span><b>${sgn(d.init)}</b></div>`;
+      const r = acb.getBoundingClientRect(); tip.style.left = Math.min(innerWidth - 270, r.left) + 'px'; tip.style.top = Math.min(innerHeight - tip.offsetHeight - 8, r.bottom + 6) + 'px';
+      return;
+    }
     if (acb) {
       const d = derive(sh());
       if (!tip) { tip = document.createElement('div'); tip.className = 'cs-tip'; document.body.appendChild(tip); }
