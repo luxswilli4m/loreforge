@@ -556,8 +556,8 @@ export function render(main) {
   function roundDialog() {
     const P = [[6, '6 seconds (5e, Pathfinder)'], [10, '10 seconds'], [12, '12 seconds'], [30, '30 seconds'], [60, '1 minute (old-school / mass combat)'], [600, '10 minutes (exploration turns)']];
     openModal(`<h2>How long is a round?</h2><p class="muted small">Used for the in-game time. It changes nothing else.</p>
-      <div class="col" style="gap:6px">${P.map(([v, l]) => `<label class="check"><input type="radio" name="rs" value="${v}" ${c.roundSecs === v ? 'checked' : ''}> ${l}</label>`).join('')}
-      <label class="check"><input type="radio" name="rs" value="custom" ${P.some(p => p[0] === c.roundSecs) ? '' : 'checked'}> Something else: <input id="rs-n" type="number" min="1" step="1" value="${c.roundSecs}" style="width:90px"> seconds</label></div>
+      <div class="rs-list">${P.map(([v, l]) => `<label class="check"><input type="radio" name="rs" value="${v}" ${c.roundSecs === v ? 'checked' : ''}> ${l}</label>`).join('')}
+      <label class="check rs-custom"><input type="radio" name="rs" value="custom" ${P.some(p => p[0] === c.roundSecs) ? '' : 'checked'}> Something else: <input id="rs-n" type="number" min="1" step="1" value="${c.roundSecs}" style="width:90px"> seconds</label></div>
       <div class="modal-actions"><button data-a="no">Cancel</button><button class="primary" data-a="ok">Save</button></div>`, m => {
       m.querySelector('#rs-n').addEventListener('focus', () => { m.querySelector('input[value=custom]').checked = true; });
       m.addEventListener('click', ev => {
