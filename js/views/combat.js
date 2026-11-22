@@ -56,7 +56,7 @@ export function advanceTurn(c, dir = 1) {
   if (!c.turnId) {
     for (const x of L) if (x.init === '' || x.init == null) x.init = rollInitFor(x);
     sortCombat(c);
-    c.round = 1; c.started = Date.now(); c.turnId = L.find(x => !(prefs.skipDown && isDown(x)))?.id || L[0].id;
+    c.round = 1; c.started = Date.now(); c.elapsed = 0; c.runFrom = Date.now(); c.turnId = L.find(x => !(prefs.skipDown && isDown(x)))?.id || L[0].id;
     logTo(c, '— Combat started: round 1 —'); startTurnFor(c, L.find(x => x.id === c.turnId)); return;
   }
   let i = L.findIndex(x => x.id === c.turnId), guard = 0;
@@ -107,6 +107,9 @@ export function normalize(c) {
     x.death = x.death || { s: 0, f: 0 };
   }
   if (c.turnId && !c.list.some(x => x.id === c.turnId)) c.turnId = null;
+  c.roundSecs = +c.roundSecs || 6;
+  // the real-time clock: time banked while paused, plus the stretch since it was last started
+  if (c.started && c.elapsed == null) { c.elapsed = 0; c.runFrom = c.started; }
   return c;
 }
 export const status = x => !x.maxHp ? '' : x.hp <= 0 ? (x.dead ? 'Dead' : x.side === 'ally' ? 'Down' : 'Defeated') : x.hp <= x.maxHp / 2 ? 'Bloodied' : x.hp < x.maxHp ? 'Hurt' : 'Healthy';
@@ -260,20 +263,21 @@ export function render(main) {
     persist();
   }
   function drawBar() {
-    const cur = byId(c.turnId), secs = (c.round - 1) * 6;
+    const cur = byId(c.turnId), secs = (c.round - 1) * c.roundSecs;
     $('#cb-bar').innerHTML = `
       <div class="cb-stat"><span>Round</span><b>${c.turnId ? c.round : '—'}</b></div>
       <div class="cb-stat wide"><span>Turn</span><b>${cur ? esc(cur.name) : 'Not started'}</b></div>
       <div class="cb-stat"><span>Creatures</span><b>${c.list.filter(x => !x.lair).length}</b></div>
-      <div class="cb-stat"><span>In-game time</span><b>${c.turnId ? `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}` : '—'}</b></div>
-      <div class="cb-stat"><span>Real time</span><b id="cb-clock">${clock()}</b></div>
+      <div class="cb-stat"><span>In-game time <button class="cb-mini" id="cb-rsecs" title="How long a round lasts">⚙ ${c.roundSecs < 60 ? c.roundSecs + ' s' : +(c.roundSecs / 60).toFixed(2) + ' min'}/round</button></span><b>${c.turnId ? hms(secs) : '—'}</b></div>
+      <div class="cb-stat"><span>Real time ${c.started ? `<button class="cb-mini" id="cb-pause" title="${c.runFrom ? 'Pause the clock' : 'Start the clock again'}">${c.runFrom ? '⏸' : '▶'}</button><button class="cb-mini" id="cb-reset" title="Reset the clock to 0:00">↺</button>` : ''}</span><b id="cb-clock" class="${c.started && !c.runFrom ? 'paused' : ''}">${clock()}</b></div>
       <span style="flex:1"></span>
       <button id="cb-roll" title="Roll initiative for everyone who hasn’t rolled (Shift: re-roll everyone)">🎲 Roll initiative</button>
       <button id="cb-sort" title="Put everyone in initiative order">⇅ Sort</button>
       <button id="cb-prev" ${c.turnId ? '' : 'disabled'} title="Previous turn ( [ )">◀</button>
       <button class="primary cb-next" id="cb-next" title="Next turn ( ] )">${c.turnId ? 'Next turn ▶' : '⚔️ Start combat'}</button>`;
   }
-  const clock = () => { if (!c.started) return '—'; const s = Math.floor((Date.now() - c.started) / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+  const hms = s => { s = Math.floor(s); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, ss = String(s % 60).padStart(2, '0'); return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`; };
+  const clock = () => !c.started ? '—' : hms(((c.elapsed || 0) + (c.runFrom ? Date.now() - c.runFrom : 0)) / 1000);
   function rowHTML(x) {
     const e = getEntry(x.entryId), pct = x.maxHp ? Math.max(0, Math.min(100, x.hp / x.maxHp * 100)) : 0, st = status(x);
     const pic = e?.image ? `<img ${A.src(e.image)} alt="">` : `<span>${x.lair ? '🏰' : x.side === 'ally' ? '🛡️' : x.side === 'neutral' ? '🙂' : (TYPES[e?.type]?.icon || '👹')}</span>`;
@@ -543,8 +547,26 @@ export function render(main) {
     if (id === 'cb-next') { if (!c.list.length) return toast('Add someone to the fight first'); next(1); }
     if (id === 'cb-prev') next(-1);
     if (id === 'cb-sort') { sortList(); draw(); }
+    if (id === 'cb-pause') { if (c.runFrom) { c.elapsed = (c.elapsed || 0) + Date.now() - c.runFrom; c.runFrom = null; } else c.runFrom = Date.now(); drawBar(); persist(); }
+    if (id === 'cb-reset') { c.elapsed = 0; if (c.runFrom) c.runFrom = Date.now(); drawBar(); persist(); }
+    if (id === 'cb-rsecs') roundDialog();
     if (id === 'cb-roll') { let n = 0; for (const x of c.list) if (ev.shiftKey || x.init === '' || x.init == null) { x.init = rollInit(x); n++; } if (!n) toast('Everyone has rolled — Shift-click to re-roll everyone'); sortList(); draw(); }
   });
+  // how long one round lasts in the game (6 seconds in 5e and Pathfinder; some tables like 10 or a minute)
+  function roundDialog() {
+    const P = [[6, '6 seconds (5e, Pathfinder)'], [10, '10 seconds'], [12, '12 seconds'], [30, '30 seconds'], [60, '1 minute (old-school / mass combat)'], [600, '10 minutes (exploration turns)']];
+    openModal(`<h2>How long is a round?</h2><p class="muted small">Used for the in-game time. It changes nothing else.</p>
+      <div class="col" style="gap:6px">${P.map(([v, l]) => `<label class="check"><input type="radio" name="rs" value="${v}" ${c.roundSecs === v ? 'checked' : ''}> ${l}</label>`).join('')}
+      <label class="check"><input type="radio" name="rs" value="custom" ${P.some(p => p[0] === c.roundSecs) ? '' : 'checked'}> Something else: <input id="rs-n" type="number" min="1" step="1" value="${c.roundSecs}" style="width:90px"> seconds</label></div>
+      <div class="modal-actions"><button data-a="no">Cancel</button><button class="primary" data-a="ok">Save</button></div>`, m => {
+      m.querySelector('#rs-n').addEventListener('focus', () => { m.querySelector('input[value=custom]').checked = true; });
+      m.addEventListener('click', ev => {
+        const a = ev.target.dataset.a; if (!a) return;
+        if (a === 'ok') { const v = m.querySelector('input[name=rs]:checked')?.value; const n = v === 'custom' ? +m.querySelector('#rs-n').value : +v; if (n > 0) { c.roundSecs = Math.round(n); drawBar(); persist(); } }
+        closeModal();
+      });
+    });
+  }
   $('#cb-name').addEventListener('input', ev => { c.name = ev.target.value; persist(); });
   $('#cb-end').onclick = () => openModal(`<h2>End combat</h2><p>${c.list.length ? `${c.round > 1 || c.turnId ? `The fight lasted ${c.round} round${c.round > 1 ? 's' : ''}.` : ''}` : 'There’s no one here.'}</p>
     <div class="modal-actions"><button data-a="no">Cancel</button><button data-a="party">Keep the party, clear the rest</button><button class="primary" data-a="all">Clear everyone</button></div>`, m => m.addEventListener('click', ev => {
@@ -552,7 +574,7 @@ export function render(main) {
     if (a !== 'no') {
       if (a === 'party') c.list = c.list.filter(x => x.side === 'ally' && !x.lair).map(x => ({ ...x, init: '', conds: x.conds.filter(k => k.k === 'Unconscious'), sel: false }));
       else c.list = [];
-      c.turnId = null; c.round = 1; c.started = null; c.log = []; focus = null; draw();
+      c.turnId = null; c.round = 1; c.started = null; c.elapsed = null; c.runFrom = null; c.log = []; focus = null; draw();
     }
     closeModal();
   }));
